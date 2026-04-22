@@ -243,14 +243,14 @@ async def _initialize_plugin_service():
         # Initialize the service
         success = await plugin_service.initialize()
         if success:
-            logger.info("✓ Plugin enterprise service initialized")
+            logger.info("Plugin enterprise service initialized")
             return plugin_service
         else:
-            logger.warning("✗ Plugin service initialization failed")
+            logger.warning("Plugin service initialization failed")
             return None
 
     except Exception as e:
-        logger.error(f"✗ Failed to initialize plugin service: {e}", exc_info=True)
+        logger.error(f"Failed to initialize plugin service: {e}", exc_info=True)
         return None
 
 
@@ -331,7 +331,7 @@ def _setup_spend_tracking_scheduler(app: FastAPI):
     if not config.LLM_PROXY_ENABLED:
         logger.warning(
             "LITELLM_SPEND_COLLECTOR_ENABLED=True but LLM_PROXY_ENABLED=False; "
-            "spend collector requires the LiteLLM proxy — skipping scheduler setup"
+            "spend collector requires the LiteLLM proxy - skipping scheduler setup"
         )
         return
 

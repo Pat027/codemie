@@ -403,7 +403,7 @@ def _evaluate_expression(condition: str, local_vars: dict) -> bool:
         expr_without_strings = re.sub(r'"[^"]*"', '""', expr_without_strings)
         for pattern in _CONDITION_DANGEROUS_PATTERNS:
             if re.search(pattern, expr_without_strings):
-                logger.error(f"Condition expression blocked — dangerous pattern '{pattern}': {condition}")
+                logger.error(f"Condition expression blocked - dangerous pattern '{pattern}': {condition}")
                 return False
         return bool(eval(condition, {}, local_vars))
     except Exception as e:

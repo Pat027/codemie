@@ -164,7 +164,7 @@ async def poll_device_code(
 
     if error:
         raw_description = data.get("error_description", "")
-        logger.warning(f"SharePoint OAuth: device code error: {error} — {raw_description}")
+        logger.warning(f"SharePoint OAuth: device code error: {error} - {raw_description}")
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={"status": "error", "message": _sanitize_error_description(error)},

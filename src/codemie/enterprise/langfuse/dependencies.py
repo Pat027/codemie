@@ -112,10 +112,10 @@ def initialize_langfuse_from_config() -> Optional["LangFuseService"]:
         # Create and initialize service
         service = LangFuseService(langfuse_config)
         service.initialize()
-        logger.info("✓ LangFuse enterprise service initialized")
+        logger.info("LangFuse enterprise service initialized")
         return service
     except Exception as e:
-        logger.error(f"✗ Failed to initialize LangFuse: {e}")
+        logger.error(f"Failed to initialize LangFuse: {e}")
         return None
 
 

@@ -156,11 +156,11 @@ def initialize_plugin_from_config() -> Optional["PluginService"]:
             monitoring_service=monitoring_service,
         )
 
-        logger.info("✓ Plugin enterprise service created with NATS callback factory, monitoring, and auth validation")
+        logger.info("Plugin enterprise service created with NATS callback factory, monitoring, and auth validation")
         return service
 
     except Exception as e:
-        logger.error(f"✗ Failed to create plugin service: {e}")
+        logger.error(f"Failed to create plugin service: {e}")
         return None
 
 

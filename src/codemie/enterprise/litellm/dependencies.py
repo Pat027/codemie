@@ -112,11 +112,11 @@ def initialize_litellm_from_config() -> Optional["LiteLLMService"]:
 
         # Create service
         service = LiteLLMService(litellm_config)
-        logger.info("✓ LiteLLM enterprise service initialized")
+        logger.info("LiteLLM enterprise service initialized")
         return service
 
     except Exception as e:
-        logger.error(f"✗ Failed to initialize LiteLLM: {e}")
+        logger.error(f"Failed to initialize LiteLLM: {e}")
         return None
 
 
@@ -248,9 +248,9 @@ async def ensure_predefined_budgets() -> None:
     try:
         async with get_async_session() as session:
             await budget_service.ensure_predefined_budgets(session)
-        logger.info("✓ Predefined budgets initialized")
+        logger.info("Predefined budgets initialized")
     except Exception as e:
-        logger.error(f"✗ Failed to initialize predefined budgets: {e}")
+        logger.error(f"Failed to initialize predefined budgets: {e}")
         raise
 
 
@@ -271,12 +271,12 @@ async def sync_budgets_from_litellm() -> None:
         async with get_async_session() as session:
             result = await budget_service.sync_budgets_from_litellm(session, actor_id="system")
         logger.info(
-            f"✓ Budgets synced from LiteLLM: created={result.created}, "
+            f"Budgets synced from LiteLLM: created={result.created}, "
             f"updated={result.updated}, unchanged={result.unchanged}, "
             f"total_in_litellm={result.total_in_litellm}"
         )
     except Exception as e:
-        logger.error(f"✗ Failed to sync budgets from LiteLLM: {e}")
+        logger.error(f"Failed to sync budgets from LiteLLM: {e}")
         raise
 
 
@@ -297,14 +297,14 @@ async def backfill_user_budget_assignments() -> None:
         async with get_async_session() as session:
             result = await budget_service.backfill_user_budget_assignments_from_litellm(session)
         logger.info(
-            f"✓ User budget assignments backfilled: imported={result.imported}, "
+            f"User budget assignments backfilled: imported={result.imported}, "
             f"skipped_existing={result.skipped_existing}, "
             f"skipped_missing_user={result.skipped_missing_user}, "
             f"created_budgets={result.created_budgets}, failed={result.failed}, "
             f"total_in_litellm={result.total_in_litellm}"
         )
     except Exception as e:
-        logger.error(f"✗ Failed to backfill user budget assignments: {e}")
+        logger.error(f"Failed to backfill user budget assignments: {e}")
         raise
 
 

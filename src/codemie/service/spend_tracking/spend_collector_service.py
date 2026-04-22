@@ -397,7 +397,7 @@ class LiteLLMSpendCollectorService:
 
         if prev_row is None:
             logger.debug(
-                "Bootstrap run — no prior row; using current budget-period spend as initial daily/cumulative spend"
+                "Bootstrap run - no prior row; using current budget-period spend as initial daily/cumulative spend"
             )
             return current_budget_period_spend, current_budget_period_spend
 

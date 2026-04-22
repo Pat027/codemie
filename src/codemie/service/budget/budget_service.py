@@ -323,7 +323,7 @@ class BudgetService:
         for bc in budget_config.predefined_budgets:
             existing = await budget_repository.get_by_id(session, bc.budget_id)
             if existing is None:
-                logger.info(f"Budget '{bc.budget_id}' not found in DB — creating")
+                logger.info(f"Budget '{bc.budget_id}' not found in DB - creating")
                 budget = Budget(
                     budget_id=bc.budget_id,
                     name=bc.name,
@@ -336,7 +336,7 @@ class BudgetService:
                 )
                 await budget_repository.insert(session, budget)
             else:
-                logger.info(f"Budget '{bc.budget_id}' already exists in DB — updating to match config")
+                logger.info(f"Budget '{bc.budget_id}' already exists in DB - updating to match config")
                 fields = {
                     "name": bc.name,
                     "description": bc.description,
@@ -348,7 +348,7 @@ class BudgetService:
                 await budget_repository.update(session, bc.budget_id, fields)
 
             if bc.budget_id in litellm_budget_ids:
-                logger.info(f"Budget '{bc.budget_id}' found in LiteLLM — updating")
+                logger.info(f"Budget '{bc.budget_id}' found in LiteLLM - updating")
                 result = await asyncio.to_thread(
                     update_budget_in_litellm,
                     bc.budget_id,
@@ -359,7 +359,7 @@ class BudgetService:
                 if result is None:
                     logger.error(f"Failed to update predefined budget '{bc.budget_id}' in LiteLLM")
             else:
-                logger.info(f"Budget '{bc.budget_id}' not found in LiteLLM — creating")
+                logger.info(f"Budget '{bc.budget_id}' not found in LiteLLM - creating")
                 result = await asyncio.to_thread(
                     create_budget_in_litellm,
                     bc.budget_id,

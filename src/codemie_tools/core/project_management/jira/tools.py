@@ -373,7 +373,7 @@ class GenericJiraIssueTool(CodeMieTool, FileToolMixin):
                 )
                 logger.info("Downloaded Jira image artifact: %s (%d bytes)", att["filename"], att["size"])
             else:
-                logger.warning("Skipping image %s — download failed", att["filename"])
+                logger.warning("Skipping image %s - download failed", att["filename"])
         return artifacts or None
 
     def _limit_output_content(self, output: Any) -> Any:

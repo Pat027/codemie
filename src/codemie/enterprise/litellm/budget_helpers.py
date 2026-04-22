@@ -52,7 +52,7 @@ def create_budget_in_litellm(
     """
     service = get_litellm_service_or_none()
     if service is None:
-        logger.debug("LiteLLM not available — skipping create_budget_in_litellm")
+        logger.debug("LiteLLM not available - skipping create_budget_in_litellm")
         return None
 
     @retry(
@@ -85,7 +85,7 @@ def update_budget_in_litellm(
     """
     service = get_litellm_service_or_none()
     if service is None:
-        logger.debug("LiteLLM not available — skipping update_budget_in_litellm")
+        logger.debug("LiteLLM not available - skipping update_budget_in_litellm")
         return None
 
     @retry(
@@ -117,7 +117,7 @@ def get_budget_reset_at(budget_id: str) -> str | None:
     """
     service = get_litellm_service_or_none()
     if service is None:
-        logger.debug("LiteLLM not available — skipping get_budget_reset_at")
+        logger.debug("LiteLLM not available - skipping get_budget_reset_at")
         return None
 
     budgets = service.get_budget_info([budget_id])
@@ -134,7 +134,7 @@ def list_budgets_from_litellm() -> list[BudgetTable] | None:
     """
     service = get_litellm_service_or_none()
     if service is None:
-        logger.debug("LiteLLM not available — skipping list_budgets_from_litellm")
+        logger.debug("LiteLLM not available - skipping list_budgets_from_litellm")
         return None
 
     try:
@@ -154,7 +154,7 @@ def reset_customer_spending_in_litellm(user_id: str, budget_id: str) -> bool:
     """
     service = get_litellm_service_or_none()
     if service is None:
-        logger.debug("LiteLLM not available — skipping reset_customer_spending_in_litellm")
+        logger.debug("LiteLLM not available - skipping reset_customer_spending_in_litellm")
         return False
 
     try:
@@ -173,7 +173,7 @@ def update_customer_budget_in_litellm(user_id: str, budget_id: str | None) -> bo
     """
     service = get_litellm_service_or_none()
     if service is None:
-        logger.debug("LiteLLM not available — skipping update_customer_budget_in_litellm")
+        logger.debug("LiteLLM not available - skipping update_customer_budget_in_litellm")
         return False
 
     try:
