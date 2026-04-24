@@ -1699,7 +1699,14 @@ def update_knowledge_base_sharepoint(
 
     if not full_reindex:
         if cron_expression_provided:
-            _update_datasource_scheduler(user.id, kb_index, request.cron_expression)
+            stored_auth_type = kb_index.sharepoint.auth_type if kb_index.sharepoint else "integration"
+            if stored_auth_type not in ("oauth_codemie", "oauth_custom"):
+                _update_datasource_scheduler(user.id, kb_index, request.cron_expression)
+            else:
+                logger.info(
+                    f"Skipping scheduler update for SharePoint datasource '{kb_index.id}' "
+                    f"with auth_type={stored_auth_type}: OAuth tokens are short-lived and cleared after indexing"
+                )
         return BaseResponse(message=EDIT_SUCCESSFUL)
 
     if kb_index.sharepoint is None:

@@ -302,6 +302,21 @@ class SharePointDatasourceProcessor(BaseDatasourceProcessor):
             chunk_overlap=SHAREPOINT_CONFIG.chunk_overlap,
         )
 
+    def _create_or_update_scheduler(self, cron_expression: str | None = None) -> None:
+        # self.auth_type mirrors SharePointProcessorConfig.auth_type ("integration", "oauth_codemie", "oauth_custom")
+        # and differs from self.credentials.auth_type which collapses both OAuth variants to "oauth".
+        # OAuth tokens are short-lived and cleared after indexing, so scheduled re-indexing would always fail.
+        if self.auth_type in ("oauth_codemie", "oauth_custom"):
+            cron_expr = cron_expression if cron_expression is not None else self.cron_expression
+            if cron_expr is not None:
+                logger.info(
+                    f"Skipping scheduler creation for SharePoint datasource "
+                    f"'{getattr(self.index, 'id', 'unknown')}' with auth_type={self.auth_type}: "
+                    f"OAuth tokens are short-lived and cleared after indexing"
+                )
+            return
+        super()._create_or_update_scheduler(cron_expression)
+
     def _on_process_end(self):
         """Clear stored OAuth token after indexing completes to avoid persisting sensitive data."""
         if (
