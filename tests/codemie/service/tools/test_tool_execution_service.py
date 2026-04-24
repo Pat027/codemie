@@ -101,7 +101,7 @@ def test_get_search_tool_kb_index():
     request.llm_model = "gpt-4"
 
     # Mock SearchKBTool
-    with patch("codemie.service.tools.tool_execution_service.SearchKBTool", return_value="kb_tool") as mock_kb:
+    with patch("codemie.agents.tools.kb.search_kb.SearchKBTool", return_value="kb_tool") as mock_kb:
         result = ToolExecutionService.get_search_tool(datasource, request)
 
     # Assert
@@ -156,12 +156,8 @@ def test_invoke_file_analysis_tool_with_image():
         "codemie.service.tools.tool_execution_service.build_unique_file_objects_list", return_value=[mock_file_object]
     ):
         with patch("codemie.service.tools.tool_execution_service.get_llm_by_credentials", return_value="mock_llm"):
-            with patch(
-                "codemie.service.tools.tool_execution_service.VisionToolkit.get_toolkit", return_value=mock_toolkit
-            ):
-                with patch(
-                    "codemie.service.tools.tool_execution_service.ToolsService.find_tool", return_value=mock_tool
-                ):
+            with patch("codemie_tools.vision.toolkit.VisionToolkit.get_toolkit", return_value=mock_toolkit):
+                with patch("codemie.service.tools.tool_service.ToolsService.find_tool", return_value=mock_tool):
                     with patch.object(ToolExecutionService, "validate_tool_args", return_value=mock_tool):
                         with patch("codemie.service.tools.tool_execution_service.logger"):
                             result = ToolExecutionService.invoke_file_analysis_tool(mock_request, "image_tool")
@@ -195,12 +191,10 @@ def test_invoke_file_analysis_tool_with_document():
     ):
         with patch("codemie.service.tools.tool_execution_service.get_llm_by_credentials", return_value="mock_llm"):
             with patch(
-                "codemie.service.tools.tool_execution_service.FileAnalysisToolkit.get_toolkit",
+                "codemie_tools.file_analysis.toolkit.FileAnalysisToolkit.get_toolkit",
                 return_value=mock_toolkit,
             ):
-                with patch(
-                    "codemie.service.tools.tool_execution_service.ToolsService.find_tool", return_value=mock_tool
-                ):
+                with patch("codemie.service.tools.tool_service.ToolsService.find_tool", return_value=mock_tool):
                     with patch.object(ToolExecutionService, "validate_tool_args", return_value=mock_tool):
                         with patch("codemie.service.tools.tool_execution_service.logger"):
                             result = ToolExecutionService.invoke_file_analysis_tool(mock_request, "pdf_tool")
@@ -234,12 +228,10 @@ def test_invoke_file_analysis_tool_with_attributes():
     ):
         with patch("codemie.service.tools.tool_execution_service.get_llm_by_credentials", return_value="mock_llm"):
             with patch(
-                "codemie.service.tools.tool_execution_service.FileAnalysisToolkit.get_toolkit",
+                "codemie_tools.file_analysis.toolkit.FileAnalysisToolkit.get_toolkit",
                 return_value=mock_toolkit,
             ):
-                with patch(
-                    "codemie.service.tools.tool_execution_service.ToolsService.find_tool", return_value=mock_tool
-                ):
+                with patch("codemie.service.tools.tool_service.ToolsService.find_tool", return_value=mock_tool):
                     with patch.object(ToolExecutionService, "validate_tool_args", return_value=mock_tool):
                         with patch.object(
                             ToolExecutionService, "update_tool_attributes", return_value=mock_tool
@@ -303,12 +295,10 @@ def test_invoke_file_analysis_tool_execution_error():
     ):
         with patch("codemie.service.tools.tool_execution_service.get_llm_by_credentials", return_value="mock_llm"):
             with patch(
-                "codemie.service.tools.tool_execution_service.FileAnalysisToolkit.get_toolkit",
+                "codemie_tools.file_analysis.toolkit.FileAnalysisToolkit.get_toolkit",
                 return_value=mock_toolkit,
             ):
-                with patch(
-                    "codemie.service.tools.tool_execution_service.ToolsService.find_tool", return_value=mock_tool
-                ):
+                with patch("codemie.service.tools.tool_service.ToolsService.find_tool", return_value=mock_tool):
                     with patch.object(ToolExecutionService, "validate_tool_args", return_value=mock_tool):
                         with patch("codemie.service.tools.tool_execution_service.logger") as mock_logger:
                             # Expect exception to be re-raised

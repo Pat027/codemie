@@ -27,24 +27,60 @@ from pydantic import computed_field, model_validator, BaseModel, Field, field_va
 from codemie.configs import logger, config
 from codemie.core.ability import Ability, Owned, Action
 from codemie.core.models import CreatedByUser, GitRepo, KnowledgeBase, TokensUsage, sanitize_es_index_name
-from codemie.datasource.datasources_config import CONFLUENCE_CONFIG, STORAGE_CONFIG
-from codemie.rest_api.models.base import BaseModelWithSQLSupport, PydanticType
-from codemie.rest_api.models.guardrail import GuardrailAssignmentItem, GuardrailEntity
-from codemie.rest_api.security.user import User
-from codemie.service.constants import FullDatasourceTypes
-from codemie.service.llm_service.llm_service import llm_service
-from sqlmodel import Field as SQLField, Session, select, Column, and_, or_, Index, text as sqltext
-from sqlalchemy import update as sa_update
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.mutable import MutableList
-from sqlalchemy.orm.exc import StaleDataError
-from sqlalchemy.orm.attributes import flag_modified
+import logging as _logging
+import time as _time
 
-from codemie.service.guardrail.guardrail_service import GuardrailService
-from codemie.service.settings.scheduler_settings_service import (
+_log = _logging.getLogger(__name__)
+
+from codemie.datasource.datasources_config import CONFLUENCE_CONFIG, STORAGE_CONFIG  # noqa: E402
+
+_t = _time.perf_counter()
+from codemie.rest_api.models.base import BaseModelWithSQLSupport, PydanticType  # noqa: E402
+
+_log.info(f"[import] models.index → models.base: {_time.perf_counter() - _t:.2f}s")
+
+_t = _time.perf_counter()
+from codemie.rest_api.models.guardrail import GuardrailAssignmentItem, GuardrailEntity  # noqa: E402
+
+_log.info(f"[import] models.index → models.guardrail: {_time.perf_counter() - _t:.2f}s")
+
+_t = _time.perf_counter()
+from codemie.rest_api.security.user import User  # noqa: E402
+
+_log.info(f"[import] models.index → security.user: {_time.perf_counter() - _t:.2f}s")
+
+_t = _time.perf_counter()
+from codemie.service.constants import FullDatasourceTypes  # noqa: E402
+
+_log.info(f"[import] models.index → service.constants: {_time.perf_counter() - _t:.2f}s")
+
+_t = _time.perf_counter()
+from codemie.service.llm_service.llm_service import llm_service  # noqa: E402
+
+_log.info(f"[import] models.index → llm_service: {_time.perf_counter() - _t:.2f}s")
+
+_t = _time.perf_counter()
+from sqlmodel import Field as SQLField, Session, select, Column, and_, or_, Index, text as sqltext  # noqa: E402
+from sqlalchemy import update as sa_update  # noqa: E402
+from sqlalchemy.dialects.postgresql import JSONB  # noqa: E402
+from sqlalchemy.ext.mutable import MutableList  # noqa: E402
+from sqlalchemy.orm.exc import StaleDataError  # noqa: E402
+from sqlalchemy.orm.attributes import flag_modified  # noqa: E402
+
+_log.info(f"[import] models.index → sqlmodel/sqlalchemy: {_time.perf_counter() - _t:.2f}s")
+
+_t = _time.perf_counter()
+from codemie.service.guardrail.guardrail_service import GuardrailService  # noqa: E402
+
+_log.info(f"[import] models.index → guardrail_service: {_time.perf_counter() - _t:.2f}s")
+
+_t = _time.perf_counter()
+from codemie.service.settings.scheduler_settings_service import (  # noqa: E402
     SchedulerSettingsService,
     validate_cron_expression,
 )
+
+_log.info(f"[import] models.index → scheduler_settings_service: {_time.perf_counter() - _t:.2f}s")
 
 
 class SearchFields(str, Enum):
@@ -402,6 +438,12 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
             user=user,
             embeddings_model=file_processor.embedding_model or llm_service.default_embedding_model,
         )
+
+    @classmethod
+    def get_all_by_repo_names(cls, repo_names: list[str]) -> list["IndexInfo"]:
+        with Session(cls.get_engine()) as session:
+            statement = select(cls).where(cls.repo_name.in_(repo_names))
+            return list(session.exec(statement).all())
 
     def update(self, refresh=False, validate=True):
         try:

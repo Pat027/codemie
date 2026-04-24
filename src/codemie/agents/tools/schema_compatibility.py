@@ -19,6 +19,8 @@ import json
 import re
 from typing import Any, Dict, List
 
+_PATCHED_LANGCHAIN_GOOGLE_VERTEXAI = False
+
 
 def _convert_integer_to_number(obj: Dict[str, Any]) -> None:
     """Convert integer type to number for GCP compatibility."""
@@ -187,6 +189,10 @@ def patch_langchain_google_vertexai():
     1. Schema conversion for tool definitions
     2. Tool/Function message content sanitization to remove schema references
     """
+    global _PATCHED_LANGCHAIN_GOOGLE_VERTEXAI
+    if _PATCHED_LANGCHAIN_GOOGLE_VERTEXAI:
+        return
+
     try:
         import langchain_google_vertexai.functions_utils as functions_utils
         from langchain_core.messages import FunctionMessage, ToolMessage
@@ -219,6 +225,7 @@ def patch_langchain_google_vertexai():
 
         ToolMessage.__init__ = patched_tool_init
         FunctionMessage.__init__ = patched_function_init
+        _PATCHED_LANGCHAIN_GOOGLE_VERTEXAI = True
 
     except ImportError:
         # langchain_google_vertexai not available, skip patching

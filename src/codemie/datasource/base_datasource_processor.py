@@ -27,22 +27,52 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, before_sleep_log
 
-from codemie.clients.elasticsearch import ElasticSearchClient
-from codemie.configs import logger
-from codemie.configs.logger import set_logging_info
-from codemie.core.dependecies import get_elasticsearch
-from codemie.core.otel_tracing import get_otel_context_for_thread, propagated_span, record_exception_on_span
-from codemie.datasource.callback.base_datasource_callback import DatasourceProcessorCallback
-from codemie.datasource.callback.datasource_monitoring_callback import DatasourceMonitoringCallback
-from codemie.datasource.datasources_config import STORAGE_CONFIG, CODE_CONFIG
-from codemie.datasource.exceptions import NoChunksImportedException
-from codemie.datasource.loader.base_datasource_loader import BaseDatasourceLoader
-from codemie.rest_api.models.guardrail import GuardrailAssignmentItem, GuardrailEntity, GuardrailSource
-from codemie.rest_api.models.index import GuardrailBlockedException, IndexInfo, IndexDeletedException
-from codemie.rest_api.security.user import User
-from codemie.rest_api.utils.default_applications import ensure_application_exists
-from codemie.service.llm_service.llm_service import llm_service
-from codemie.service.guardrail.guardrail_service import GuardrailService
+_log = logging.getLogger(__name__)
+
+from codemie.clients.elasticsearch import ElasticSearchClient  # noqa: E402
+from codemie.configs import logger  # noqa: E402
+from codemie.configs.logger import set_logging_info  # noqa: E402
+from codemie.core.dependecies import get_elasticsearch  # noqa: E402
+from codemie.core.otel_tracing import get_otel_context_for_thread, propagated_span, record_exception_on_span  # noqa: E402
+from codemie.datasource.callback.base_datasource_callback import DatasourceProcessorCallback  # noqa: E402
+from codemie.datasource.callback.datasource_monitoring_callback import DatasourceMonitoringCallback  # noqa: E402
+from codemie.datasource.datasources_config import STORAGE_CONFIG, CODE_CONFIG  # noqa: E402
+
+_t = time.perf_counter()
+from codemie.datasource.exceptions import NoChunksImportedException  # noqa: E402
+from codemie.datasource.loader.base_datasource_loader import BaseDatasourceLoader  # noqa: E402
+
+_log.info(f"[import] datasource exceptions+loader: {time.perf_counter() - _t:.2f}s")
+
+_t = time.perf_counter()
+from codemie.rest_api.models.guardrail import GuardrailAssignmentItem, GuardrailEntity, GuardrailSource  # noqa: E402
+
+_log.info(f"[import] models.guardrail: {time.perf_counter() - _t:.2f}s")
+
+_t = time.perf_counter()
+from codemie.rest_api.models.index import GuardrailBlockedException, IndexInfo, IndexDeletedException  # noqa: E402
+
+_log.info(f"[import] models.index: {time.perf_counter() - _t:.2f}s")
+
+_t = time.perf_counter()
+from codemie.rest_api.security.user import User  # noqa: E402
+
+_log.info(f"[import] rest_api.security.user: {time.perf_counter() - _t:.2f}s")
+
+_t = time.perf_counter()
+from codemie.rest_api.utils.default_applications import ensure_application_exists  # noqa: E402
+
+_log.info(f"[import] rest_api.utils.default_applications: {time.perf_counter() - _t:.2f}s")
+
+_t = time.perf_counter()
+from codemie.service.llm_service.llm_service import llm_service  # noqa: E402
+
+_log.info(f"[import] service.llm_service: {time.perf_counter() - _t:.2f}s")
+
+_t = time.perf_counter()
+from codemie.service.guardrail.guardrail_service import GuardrailService  # noqa: E402
+
+_log.info(f"[import] service.guardrail: {time.perf_counter() - _t:.2f}s")
 
 
 class DatasourceBatchProcessingResult(BaseModel):

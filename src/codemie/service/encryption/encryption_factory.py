@@ -18,10 +18,6 @@ from pydantic import BaseModel
 
 from codemie.configs import config, logger
 from codemie.service.encryption.base_encryption_service import PlainEncryptionService, Base64EncryptionService
-from codemie.service.encryption.gcp_encryption_service import GCPKMSEncryptionService
-from codemie.service.encryption.aws_encryption_service import AWSKMSEncryptionService
-from codemie.service.encryption.azure_encryption_service import AzureKMSEncryptionService
-from codemie.service.encryption.vault_encryption_service import VaultEncryptionService
 
 
 class EncryptionType(str, Enum):
@@ -42,12 +38,20 @@ class EncryptionFactory(BaseModel):
     @classmethod
     def get_encryption_service(cls, encryption_type: EncryptionType):
         if encryption_type == EncryptionType.GCP_ENCRYPTION:
+            from codemie.service.encryption.gcp_encryption_service import GCPKMSEncryptionService
+
             return GCPKMSEncryptionService()
         elif encryption_type == EncryptionType.AWS_ENCRYPTION:
+            from codemie.service.encryption.aws_encryption_service import AWSKMSEncryptionService
+
             return AWSKMSEncryptionService()
         elif encryption_type == EncryptionType.AZURE_ENCRYPTION:
+            from codemie.service.encryption.azure_encryption_service import AzureKMSEncryptionService
+
             return AzureKMSEncryptionService()
         elif encryption_type == EncryptionType.VAULT_ENCRYPTION:
+            from codemie.service.encryption.vault_encryption_service import VaultEncryptionService
+
             return VaultEncryptionService()
         elif encryption_type == EncryptionType.PLAIN_TEXT:
             return PlainEncryptionService()

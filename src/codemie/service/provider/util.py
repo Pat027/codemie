@@ -16,13 +16,21 @@ from codemie.rest_api.models.provider import ProviderDataSourceTypeSchema
 from codemie.service.encryption.base_encryption_service import BaseEncryptionService
 from codemie.service.encryption.encryption_factory import EncryptionFactory
 
-encryption_service: BaseEncryptionService = EncryptionFactory().get_current_encryption_service()
+_encryption_service: BaseEncryptionService | None = None
+
+
+def _get_encryption_service() -> BaseEncryptionService:
+    global _encryption_service
+    if _encryption_service is None:
+        _encryption_service = EncryptionFactory().get_current_encryption_service()
+    return _encryption_service
 
 
 def encrypt_datasource_provider_fields(params: dict, schema: ProviderDataSourceTypeSchema) -> dict:
     """Encrypts sensetive IndexInfo.provider_fields.*_params"""
     sensetive_fields = schema.get_sensetive_fields()
     params = params.copy()
+    encryption_service = _get_encryption_service()
 
     for key, value in params.items():
         if key not in sensetive_fields:
@@ -38,6 +46,7 @@ def decrypt_datasource_provider_fields(params: dict, schema: ProviderDataSourceT
     """Decrypts sensetive IndexInfo.provider_fields.*_params"""
     sensetive_fields = schema.get_sensetive_fields()
     params = params.copy()
+    encryption_service = _get_encryption_service()
 
     for key, value in params.items():
         if key not in sensetive_fields:

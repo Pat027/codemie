@@ -14,28 +14,9 @@
 
 from __future__ import annotations
 
-# Service management (from dependencies.py)
-from .dependencies import (
-    is_langfuse_enabled,
-    initialize_langfuse_from_config,
-    get_global_langfuse_service,
-    set_global_langfuse_service,
-    get_langfuse_service,
-    get_langfuse_callback_handler,
-    require_langfuse_client,
-    get_langfuse_client_or_none,
-)
+from importlib import import_module
 
-# Workflow traces (from workflows.py)
-from .workflows import (
-    create_workflow_trace_context,
-    get_workflow_trace_context,
-    clear_workflow_trace_context,
-    build_agent_metadata_with_workflow_context,
-)
-
-__all__ = [
-    # Service management
+_DEPENDENCY_EXPORTS = {
     "is_langfuse_enabled",
     "initialize_langfuse_from_config",
     "get_global_langfuse_service",
@@ -44,9 +25,27 @@ __all__ = [
     "get_langfuse_callback_handler",
     "require_langfuse_client",
     "get_langfuse_client_or_none",
-    # Workflow traces
+}
+
+_WORKFLOW_EXPORTS = {
     "create_workflow_trace_context",
     "get_workflow_trace_context",
     "clear_workflow_trace_context",
     "build_agent_metadata_with_workflow_context",
-]
+}
+
+__all__ = sorted(_DEPENDENCY_EXPORTS | _WORKFLOW_EXPORTS)
+
+
+def __getattr__(name: str):
+    if name in _DEPENDENCY_EXPORTS:
+        dependencies = import_module(f"{__name__}.dependencies")
+        value = getattr(dependencies, name)
+        globals()[name] = value
+        return value
+    if name in _WORKFLOW_EXPORTS:
+        workflows = import_module(f"{__name__}.workflows")
+        value = getattr(workflows, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

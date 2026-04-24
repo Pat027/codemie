@@ -12,26 +12,59 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import boto3
-import contextvars
-import json
-from botocore.config import Config
-from langchain_core.vectorstores import VectorStoreRetriever
-from langchain_elasticsearch import ElasticsearchStore
-from langchain_openai import AzureChatOpenAI
-from langchain_openai import AzureOpenAIEmbeddings
-from openai.lib.azure import AzureOpenAI
+import logging as _logging
+import time as _time
 from typing import Optional, Any
 
-from codemie.agents.callbacks.tokens_callback import TokensCalculationCallback
-from codemie.clients.elasticsearch import ElasticSearchClient
-from codemie.configs import config, logger
-from codemie.configs.llm_config import LLMProvider, LLMModel
-from codemie.configs.logger import current_user_email, logging_user_id
-from codemie.core.constants import DEFAULT_MAX_OUTPUT_TOKENS_4K, DEFAULT_MAX_OUTPUT_TOKENS_8K
-from codemie.core.models import ElasticSearchKwargs, GitRepo, CodeFields, Application
-from codemie.rest_api.models.settings import DialCredentials, LiteLLMContext
-from codemie.service.llm_service.llm_service import llm_service, LLMService
+_log = _logging.getLogger(__name__)
+_t0 = _time.perf_counter()
+
+import boto3  # noqa: E402
+
+_log.info(f"[import] boto3: {_time.perf_counter() - _t0:.2f}s")
+
+import contextvars  # noqa: E402
+import json  # noqa: E402
+
+_t1 = _time.perf_counter()
+from botocore.config import Config  # noqa: E402
+
+_log.info(f"[import] botocore: {_time.perf_counter() - _t1:.2f}s")
+
+_t1 = _time.perf_counter()
+from langchain_core.vectorstores import VectorStoreRetriever  # noqa: E402
+
+_log.info(f"[import] langchain_core.vectorstores: {_time.perf_counter() - _t1:.2f}s")
+
+_t1 = _time.perf_counter()
+from langchain_elasticsearch import ElasticsearchStore  # noqa: E402
+
+_log.info(f"[import] langchain_elasticsearch: {_time.perf_counter() - _t1:.2f}s")
+
+_t1 = _time.perf_counter()
+from langchain_openai import AzureChatOpenAI  # noqa: E402
+from langchain_openai import AzureOpenAIEmbeddings  # noqa: E402
+
+_log.info(f"[import] langchain_openai: {_time.perf_counter() - _t1:.2f}s")
+
+_t1 = _time.perf_counter()
+from openai.lib.azure import AzureOpenAI  # noqa: E402
+
+_log.info(f"[import] openai: {_time.perf_counter() - _t1:.2f}s")
+
+_t1 = _time.perf_counter()
+from codemie.agents.callbacks.tokens_callback import TokensCalculationCallback  # noqa: E402
+from codemie.clients.elasticsearch import ElasticSearchClient  # noqa: E402
+from codemie.configs import config, logger  # noqa: E402
+from codemie.configs.llm_config import LLMProvider, LLMModel  # noqa: E402
+from codemie.configs.logger import current_user_email, logging_user_id  # noqa: E402
+from codemie.core.constants import DEFAULT_MAX_OUTPUT_TOKENS_4K, DEFAULT_MAX_OUTPUT_TOKENS_8K  # noqa: E402
+from codemie.core.models import ElasticSearchKwargs, GitRepo, CodeFields, Application  # noqa: E402
+from codemie.rest_api.models.settings import DialCredentials, LiteLLMContext  # noqa: E402
+from codemie.service.llm_service.llm_service import llm_service, LLMService  # noqa: E402
+
+_log.info(f"[import] codemie internals: {_time.perf_counter() - _t1:.2f}s")
+_log.info(f"[import] dependecies.py total: {_time.perf_counter() - _t0:.2f}s")
 
 
 def get_embeddings_model(embedding_model: str = llm_service.default_embedding_model) -> Any:
@@ -408,12 +441,16 @@ def get_vertex_llm(
     if merged_headers:
         base_args['client_options'] = {"additional_headers": merged_headers}
     if llm_service.is_gemini_models(llm_model_details.base_name):
+        from codemie.agents.tools.schema_compatibility import patch_langchain_google_vertexai
         from langchain_google_vertexai import ChatVertexAI
 
+        patch_langchain_google_vertexai()
         return ChatVertexAI(**base_args)
     elif llm_service.is_claude_models(llm_model_details.base_name):
+        from codemie.agents.tools.schema_compatibility import patch_langchain_google_vertexai
         from langchain_google_vertexai.model_garden import ChatAnthropicVertex
 
+        patch_langchain_google_vertexai()
         base_args["location"] = config.GOOGLE_CLAUDE_VERTEXAI_REGION
         return ChatAnthropicVertex(**base_args)
 

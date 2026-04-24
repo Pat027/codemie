@@ -26,27 +26,27 @@ class TestFileRepositoryFactory(unittest.TestCase):
     @patch('codemie.repository.repository_factory.config')
     def test_get_current_repository_aws(self, mock_config):
         mock_config.FILES_STORAGE_TYPE = 'aws'
-        with patch('codemie.repository.repository_factory.AWSFileRepository') as mock_aws_repo:
+        with patch('codemie.repository.aws_file_repository.AWSFileRepository') as mock_aws_repo:
             instance = mock_aws_repo.return_value
             assert FileRepositoryFactory.get_current_repository() == instance
 
     @patch('codemie.repository.repository_factory.config')
     def test_get_current_repository_gcp(self, mock_config):
         mock_config.FILES_STORAGE_TYPE = 'gcp'
-        with patch('codemie.repository.repository_factory.GCPFileRepository') as mock_gcp_repo:
+        with patch('codemie.repository.gcp_file_repository.GCPFileRepository') as mock_gcp_repo:
             instance = mock_gcp_repo.return_value
             self.assertEqual(FileRepositoryFactory.get_current_repository(), instance)
 
     @patch('codemie.repository.repository_factory.config')
     def test_get_current_repository_filesystem(self, mock_config):
         mock_config.FILES_STORAGE_TYPE = ''
-        with patch('codemie.repository.repository_factory.FileSystemRepository') as mock_fs_repo:
+        with patch('codemie.repository.file_system_repository.FileSystemRepository') as mock_fs_repo:
             instance = mock_fs_repo.return_value
             self.assertEqual(FileRepositoryFactory.get_current_repository(), instance)
 
     @patch('codemie.repository.repository_factory.config')
     def test_get_current_repository_azure(self, mock_config):
         mock_config.FILES_STORAGE_TYPE = 'azure'
-        with patch('codemie.repository.repository_factory.AzureFileRepository') as mock_azure_repo:
+        with patch('codemie.repository.azure_file_repository.AzureFileRepository') as mock_azure_repo:
             instance = mock_azure_repo.return_value
             self.assertEqual(FileRepositoryFactory.get_current_repository(), instance)

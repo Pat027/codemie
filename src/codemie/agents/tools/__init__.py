@@ -12,10 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .base import BaseToolkit
-from .code.code_toolkit import CodeToolkit, CodeToolkitUI
-from .kb.kb_toolkit import KBToolkit
-
 __all__ = [
     "BaseToolkit",
     "CodeToolkit",
@@ -23,6 +19,18 @@ __all__ = [
     "KBToolkit",
 ]
 
-from .schema_compatibility import patch_langchain_google_vertexai
 
-patch_langchain_google_vertexai()
+def __getattr__(name: str):
+    if name == "BaseToolkit":
+        from .base import BaseToolkit
+
+        return BaseToolkit
+    if name in {"CodeToolkit", "CodeToolkitUI"}:
+        from .code.code_toolkit import CodeToolkit, CodeToolkitUI
+
+        return {"CodeToolkit": CodeToolkit, "CodeToolkitUI": CodeToolkitUI}[name]
+    if name == "KBToolkit":
+        from .kb.kb_toolkit import KBToolkit
+
+        return KBToolkit
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

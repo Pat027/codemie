@@ -17,15 +17,9 @@ from typing import List, Dict, Optional
 
 from codemie_tools.base.models import ToolSet
 from codemie_tools.base import toolkit_provider
-from codemie_tools.data_management.file_system.toolkit import FileSystemToolkit
-from codemie_tools.git.toolkit import GitToolkit
-from codemie_tools.research.toolkit import ResearchToolkit
 
-from codemie.agents.tools.kb.kb_toolkit import KBToolkit
-from codemie.agents.tools.platform import PlatformToolkit
 from codemie.configs import logger
 from codemie.rest_api.security.user import User
-from codemie.service.provider import ProviderToolkitsFactory
 
 
 class ToolsInfoService:
@@ -49,6 +43,9 @@ class ToolsInfoService:
 
         # Import plugin UI info using enterprise dependency pattern
         from codemie.enterprise.plugin import get_plugin_toolkit_ui_info
+        from codemie_tools.data_management.file_system.toolkit import FileSystemToolkit
+        from codemie_tools.git.toolkit import GitToolkit
+        from codemie_tools.research.toolkit import ResearchToolkit
 
         # Build standard toolkits list
         standard_toolkits = [
@@ -69,8 +66,12 @@ class ToolsInfoService:
         ToolsInfoService._merge_code_toolkit(toolkits, show_for_ui)
 
         if not show_for_ui:
+            from codemie.agents.tools.kb.kb_toolkit import KBToolkit
+
             toolkits.append(KBToolkit.get_tools_ui_info())
             logger.info(f"Get available toolkits. Append KB toolkit: {len(toolkits)}")
+
+        from codemie.agents.tools.platform import PlatformToolkit
 
         toolkits.append(PlatformToolkit.get_tools_ui_info(show_admin_tools))
         logger.info(f"Get available toolkits. Append Platform toolkit: {len(toolkits)}")
@@ -98,6 +99,8 @@ class ToolsInfoService:
     @staticmethod
     def _provider_toolkits_info() -> List[Dict[str, str]]:
         """Get provider toolkits info"""
+        from codemie.service.provider import ProviderToolkitsFactory
+
         provider_toolkits = ProviderToolkitsFactory.get_toolkits()
 
         return [provider_toolkit.get_tools_ui_info() for provider_toolkit in provider_toolkits]

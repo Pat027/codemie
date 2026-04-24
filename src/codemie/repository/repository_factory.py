@@ -15,10 +15,6 @@
 from enum import Enum
 from pydantic import BaseModel
 from codemie.configs import config, logger
-from codemie.repository.aws_file_repository import AWSFileRepository
-from codemie.repository.azure_file_repository import AzureFileRepository
-from codemie.repository.gcp_file_repository import GCPFileRepository
-from codemie.repository.file_system_repository import FileSystemRepository
 
 
 class FileStorageType(Enum):
@@ -47,15 +43,23 @@ class FileRepositoryFactory(BaseModel):
         """
         logger.debug(f"Creating file repository for storage type: {storage_type.value}")
         if storage_type == FileStorageType.GCP:
+            from codemie.repository.gcp_file_repository import GCPFileRepository
+
             return GCPFileRepository()
         elif storage_type == FileStorageType.AZURE:
+            from codemie.repository.azure_file_repository import AzureFileRepository
+
             return AzureFileRepository(
                 connection_string=config.AZURE_STORAGE_CONNECTION_STRING,
                 storage_account_name=config.AZURE_STORAGE_ACCOUNT_NAME,
             )
         elif storage_type == FileStorageType.FILE_SYSTEM:
+            from codemie.repository.file_system_repository import FileSystemRepository
+
             return FileSystemRepository()
         elif storage_type == FileStorageType.AWS:
+            from codemie.repository.aws_file_repository import AWSFileRepository
+
             return AWSFileRepository(region_name=config.AWS_S3_REGION, root_bucket=config.AWS_S3_BUCKET_NAME)
 
     @classmethod

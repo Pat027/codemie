@@ -12,13 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .tool_service import ToolsService
-from .toolkit_lookup_service import ToolkitLookupService
-from .toolkit_service import ToolkitService
-from .toolkit_settings_service import ToolkitSettingService
-from .tools_info_service import ToolsInfoService
-from .tools_preprocessing import ToolsPreprocessorFactory
-
 __all__ = [
     "ToolsService",
     "ToolkitLookupService",
@@ -27,3 +20,31 @@ __all__ = [
     "ToolsInfoService",
     "ToolsPreprocessorFactory",
 ]
+
+
+def __getattr__(name: str):
+    if name == "ToolsService":
+        from .tool_service import ToolsService
+
+        return ToolsService
+    if name == "ToolkitLookupService":
+        from .toolkit_lookup_service import ToolkitLookupService
+
+        return ToolkitLookupService
+    if name == "ToolkitService":
+        from .toolkit_service import ToolkitService
+
+        return ToolkitService
+    if name == "ToolkitSettingService":
+        from .toolkit_settings_service import ToolkitSettingService
+
+        return ToolkitSettingService
+    if name == "ToolsInfoService":
+        from .tools_info_service import ToolsInfoService
+
+        return ToolsInfoService
+    if name == "ToolsPreprocessorFactory":
+        from .tools_preprocessing import ToolsPreprocessorFactory
+
+        return ToolsPreprocessorFactory
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

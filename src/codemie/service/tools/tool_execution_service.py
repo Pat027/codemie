@@ -12,23 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Dict
+from __future__ import annotations
+
+from typing import Any, Dict, TYPE_CHECKING
 
 from codemie_tools.base.models import ToolSet
-from codemie_tools.file_analysis.toolkit import FileAnalysisToolkit
-from codemie_tools.git.toolkit import GitToolkit, CustomGitHubToolkit, CustomGitLabToolkit, CustomBitbucketToolkit
-from codemie_tools.vision.tool_vars import IMAGE_TOOL
-from codemie_tools.vision.toolkit import VisionToolkit
 from langchain_core.tools import BaseTool
 from pydantic import ValidationError
-
-from codemie.agents.tools import BaseToolkit
-from codemie.agents.tools.code.code_toolkit import CodeToolkit
-from codemie.agents.tools.code.tools_vars import (
-    CODE_SEARCH_TOOL_V2,
-    REPO_TREE_TOOL_V2,
-)
-from codemie.agents.tools.kb.search_kb import SearchKBTool
 
 # Plugin toolkit now provided via enterprise package
 from codemie.configs import logger
@@ -43,12 +33,10 @@ from codemie.rest_api.models.tool import (
     CodeDatasourceSearchParams,
 )
 from codemie.rest_api.security.user import User
-from codemie.service.assistant import VirtualAssistantService
-from codemie.service.assistant_service import AssistantService
 from codemie.service.tools.discovery import ToolDiscoveryService, ToolInfo
-from codemie.service.tools.tool_service import ToolsService
-from codemie.service.tools.toolkit_service import ToolkitService
-from codemie.service.tools.toolkit_settings_service import ToolkitSettingService
+
+if TYPE_CHECKING:
+    from codemie.agents.tools import BaseToolkit
 
 INVALID_SIGNATURE_ERROR = "Tool method arguments are not correct. Expected: {args_desc}"
 INVALID_ATTRIBUTES_ERROR = "Tool attributes are not correct. Expected: {args_desc}"
@@ -143,6 +131,8 @@ class ToolExecutionService:
 
             toolkit = cls._create_toolkit_instance(tool_info, request)
             tools = toolkit.get_tools()
+            from codemie.service.tools.tool_service import ToolsService
+
             return ToolsService.find_tool(tool_name, tools)
 
         except Exception as e:
@@ -174,6 +164,12 @@ class ToolExecutionService:
         Create toolkit instance based on tool info and request credentials.
         """
         creds = request.tool_creds
+        from codemie_tools.git.toolkit import (
+            CustomBitbucketToolkit,
+            CustomGitHubToolkit,
+            CustomGitLabToolkit,
+            GitToolkit,
+        )
 
         if issubclass(tool_info.toolkit_class, (CustomGitHubToolkit, CustomGitLabToolkit, CustomBitbucketToolkit)):
             llm = get_llm_by_credentials(llm_model=request.llm_model)
@@ -186,6 +182,9 @@ class ToolExecutionService:
     def get_tool_with_system_integration(
         cls, request: ToolInvokeRequest, tool_name: str, assistant: Assistant, user: User
     ):
+        from codemie.service.tools import ToolkitService
+        from codemie.service.tools.tool_service import ToolsService
+
         toolkits = ToolkitService.get_toolkit_methods()
 
         tool = cls._get_context_tools(assistant, request, tool_name, user)
@@ -199,6 +198,8 @@ class ToolExecutionService:
     def invoke_tool_with_system_integration(cls, request: ToolInvokeRequest, tool_name: str, user: User):
         assistant = None
         try:
+            from codemie.service.assistant import VirtualAssistantService
+
             assistant = VirtualAssistantService.create_from_tool_invocation(
                 tool_name=tool_name,
                 user=user,
@@ -220,11 +221,15 @@ class ToolExecutionService:
             raise e
         finally:
             if assistant:
+                from codemie.service.assistant import VirtualAssistantService
+
                 VirtualAssistantService.delete(assistant.id)
 
     @classmethod
     def get_search_tool(cls, datasource: IndexInfo, request: DatasourceSearchInvokeRequest):
         if not datasource.is_code_index():
+            from codemie.agents.tools.kb.search_kb import SearchKBTool
+
             return SearchKBTool(
                 kb_index=datasource,
                 llm_model=request.llm_model,
@@ -232,6 +237,8 @@ class ToolExecutionService:
         if not request.code_search_params:
             request.code_search_params = CodeDatasourceSearchParams()
         user_input = request.code_search_params.user_input or request.query
+        from codemie.agents.tools.code.code_toolkit import CodeToolkit
+
         return CodeToolkit.search_code_tool(
             code_fields=CodeFields(
                 app_name=datasource.project_name, repo_name=datasource.repo_name, index_type=datasource.index_type
@@ -243,6 +250,8 @@ class ToolExecutionService:
 
     @classmethod
     def _get_context_tools(cls, assistant: Assistant, request: ToolInvokeRequest, tool_name: str, user: User):
+        from codemie.service.tools.tool_service import ToolsService
+
         toolkit = ToolsService.find_toolkit_for_tool(user, tool_name)
         toolkit_name = toolkit.get("toolkit")
         if toolkit_name == ToolSet.VCS:
@@ -256,6 +265,8 @@ class ToolExecutionService:
             return cls._get_kb_tools(context, request)
 
         if context.context_type == ContextType.CODE:
+            from codemie.service.assistant_service import AssistantService
+
             code_fields = AssistantService._get_code_fields(assistant, context)
             if toolkit_name == ToolSet.CODEBASE_TOOLS:
                 return cls._get_code_tools(code_fields, request, tool_name)
@@ -315,6 +326,8 @@ class ToolExecutionService:
                 )
 
                 # Find the specific tool by name
+                from codemie.service.tools.tool_service import ToolsService
+
                 if tool := ToolsService.find_tool(tool_name, tools):
                     logger.info(f"Retrieved plugin tool {tool_name} from enterprise")
                     return tool
@@ -335,6 +348,8 @@ class ToolExecutionService:
         request: ToolInvokeRequest,
     ):
         """Returns tool to work with datasource"""
+        from codemie.agents.tools.kb.search_kb import SearchKBTool
+
         kb_search_result = KnowledgeBaseIndexInfo.filter_by_project_and_repo(
             project_name=request.project, repo_name=context.name
         )
@@ -372,6 +387,9 @@ class ToolExecutionService:
         tool_name: str,
     ):
         """Returns tool to work with code datasource"""
+        from codemie.agents.tools.code.code_toolkit import CodeToolkit
+        from codemie.agents.tools.code.tools_vars import CODE_SEARCH_TOOL_V2, REPO_TREE_TOOL_V2
+
         tool_config = {
             "code_fields": code_fields,
             "is_react": request.tool_attributes.get("is_react", True),
@@ -399,6 +417,9 @@ class ToolExecutionService:
         tool_name: str,
         user: User,
     ):
+        from codemie.service.tools.tool_service import ToolsService
+        from codemie.service.tools.toolkit_settings_service import ToolkitSettingService
+
         tools = ToolkitSettingService.get_git_tools_with_creds(
             code_fields=code_fields,
             project_name=request.project,
@@ -418,6 +439,9 @@ class ToolExecutionService:
         tool_name: str,
         user: User,
     ):
+        from codemie.service.tools import ToolkitService
+        from codemie.service.tools.tool_service import ToolsService
+
         tools = ToolkitService.get_core_tools(
             assistant_toolkits=assistant.toolkits,
             project_name=request.project,
@@ -441,6 +465,11 @@ class ToolExecutionService:
             Result of tool execution
         """
         try:
+            from codemie_tools.file_analysis.toolkit import FileAnalysisToolkit
+            from codemie_tools.vision.tool_vars import IMAGE_TOOL
+            from codemie_tools.vision.toolkit import VisionToolkit
+            from codemie.service.tools.tool_service import ToolsService
+
             file_urls = request.tool_args.pop("file_names", [])
             if not file_urls:
                 error_msg = """
@@ -473,6 +502,9 @@ class ToolExecutionService:
         """
         Check if a tool belongs to FileAnalysisToolkit or VisionToolkit.
         """
+        from codemie_tools.file_analysis.toolkit import FileAnalysisToolkit
+        from codemie_tools.vision.toolkit import VisionToolkit
+
         tool_info = ToolDiscoveryService.find_tool_by_name(tool_name)
         if not tool_info:
             return False

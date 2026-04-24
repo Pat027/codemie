@@ -12,9 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .message_exporter import MessageExporter, ExportFormat
-
 __all__ = [
     "MessageExporter",
     "ExportFormat",
 ]
+
+
+def __getattr__(name: str):
+    if name in {"MessageExporter", "ExportFormat"}:
+        from .message_exporter import ExportFormat, MessageExporter
+
+        return {"MessageExporter": MessageExporter, "ExportFormat": ExportFormat}[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

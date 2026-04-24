@@ -12,34 +12,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging as _logging
+import time as _time
 from typing import List, Optional
 
-from atlassian.errors import ApiValueError
-from codemie_tools.core.project_management.confluence.models import ConfluenceConfig
-from langchain_text_splitters import MarkdownHeaderTextSplitter
-from langchain_community.document_loaders.confluence import ContentFormat
-from langchain_core.documents import Document
-from pydantic import BaseModel
-from requests.exceptions import HTTPError
+_log = _logging.getLogger(__name__)
 
-from codemie.configs import logger
-from codemie.core.models import KnowledgeBase
-from codemie.datasource.base_datasource_processor import (
+from atlassian.errors import ApiValueError  # noqa: E402
+from codemie_tools.core.project_management.confluence.models import ConfluenceConfig  # noqa: E402
+from langchain_text_splitters import MarkdownHeaderTextSplitter  # noqa: E402
+
+_t = _time.perf_counter()
+from langchain_community.document_loaders.confluence import ContentFormat  # noqa: E402
+
+_log.info(f"[import] langchain_community (confluence_datasource_processor.py): {_time.perf_counter() - _t:.2f}s")
+
+from langchain_core.documents import Document  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
+from requests.exceptions import HTTPError  # noqa: E402
+
+from codemie.configs import logger  # noqa: E402
+from codemie.core.models import KnowledgeBase  # noqa: E402
+from codemie.datasource.base_datasource_processor import (  # noqa: E402
     BaseDatasourceProcessor,
     DatasourceProcessorCallback,
 )
-from codemie.datasource.exceptions import (
+from codemie.datasource.exceptions import (  # noqa: E402
     EmptyResultException,
     InvalidQueryException,
     MissingIntegrationException,
     UnauthorizedException,
 )
-from codemie.datasource.datasources_config import CONFLUENCE_CONFIG
-from codemie.datasource.loader.confluence_loader import ConfluenceDatasourceLoader
-from codemie.rest_api.models.guardrail import GuardrailAssignmentItem
-from codemie.rest_api.models.index import IndexInfo, ConfluenceIndexInfo
-from codemie.rest_api.security.user import User
-from codemie.service.llm_service.llm_service import llm_service
+from codemie.datasource.datasources_config import CONFLUENCE_CONFIG  # noqa: E402
+from codemie.datasource.loader.confluence_loader import ConfluenceDatasourceLoader  # noqa: E402
+from codemie.rest_api.models.guardrail import GuardrailAssignmentItem  # noqa: E402
+from codemie.rest_api.models.index import IndexInfo, ConfluenceIndexInfo  # noqa: E402
+from codemie.rest_api.security.user import User  # noqa: E402
+from codemie.service.llm_service.llm_service import llm_service  # noqa: E402
 
 
 class IndexKnowledgeBaseConfluenceConfig(BaseModel):

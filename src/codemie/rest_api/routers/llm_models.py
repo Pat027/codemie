@@ -17,7 +17,10 @@ from typing import Dict, List
 from fastapi import APIRouter, Depends, HTTPException
 
 from codemie.configs.llm_config import LLMModel, ModelCategory
-from codemie.enterprise.litellm import proxy_router, register_proxy_endpoints  # noqa: F401 (proxy_router used by main.py)
+from codemie.enterprise.litellm.proxy_router import (
+    proxy_router,  # noqa: F401 (proxy_router used by main.py)
+    register_proxy_endpoints,
+)
 from codemie.rest_api.security.authentication import authenticate
 from codemie.rest_api.security.user import User
 from codemie.service.llm_service.llm_service import llm_service

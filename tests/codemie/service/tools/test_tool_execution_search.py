@@ -54,7 +54,7 @@ def test_get_search_tool_kb_index():
     request.llm_model = "gpt-4"
 
     # Mock SearchKBTool constructor
-    with patch('codemie.service.tools.tool_execution_service.SearchKBTool', return_value="kb_tool") as mock_kb_tool:
+    with patch('codemie.agents.tools.kb.search_kb.SearchKBTool', return_value="kb_tool") as mock_kb_tool:
         result = ToolExecutionService.get_search_tool(datasource, request)
 
     # Assert
@@ -84,7 +84,7 @@ def test_get_search_tool_code_index():
 
     # Mock CodeToolkit.search_code_tool
     with patch(
-        'codemie.service.tools.tool_execution_service.CodeToolkit.search_code_tool', return_value="code_tool"
+        'codemie.agents.tools.code.code_toolkit.CodeToolkit.search_code_tool', return_value="code_tool"
     ) as mock_code_tool:
         result = ToolExecutionService.get_search_tool(datasource, request)
 
@@ -117,7 +117,7 @@ def test_get_search_tool_code_index_default_params():
 
     # Mock CodeToolkit.search_code_tool
     with patch(
-        'codemie.service.tools.tool_execution_service.CodeToolkit.search_code_tool', return_value="code_tool"
+        'codemie.agents.tools.code.code_toolkit.CodeToolkit.search_code_tool', return_value="code_tool"
     ) as mock_code_tool:
         result = ToolExecutionService.get_search_tool(datasource, request)
 
