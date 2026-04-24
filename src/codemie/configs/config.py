@@ -218,6 +218,14 @@ class Config(BaseSettings):
     AUTH_TOKEN_CACHE_MAX_SIZE: int = 10000
     AUTH_TOKEN_CACHE_TTL: int = 30  # seconds
 
+    # Budget assignment cache — skips DB for user→category→budget_id lookups
+    BUDGET_ASSIGNMENT_CACHE_TTL: int = 120  # seconds
+    BUDGET_ASSIGNMENT_CACHE_MAX_SIZE: int = 50000
+
+    # Budget resolution cache — skips DB for project scope resolution per (project, category, user)
+    BUDGET_RESOLUTION_CACHE_TTL: int = 60  # seconds
+    BUDGET_RESOLUTION_CACHE_MAX_SIZE: int = 50000
+
     # ===========================================
     # Email Verification & Password Reset
     # ===========================================
@@ -434,8 +442,8 @@ class Config(BaseSettings):
     LLM_PROXY_MODE: Literal["internal", "lite_llm"] = "internal"
     LLM_PROXY_ENABLED: bool = False
     LLM_PROXY_BUDGET_CHECK_ENABLED: bool = False
-    LLM_PROXY_BUDGET_SYNC_ENABLED: bool = False  # Sync budgets from LiteLLM into DB on startup
-    LLM_PROXY_BUDGET_BACKFILL_ENABLED: bool = False  # Backfill user budget assignments from LiteLLM on startup
+    LLM_PROXY_BUDGET_RECONCILIATION_ENABLED: bool = False  # Run budget reconciliation after app readiness
+    LLM_PROXY_BUDGET_RECONCILIATION_TIMEOUT_SECONDS: int = 600  # Timeout for a single reconciliation run
     LLM_PROXY_EMBEDDINGS_DISABLED: bool = False  # Bypass LiteLLM for embeddings, use native providers
     LITE_LLM_URL: str = ""
     LITE_LLM_APP_KEY: str = ""
@@ -577,6 +585,11 @@ class Config(BaseSettings):
     LITELLM_SPEND_COLLECTOR_SCHEDULE: str = (
         "0 23 * * *"  # Cron schedule (UTC) for the spend collector — nightly at 11 PM
     )
+    LITELLM_BUDGET_RESET_TRACKER_ENABLED: bool = False  # Enables the member reset-window tracker job
+    LITELLM_BUDGET_RESET_TRACKER_SCHEDULE: str = (
+        "*/10 * * * *"  # Cron schedule (UTC) for the reset-window tracker — every 10 minutes
+    )
+    LITELLM_BUDGET_RESET_WINDOW_MINUTES: int = 15  # Look-ahead window for soon-resetting project budgets
 
     model_config = SettingsConfigDict(env_file=find_dotenv(".env", raise_error_if_not_found=False), extra="ignore")
 

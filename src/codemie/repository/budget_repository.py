@@ -14,17 +14,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 
 from sqlalchemy import func, or_, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from codemie.service.budget.budget_enums import BudgetCategory
 from codemie.service.budget.budget_models import Budget, UserBudgetAssignment
-
-if TYPE_CHECKING:
-    from codemie.enterprise.litellm.budget_categories import BudgetCategory
 
 
 class BudgetRepository:
@@ -58,11 +55,14 @@ class BudgetRepository:
         page: int,
         per_page: int,
         category: str | None = None,
+        budget_type: str | None = None,
     ) -> tuple[list[Budget], int]:
-        """SELECT with optional WHERE budget_category = category, OFFSET/LIMIT, COUNT."""
+        """SELECT with optional WHERE filters, OFFSET/LIMIT, COUNT."""
         base_stmt = select(Budget)
         if category is not None:
             base_stmt = base_stmt.where(Budget.budget_category == category)
+        if budget_type is not None:
+            base_stmt = base_stmt.where(Budget.budget_type == budget_type)
 
         count_stmt = select(func.count()).select_from(base_stmt.subquery())
         total = int((await session.execute(count_stmt)).scalar_one())
@@ -98,12 +98,22 @@ class BudgetRepository:
 
         return int((await session.execute(uba_count_stmt)).scalar_one())
 
+    async def count_project_assignments(self, session: AsyncSession, budget_id: str) -> int:
+        """Return active project_budget_assignments referencing this budget_id."""
+        from codemie.service.budget.budget_models import ProjectBudgetAssignment
+
+        stmt = select(func.count()).where(
+            ProjectBudgetAssignment.budget_id == budget_id,
+            ProjectBudgetAssignment.deleted_at.is_(None),
+        )
+        return int((await session.execute(stmt)).scalar_one())
+
     async def get_all_keyed_by_id(self, session: AsyncSession) -> dict[str, Budget]:
         """SELECT all rows, return dict keyed by budget_id. Used by sync."""
         result = await session.execute(select(Budget))
         return {b.budget_id: b for b in result.scalars().all()}
 
-    async def upsert_from_litellm(
+    async def upsert_from_provider(
         self,
         session: AsyncSession,
         budget_id: str,
@@ -121,7 +131,7 @@ class BudgetRepository:
             await session.refresh(budget)
             return budget, "created"
 
-        litellm_owned = {"soft_budget", "max_budget", "budget_duration", "budget_reset_at"}
+        litellm_owned = {"soft_budget", "max_budget", "budget_duration", "budget_reset_at", "provider_metadata"}
         changed = False
         for key in litellm_owned:
             if key in fields and getattr(existing, key) != fields[key]:

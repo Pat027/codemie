@@ -269,18 +269,18 @@ class TestGetKeySpendingTool(unittest.TestCase):
             KeySpendingInfo(spend=200.0, key_alias="key2"),
         ]
 
-        # Patch get_litellm_service_or_none to return a mock service
-        with patch("codemie.enterprise.litellm.get_litellm_service_or_none") as mock_get_service:
-            mock_litellm_service = MagicMock()
-            mock_litellm_service.get_all_keys_spending.return_value = mock_keys
-            mock_get_service.return_value = mock_litellm_service
+        with patch("codemie.service.llm_proxy.provider_registry.get_active_llm_proxy_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.is_available.return_value = True
+            mock_provider.get_all_keys_spending.return_value = mock_keys
+            mock_get_provider.return_value = mock_provider
 
             # Act
             result = tool.execute(key_aliases=None, include_details=True, page=1, size=100)
 
             # Assert
             # After the fix, we always pass include_details=True to fetch full data
-            mock_litellm_service.get_all_keys_spending.assert_called_once_with(include_details=True, page=1, size=100)
+            mock_provider.get_all_keys_spending.assert_called_once_with(include_details=True, page=1, size=100)
             self.assertIsNotNone(result)
             # Result is JSON string, parse to verify
             import json
@@ -300,17 +300,20 @@ class TestGetKeySpendingTool(unittest.TestCase):
             KeySpendingInfo(spend=100.0, key_alias="key1"),
         ]
 
-        with patch("codemie.enterprise.litellm.get_litellm_service_or_none") as mock_get_service:
-            mock_litellm_service = MagicMock()
-            mock_litellm_service.get_key_info.return_value = mock_keys
-            mock_get_service.return_value = mock_litellm_service
+        with patch("codemie.service.llm_proxy.provider_registry.get_active_llm_proxy_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.is_available.return_value = True
+            mock_provider.get_keys_info_by_alias.return_value = mock_keys
+            mock_get_provider.return_value = mock_provider
 
             # Act
             result = tool.execute(key_aliases=["key1"], include_details=False, page=1, size=50)
 
             # Assert
             # After the fix, we always pass include_details=True to fetch full data
-            mock_litellm_service.get_key_info.assert_called_once_with(["key1"], include_details=True, page=1, size=50)
+            mock_provider.get_keys_info_by_alias.assert_called_once_with(
+                ["key1"], include_details=True, page=1, size=50
+            )
             self.assertIsNotNone(result)
 
     @patch("codemie.rest_api.security.user.config.ENV", "production")
@@ -331,17 +334,18 @@ class TestGetKeySpendingTool(unittest.TestCase):
 
         mock_keys = []
 
-        with patch("codemie.enterprise.litellm.get_litellm_service_or_none") as mock_get_service:
-            mock_litellm_service = MagicMock()
-            mock_litellm_service.get_all_keys_spending.return_value = mock_keys
-            mock_get_service.return_value = mock_litellm_service
+        with patch("codemie.service.llm_proxy.provider_registry.get_active_llm_proxy_provider") as mock_get_provider:
+            mock_provider = MagicMock()
+            mock_provider.is_available.return_value = True
+            mock_provider.get_all_keys_spending.return_value = mock_keys
+            mock_get_provider.return_value = mock_provider
 
             # Act
             result = tool.execute(key_aliases=None, include_details=False, page=2, size=25)
 
             # Assert
             # After the fix, we always pass include_details=True to fetch full data
-            mock_litellm_service.get_all_keys_spending.assert_called_once_with(include_details=True, page=2, size=25)
+            mock_provider.get_all_keys_spending.assert_called_once_with(include_details=True, page=2, size=25)
             self.assertIsNotNone(result)
 
             import json

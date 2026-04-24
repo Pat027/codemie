@@ -33,9 +33,11 @@ class ProjectSpendTracking(SQLModel, table=True):
     ``budget_period_spend`` is the spend value reported by LiteLLM for the active
     budget period and may reset.
 
-    Two subject types are supported:
+    Subject types are supported:
     - ``key``: one snapshot row per project API key (``key_hash`` required)
     - ``budget``: one snapshot row per project budget bucket (``key_hash`` null)
+    - ``project_budget``: authoritative project/category budget total
+    - ``member_budget``: member breakdown under a project/category budget
     """
 
     __tablename__ = "project_spend_tracking"
@@ -62,6 +64,8 @@ class ProjectSpendTracking(SQLModel, table=True):
     )
     budget_id: Optional[str] = Field(default=None, nullable=True)
     budget_category: Optional[str] = Field(default=None, nullable=True)
+    user_id: Optional[str] = Field(default=None, nullable=True)
+    provider_subject_id: Optional[str] = Field(default=None, nullable=True)
     spend_subject_type: Optional[str] = Field(default=None, nullable=True)
     # Server default NOW(); nullable in Python so insert dict can omit it and let DB fill it
     created_at: Optional[datetime] = Field(

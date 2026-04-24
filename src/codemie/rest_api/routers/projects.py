@@ -31,12 +31,16 @@ from codemie.core.models import Application
 from codemie.repository.application_repository import application_repository
 from codemie.repository.budget_repository import budget_repository
 from codemie.repository.cost_center_repository import cost_center_repository
+from codemie.repository.project_budget_repository import project_budget_assignment_repository
 from codemie.repository.project_spend_tracking_repository import ProjectSpendTrackingRepository
 from codemie.rest_api.security.authentication import authenticate
 from codemie.rest_api.security.user import User
+from codemie.service.budget.budget_enums import BudgetCategory
 from codemie.service.budget.budget_models import Budget
+from codemie.service.budget.provider_registry import get_active_provider
 from codemie.service.project.project_service import project_service
 from codemie.service.project.project_visibility_service import project_visibility_service
+from codemie.service.settings.settings import SettingsService
 
 
 router = APIRouter(
@@ -64,6 +68,22 @@ class ProjectSpendingSummary(BaseModel):
     current_spending: float
     budget_limit: Optional[float] = None
     total_percent: float
+
+
+class ProjectAssignedBudgetSummary(BaseModel):
+    """Compact assigned project budget summary for project list responses."""
+
+    budget_id: str
+    name: str
+    budget_category: BudgetCategory
+    soft_budget: float
+    max_budget: float
+    budget_duration: str
+    budget_reset_at: Optional[str] = None
+    provider_sync_status: Optional[str] = None
+    member_count: int
+    allocated_member_budget_total: float
+    current_spending: Optional[float] = None
 
 
 class ProjectSpendingDetail(BaseModel):
@@ -145,6 +165,7 @@ class ProjectListItem(BaseModel):
     cost_center_id: Optional[UUID] = None
     cost_center_name: Optional[str] = None
     spending: Optional[ProjectSpendingSummary] = None
+    budgets: Optional[list[ProjectAssignedBudgetSummary]] = None
 
 
 class PaginationInfo(BaseModel):
@@ -182,6 +203,7 @@ class ProjectDetailResponse(BaseModel):
     created_at: Optional[datetime] = None
     cost_center_id: Optional[UUID] = None
     cost_center_name: Optional[str] = None
+    project_member_budget_tracking_enabled: bool = False
     members: list[ProjectMember]
     spending: Optional[ProjectSpendingDetail] = None
     spending_widget: Optional[ProjectSpendingWidget] = None
@@ -201,6 +223,7 @@ class ProjectCreateResponse(BaseModel):
     created_at: datetime
     cost_center_id: Optional[UUID] = None
     cost_center_name: Optional[str] = None
+    project_member_budget_tracking_enabled: bool = False
 
 
 class ProjectUpdateRequest(BaseModel):
@@ -208,6 +231,7 @@ class ProjectUpdateRequest(BaseModel):
     description: Optional[str] = None
     cost_center_id: Optional[UUID] = None
     clear_cost_center: bool = False
+    project_member_budget_tracking_enabled: Optional[bool] = None
 
     @model_validator(mode="after")
     def validate_non_empty(self):
@@ -215,6 +239,7 @@ class ProjectUpdateRequest(BaseModel):
             self.name is None
             and self.description is None
             and self.cost_center_id is None
+            and self.project_member_budget_tracking_enabled is None
             and not self.clear_cost_center
         ):
             raise ValueError("At least one mutable field must be provided")
@@ -322,6 +347,8 @@ def _list_projects_sync(
     search: str | None,
     page: int,
     per_page: int,
+    has_assigned_budgets: bool,
+    budget_category: str | None,
     include_counters: bool,
     sort_by: str | None,
     sort_order: str,
@@ -335,6 +362,8 @@ def _list_projects_sync(
             search=search,
             page=page,
             per_page=per_page,
+            has_assigned_budgets=has_assigned_budgets,
+            budget_category=budget_category,
             include_counters=include_counters,
             sort_by=sort_by,
             sort_order=sort_order,
@@ -435,6 +464,147 @@ def _key_row_to_widget(row, budgets_by_id: dict[str, Budget] | None = None) -> S
     )
 
 
+def _ensure_project_budget_list_supported() -> None:
+    """Require active budget enforcement for explicit project-budget list params."""
+    provider = get_active_provider()
+    if not config.LLM_PROXY_BUDGET_CHECK_ENABLED or provider.provider_name == "noop":
+        raise ExtendedHTTPException(
+            code=400,
+            message="Project budget filtering requires budget enforcement provider configuration",
+        )
+
+
+def _budget_category_value(budget_category: BudgetCategory | None) -> str | None:
+    return budget_category.value if budget_category is not None else None
+
+
+async def _attach_assigned_budget_summaries(
+    items: list[ProjectListItem],
+    budget_category: BudgetCategory | None,
+) -> None:
+    project_names = [item.name for item in items]
+    if not project_names:
+        return
+
+    async with get_async_session() as async_session:
+        budget_rows_by_project = await project_budget_assignment_repository.get_assigned_budget_summaries_for_projects(
+            async_session,
+            project_names,
+            budget_category=_budget_category_value(budget_category),
+        )
+
+    for item in items:
+        rows = budget_rows_by_project.get(item.name, [])
+        budgets: list[ProjectAssignedBudgetSummary] = []
+        for row in rows:
+            try:
+                category = BudgetCategory(row.budget_category)
+            except ValueError:
+                logger.warning(
+                    f"Skipping assigned budget row with invalid category "
+                    f"for project={item.name} budget_id={row.budget_id} category={row.budget_category}"
+                )
+                continue
+            budgets.append(
+                ProjectAssignedBudgetSummary(
+                    budget_id=row.budget_id,
+                    name=row.name,
+                    budget_category=category,
+                    soft_budget=row.soft_budget,
+                    max_budget=row.max_budget,
+                    budget_duration=row.budget_duration,
+                    budget_reset_at=row.budget_reset_at,
+                    provider_sync_status=row.provider_sync_status,
+                    member_count=row.member_count,
+                    allocated_member_budget_total=row.allocated_member_budget_total,
+                    current_spending=row.current_spending,
+                )
+            )
+        item.budgets = budgets
+
+
+def _manageable_project_names(enriched_projects: list[dict], user: User) -> list[str]:
+    return [
+        proj["name"]
+        for proj in enriched_projects
+        if user.is_admin or proj.get("is_project_admin") or proj.get("project_type") == Application.ProjectType.PERSONAL
+    ]
+
+
+def _latest_key_rows_by_project(key_rows: list[object]) -> dict[str, object]:
+    latest_key_by_project: dict[str, object] = {}
+    for row in key_rows:
+        existing = latest_key_by_project.get(row.project_name)
+        if existing is None or row.spend_date > existing.spend_date:
+            latest_key_by_project[row.project_name] = row
+    return latest_key_by_project
+
+
+def _budget_rows_grouped_by_project(budget_rows: list[object]) -> dict[str, list[object]]:
+    latest_budget_by_project_and_id: dict[tuple[str, str | None], object] = {}
+    for row in budget_rows:
+        key = (row.project_name, row.budget_id)
+        existing = latest_budget_by_project_and_id.get(key)
+        if existing is None or row.spend_date > existing.spend_date:
+            latest_budget_by_project_and_id[key] = row
+
+    budget_rows_by_project: dict[str, list[object]] = {}
+    for row in latest_budget_by_project_and_id.values():
+        budget_rows_by_project.setdefault(row.project_name, []).append(row)
+    return budget_rows_by_project
+
+
+def _project_spending_summary(
+    key_row: object | None,
+    budget_rows: list[object],
+    budgets_map: dict[str, Budget],
+) -> ProjectSpendingSummary | None:
+    if key_row is None and not budget_rows:
+        return None
+
+    current = (float(key_row.budget_period_spend) if key_row is not None else 0.0) + sum(
+        float(row.budget_period_spend) for row in budget_rows
+    )
+    meta_row = key_row if key_row is not None else budget_rows[0]
+    meta_budget = budgets_map.get(meta_row.budget_id) if meta_row.budget_id else None
+    budget_limit = float(meta_budget.max_budget) if meta_budget is not None else None
+    total_pct = (current / budget_limit * 100) if budget_limit else 0.0
+
+    return ProjectSpendingSummary(
+        current_spending=round(current, 2),
+        budget_limit=round(budget_limit, 2) if budget_limit is not None else None,
+        total_percent=round(total_pct, 2),
+    )
+
+
+async def _attach_project_spending_summaries(
+    items: list[ProjectListItem],
+    enriched_projects: list[dict],
+    user: User,
+) -> None:
+    manageable_names = _manageable_project_names(enriched_projects, user)
+    if not manageable_names:
+        return
+
+    async with get_async_session() as async_session:
+        key_rows = await _spend_repo.get_latest_spending_by_project(
+            async_session, manageable_names, spend_subject_type="key"
+        )
+        budget_rows = await _spend_repo.get_latest_spending_by_project(
+            async_session, manageable_names, spend_subject_type="budget"
+        )
+        budgets_map = await budget_repository.get_all_keyed_by_id(async_session)
+
+    latest_key_by_project = _latest_key_rows_by_project(key_rows)
+    budget_rows_by_project = _budget_rows_grouped_by_project(budget_rows)
+    for item in items:
+        item.spending = _project_spending_summary(
+            key_row=latest_key_by_project.get(item.name),
+            budget_rows=budget_rows_by_project.get(item.name, []),
+            budgets_map=budgets_map,
+        )
+
+
 @router.post("/projects", response_model=ProjectCreateResponse, status_code=201)
 def create_project(payload: ProjectCreateRequest, user: User = Depends(authenticate)):
     """Create a new shared project."""
@@ -459,6 +629,7 @@ def create_project(payload: ProjectCreateRequest, user: User = Depends(authentic
         created_at=project.date,
         cost_center_id=getattr(project, "cost_center_id", None),
         cost_center_name=_resolve_cost_center_name(getattr(project, "cost_center_id", None)),
+        project_member_budget_tracking_enabled=SettingsService.get_project_member_budget_tracking_enabled(project.name),
     )
 
 
@@ -476,6 +647,18 @@ async def list_projects(
     include_spending: bool = Query(
         False,
         description="Include compact spending summary for manageable projects",
+    ),
+    include_budgets: bool = Query(
+        False,
+        description="Include compact assigned budget summaries for project rows",
+    ),
+    has_assigned_budgets: bool = Query(
+        False,
+        description="Return only projects with at least one active assigned project budget",
+    ),
+    budget_category: Optional[BudgetCategory] = Query(
+        None,
+        description="Filter assigned project budgets by category",
     ),
     sort_by: Optional[Literal["name", "created_at"]] = Query(
         None, description="Sort field; ignored when search is active (relevance ordering takes precedence)"
@@ -496,6 +679,8 @@ async def list_projects(
     """
 
     _ensure_user_management_enabled()
+    if include_budgets or has_assigned_budgets or budget_category is not None:
+        _ensure_project_budget_list_supported()
 
     enriched_projects, total_count = await asyncio.to_thread(
         _list_projects_sync,
@@ -504,6 +689,8 @@ async def list_projects(
         search=search,
         page=page,
         per_page=per_page,
+        has_assigned_budgets=has_assigned_budgets,
+        budget_category=_budget_category_value(budget_category),
         include_counters=include_counters,
         sort_by=sort_by,
         sort_order=sort_order,
@@ -511,60 +698,11 @@ async def list_projects(
 
     items = [ProjectListItem(**proj) for proj in enriched_projects]
 
+    if include_budgets:
+        await _attach_assigned_budget_summaries(items, budget_category)
+
     if include_spending:
-        manageable_names = [
-            proj["name"]
-            for proj in enriched_projects
-            if user.is_admin
-            or proj.get("is_project_admin")
-            or proj.get("project_type") == Application.ProjectType.PERSONAL
-        ]
-        if manageable_names:
-            async with get_async_session() as async_session:
-                key_rows = await _spend_repo.get_latest_spending_by_project(
-                    async_session, manageable_names, spend_subject_type="key"
-                )
-                budget_rows = await _spend_repo.get_latest_spending_by_project(
-                    async_session, manageable_names, spend_subject_type="budget"
-                )
-                budgets_map = await budget_repository.get_all_keyed_by_id(async_session)
-            # For key rows: keep only the single latest row per project (mirrors detail endpoint).
-            # get_latest_spending_by_project may return multiple rows per project when a project
-            # has multiple key_hashes, so we deduplicate by taking max spend_date.
-            latest_key_by_project: dict[str, object] = {}
-            for row in key_rows:
-                existing = latest_key_by_project.get(row.project_name)
-                if existing is None or row.spend_date > existing.spend_date:
-                    latest_key_by_project[row.project_name] = row
-            # For budget rows: deduplicate by (project_name, budget_id) keeping latest spend_date,
-            # then group by project. The repository join may return duplicates when multiple
-            # budget_ids share the same spend_date within a project.
-            latest_budget_by_project_and_id: dict[tuple[str, str | None], object] = {}
-            for row in budget_rows:
-                key = (row.project_name, row.budget_id)
-                existing = latest_budget_by_project_and_id.get(key)
-                if existing is None or row.spend_date > existing.spend_date:
-                    latest_budget_by_project_and_id[key] = row
-            budget_rows_by_project: dict[str, list] = {}
-            for row in latest_budget_by_project_and_id.values():
-                budget_rows_by_project.setdefault(row.project_name, []).append(row)
-            for item in items:
-                key_row = latest_key_by_project.get(item.name)
-                b_rows = budget_rows_by_project.get(item.name, [])
-                if key_row is not None or b_rows:
-                    current = (float(key_row.budget_period_spend) if key_row is not None else 0.0) + sum(
-                        float(r.budget_period_spend) for r in b_rows
-                    )
-                    meta_row = key_row if key_row is not None else (b_rows[0] if b_rows else None)
-                    meta_budget_id = meta_row.budget_id if meta_row else None
-                    meta_budget = budgets_map.get(meta_budget_id) if meta_budget_id else None
-                    budget_limit = float(meta_budget.max_budget) if meta_budget is not None else None
-                    total_pct = (current / budget_limit * 100) if budget_limit else 0.0
-                    item.spending = ProjectSpendingSummary(
-                        current_spending=round(current, 2),
-                        budget_limit=round(budget_limit, 2) if budget_limit is not None else None,
-                        total_percent=round(total_pct, 2),
-                    )
+        await _attach_project_spending_summaries(items, enriched_projects, user)
 
     return PaginatedProjectListResponse(
         data=items,
@@ -612,7 +750,20 @@ async def get_project_detail(
         action=f"{request.method} {request.url.path}",
     )
 
-    response = ProjectDetailResponse(
+    response = _build_project_detail_response(project_detail, project_name)
+
+    if include_spending and _can_see_project_spending(user, project_detail):
+        await _attach_project_detail_spending(
+            response=response,
+            project_name=project_name,
+            spending_rows_limit=spending_rows_limit,
+        )
+
+    return response
+
+
+def _build_project_detail_response(project_detail: dict, project_name: str) -> ProjectDetailResponse:
+    return ProjectDetailResponse(
         name=project_detail["name"],
         description=project_detail["description"],
         project_type=project_detail["project_type"],
@@ -622,51 +773,91 @@ async def get_project_detail(
         admin_count=project_detail["admin_count"],
         cost_center_id=project_detail.get("cost_center_id"),
         cost_center_name=project_detail.get("cost_center_name"),
+        project_member_budget_tracking_enabled=SettingsService.get_project_member_budget_tracking_enabled(project_name),
         members=[ProjectMember(**m) for m in project_detail["members"]],
     )
 
+
+def _can_see_project_spending(user: User, project_detail: dict) -> bool:
     is_personal = project_detail.get("project_type") == Application.ProjectType.PERSONAL
-    can_see_spending = user.is_admin or project_detail.get("is_project_admin", False) or is_personal
-    if include_spending and can_see_spending:
-        async with get_async_session() as async_session:
-            key_row = await _spend_repo.get_latest_key_spending_for_project(async_session, project_name)
-            budget_rows = await _spend_repo.get_latest_budget_rows_for_project(
-                async_session, project_name, rows_limit=spending_rows_limit
-            )
-            budgets_map = await budget_repository.get_all_keyed_by_id(async_session)
+    is_project_admin = bool(project_detail.get("is_project_admin"))
+    return user.is_admin or is_project_admin or is_personal
 
-        if key_row is not None or budget_rows:
-            # Aggregate spend across all types (key + all budget rows) to match widget total
-            current = (float(key_row.budget_period_spend) if key_row is not None else 0.0) + sum(
-                float(r.budget_period_spend) for r in budget_rows
-            )
-            cumulative = (float(key_row.cumulative_spend) if key_row is not None else 0.0) + sum(
-                float(r.cumulative_spend) for r in budget_rows
-            )
-            meta_row = key_row if key_row is not None else budget_rows[0]
-            meta_budget_id = meta_row.budget_id if meta_row else None
-            meta_budget = budgets_map.get(meta_budget_id) if meta_budget_id else None
-            budget_limit = float(meta_budget.max_budget) if meta_budget is not None else None
-            budget_reset_at = _parse_budget_reset_at(meta_budget.budget_reset_at) if meta_budget else None
-            total_pct = (current / budget_limit * 100) if budget_limit else 0.0
-            response.spending = ProjectSpendingDetail(
-                current_spending=round(current, 2),
-                cumulative_spend=round(cumulative, 2),
-                budget_reset_at=budget_reset_at,
-                time_until_reset=_format_time_until_reset(budget_reset_at),
-                budget_limit=round(budget_limit, 2) if budget_limit is not None else None,
-                total=round(total_pct, 2),
-            )
 
-        widget_rows = _build_widget_rows(budget_rows, project_name, budgets_by_id=budgets_map)
-        if key_row is not None:
-            widget_rows.append(_key_row_to_widget(key_row, budgets_by_id=budgets_map))
-        if widget_rows:
-            response.spending_widget = ProjectSpendingWidget(
-                data=SpendingWidgetData(columns=_WIDGET_COLUMNS, rows=widget_rows)
-            )
+async def _attach_project_detail_spending(
+    *,
+    response: ProjectDetailResponse,
+    project_name: str,
+    spending_rows_limit: int,
+) -> None:
+    async with get_async_session() as async_session:
+        key_row = await _spend_repo.get_latest_key_spending_for_project(async_session, project_name)
+        budget_rows = await _spend_repo.get_latest_budget_rows_for_project(
+            async_session, project_name, rows_limit=spending_rows_limit
+        )
+        budgets_map = await budget_repository.get_all_keyed_by_id(async_session)
 
-    return response
+    _populate_project_spending_summary(
+        response=response,
+        key_row=key_row,
+        budget_rows=budget_rows,
+        budgets_map=budgets_map,
+    )
+    _populate_project_spending_widget(
+        response=response,
+        project_name=project_name,
+        key_row=key_row,
+        budget_rows=budget_rows,
+        budgets_map=budgets_map,
+    )
+
+
+def _populate_project_spending_summary(
+    *,
+    response: ProjectDetailResponse,
+    key_row,
+    budget_rows: list,
+    budgets_map: dict,
+) -> None:
+    if key_row is None and not budget_rows:
+        return
+
+    current = (float(key_row.budget_period_spend) if key_row is not None else 0.0) + sum(
+        float(row.budget_period_spend) for row in budget_rows
+    )
+    cumulative = (float(key_row.cumulative_spend) if key_row is not None else 0.0) + sum(
+        float(row.cumulative_spend) for row in budget_rows
+    )
+    meta_row = key_row if key_row is not None else budget_rows[0]
+    meta_budget = budgets_map.get(meta_row.budget_id) if meta_row and meta_row.budget_id else None
+    budget_limit = float(meta_budget.max_budget) if meta_budget is not None else None
+    budget_reset_at = _parse_budget_reset_at(meta_budget.budget_reset_at) if meta_budget else None
+    total_pct = (current / budget_limit * 100) if budget_limit else 0.0
+    response.spending = ProjectSpendingDetail(
+        current_spending=round(current, 2),
+        cumulative_spend=round(cumulative, 2),
+        budget_reset_at=budget_reset_at,
+        time_until_reset=_format_time_until_reset(budget_reset_at),
+        budget_limit=round(budget_limit, 2) if budget_limit is not None else None,
+        total=round(total_pct, 2),
+    )
+
+
+def _populate_project_spending_widget(
+    *,
+    response: ProjectDetailResponse,
+    project_name: str,
+    key_row,
+    budget_rows: list,
+    budgets_map: dict,
+) -> None:
+    widget_rows = _build_widget_rows(budget_rows, project_name, budgets_by_id=budgets_map)
+    if key_row is not None:
+        widget_rows.append(_key_row_to_widget(key_row, budgets_by_id=budgets_map))
+    if widget_rows:
+        response.spending_widget = ProjectSpendingWidget(
+            data=SpendingWidgetData(columns=_WIDGET_COLUMNS, rows=widget_rows)
+        )
 
 
 @router.patch("/projects/{projectName}", response_model=ProjectCreateResponse)
@@ -684,6 +875,7 @@ def update_project(
         description=payload.description,
         cost_center_id=None if payload.clear_cost_center else payload.cost_center_id,
         clear_cost_center=payload.clear_cost_center,
+        project_member_budget_tracking_enabled=payload.project_member_budget_tracking_enabled,
     )
 
     return ProjectCreateResponse(
@@ -694,6 +886,7 @@ def update_project(
         created_at=project.date or datetime.now(UTC),
         cost_center_id=getattr(project, "cost_center_id", None),
         cost_center_name=_resolve_cost_center_name(getattr(project, "cost_center_id", None)),
+        project_member_budget_tracking_enabled=SettingsService.get_project_member_budget_tracking_enabled(project.name),
     )
 
 

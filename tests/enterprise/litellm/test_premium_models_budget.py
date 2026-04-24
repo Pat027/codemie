@@ -148,11 +148,11 @@ class TestIsPremiumModelsEnabled:
 
 
 class TestIsPremiumModel:
-    def test_returns_false_when_feature_disabled(self):
-        with _patch_budget_name(""):
+    def test_returns_true_without_predefined_budget_when_alias_matches(self):
+        with _patch_budget_name(""), _patch_aliases(["opus"]):
             from codemie.enterprise.litellm.dependencies import is_premium_model
 
-            assert is_premium_model("claude-opus-4") is False
+            assert is_premium_model("claude-opus-4") is True
 
     def test_returns_false_when_aliases_empty(self):
         with _patch_budget_name("premium_models"), _patch_aliases([]):
@@ -191,11 +191,13 @@ class TestIsPremiumModel:
 
 
 class TestGetPremiumUsername:
-    def test_returns_none_when_feature_disabled(self):
-        with _patch_budget_name(""):
+    def test_returns_derived_username_without_predefined_budget_when_alias_matches(self):
+        with _patch_budget_name(""), _patch_aliases(["opus"]):
             from codemie.enterprise.litellm.dependencies import get_premium_username
 
-            assert get_premium_username("user@example.com", "claude-opus-4") is None
+            assert (
+                get_premium_username("user@example.com", "claude-opus-4") == "user@example.com_codemie_premium_models"
+            )
 
     def test_returns_none_for_non_premium_model(self):
         with _patch_budget_name("premium_models"), _patch_aliases(["opus"]):

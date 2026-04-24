@@ -2,7 +2,7 @@ repos:
   - repo: local
     hooks:
       - id: codemie-pre-commit
-        name: Codemie pre-commit (ruff fast fix + verify)
+        name: Codemie pre-commit (ruff fast fix + tests + sonar)
         entry: bash -lc 'set -o pipefail; bash scripts/git-hooks/pre_commit.sh 2>&1 | tee /dev/tty'
         language: system
         pass_filenames: false

@@ -666,8 +666,8 @@ class GetKeySpendingTool(CodeMieTool):
         size: int = 100,
     ):
         """Execute get_key_spending tool."""
-        from codemie.enterprise.litellm import get_litellm_service_or_none
         from codemie.core.exceptions import ServiceUnavailableError
+        from codemie.service.llm_proxy.provider_registry import get_active_llm_proxy_provider
 
         # Admin-only check
         if not self.user.is_admin:
@@ -680,19 +680,18 @@ class GetKeySpendingTool(CodeMieTool):
             f"(key_aliases={key_aliases}, include_details={include_details}, page={page}, size={size})"
         )
 
-        # Get LiteLLM service from enterprise
-        litellm_service = get_litellm_service_or_none()
-        if litellm_service is None:
-            logger.warning("LiteLLM service not available - cannot retrieve key spending data")
+        provider = get_active_llm_proxy_provider()
+        if not provider.is_available():
+            logger.warning("LLM proxy provider not available - cannot retrieve key spending data")
             raise ServiceUnavailableError(
                 "LiteLLM key spending analytics are not available", service_name="LiteLLM Enterprise"
             )
 
         # Get key spending data (always fetches full data from LiteLLM)
         keys_data = (
-            litellm_service.get_key_info(key_aliases, include_details=True, page=page, size=size)
+            provider.get_keys_info_by_alias(key_aliases, include_details=True, page=page, size=size)
             if key_aliases
-            else litellm_service.get_all_keys_spending(include_details=True, page=page, size=size)
+            else provider.get_all_keys_spending(include_details=True, page=page, size=size)
         )
 
         # Transform to output format, filtering fields based on include_details

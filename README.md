@@ -127,6 +127,7 @@ docker build -t codemie:latest .
 - **Fix license headers**: `make license-fix` - Add missing license headers
 - **Scan for secrets**: `make gitleaks` - Run gitleaks in Docker to scan for hardcoded secrets
 - **Run ALL checks + tests** (strictly needed before commit): `make verify` - Runs ruff, license-check, gitleaks, and tests
+- **Run local SonarQube scan**: `make sonar-local` - Generates `coverage.xml`, runs the official `sonar-scanner` using the shared `.sonarlint/connectedMode.json` binding, and prints branch Sonar details automatically if the scan fails
 - **Import AI Katas**: `make import-katas` - Clone and import AI katas from GitHub repository
 
 ### Git Hooks (pre-commit)
@@ -143,7 +144,7 @@ Install:
 Commit flow:
 - `ruff format` + `ruff check --fix`
 - If files changed: lists changed files and blocks commit; stage and commit again (tests run once next attempt)
-- If no changes: `ruff check` + `pytest`; prints concise test summary and blocks commit on failures
+- If no changes: `ruff check` + `pytest` + `make sonar-local`; prints concise test summary and blocks commit on failures
 
 Manual:
 - Run all hooks: `poetry run pre-commit run --all-files`
@@ -221,6 +222,33 @@ The license checker:
 - Returns non-zero exit code if headers are missing (CI-friendly)
 
 For more details, see [scripts/license_headers/README.md](scripts/license_headers/README.md).
+
+### Local SonarQube Scan
+
+Use this when you want a local pre-CI SonarQube check against the same remote project that JetBrains connected mode uses:
+
+```bash
+make sonar-local
+```
+
+This command:
+- Reads the SonarQube server URL and project key from `.sonarlint/connectedMode.json`
+- Reads the current git branch and sends it as `sonar.branch.name`
+- Generates `coverage.xml` by running the test suite with coverage enabled
+- Runs `sonar-scanner` and waits for the quality gate result
+
+Requirements:
+- `SONAR_TOKEN` must be set in your environment
+- `poetry` and `sonar-scanner` must be available on your `PATH`
+- Install the official SonarScanner CLI before running this command
+- The repository must be on a named git branch, or `SONAR_BRANCH_NAME` must be set explicitly
+
+Behavior:
+- If `SONAR_TOKEN` is missing, the command prints a clear skip message and exits successfully
+- If the configured SonarQube server is unreachable, the command prints a clear skip message and exits successfully
+- Test failures, invalid Sonar credentials, and Sonar quality gate failures still fail the command
+
+This same command is also executed by the repo pre-commit hook after Ruff and pytest pass.
 
 ### Tools (`src/codemie_tools/`)
 

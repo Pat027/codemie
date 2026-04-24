@@ -23,8 +23,12 @@ from pydantic import BaseModel, Field
 from codemie.clients.postgres import get_async_session
 from codemie.configs.budget_config import budget_config
 from codemie.enterprise.litellm import require_litellm_enabled
-from codemie.enterprise.litellm.budget_categories import BudgetCategory
-from codemie.rest_api.security.authentication import authenticate, maintainer_access_only
+from codemie.service.budget.budget_enums import BudgetCategory
+from codemie.rest_api.security.authentication import (
+    admin_or_maintainer_access_only,
+    authenticate,
+    maintainer_access_only,
+)
 from codemie.rest_api.security.user import User
 from codemie.service.budget.budget_service import budget_service
 
@@ -148,7 +152,7 @@ async def list_budgets(
     per_page: int = Query(20, ge=1, le=100),
     category: Optional[BudgetCategory] = Query(None, description="Filter by budget_category"),
     user: User = Depends(authenticate),
-    _: None = Depends(maintainer_access_only),
+    _: None = Depends(admin_or_maintainer_access_only),
 ):
     """Paginated list of budgets with optional category filter. Super admin only."""
     require_litellm_enabled()
@@ -192,14 +196,14 @@ async def backfill_user_budget_assignments(
     """Backfill user budget assignments from existing LiteLLM customers. Super admin only."""
     require_litellm_enabled()
     async with get_async_session() as session:
-        return await budget_service.backfill_user_budget_assignments_from_litellm(session, actor_id=user.id)
+        return await budget_service.backfill_user_budget_assignments(session, actor_id=user.id)
 
 
 @router.get("/{budgetId}", response_model=BudgetResponse)
 async def get_budget(
     budgetId: str,  # noqa: N803
     user: User = Depends(authenticate),
-    _: None = Depends(maintainer_access_only),
+    _: None = Depends(admin_or_maintainer_access_only),
 ):
     """Get budget detail. Super admin only."""
     require_litellm_enabled()

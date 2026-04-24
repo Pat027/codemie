@@ -30,13 +30,10 @@ from codemie.enterprise.langfuse import (
     set_global_langfuse_service,
 )
 from codemie.enterprise.litellm import (
-    backfill_user_budget_assignments,
     close_llm_proxy_client,
-    ensure_predefined_budgets,
     initialize_litellm_from_config,
     is_litellm_enabled,
     set_global_litellm_service,
-    sync_budgets_from_litellm,
 )
 from codemie.enterprise.plugin import (
     initialize_plugin_from_config,
@@ -47,7 +44,7 @@ from codemie.configs.logger import set_logging_info, logger
 from codemie.core.constants import APP_DESCRIPTION
 from codemie.core.exceptions import ExtendedHTTPException
 from codemie.service.security.token_providers.base_provider import BrokerAuthRequiredException
-from codemie.rest_api.routers import budget_router
+from codemie.rest_api.routers import budget_router, project_budget_router
 from codemie.rest_api.routers import (
     guardrail,
     index,
@@ -104,6 +101,7 @@ from external.deployment_scripts.preconfigured_skills import manage_preconfigure
 from external.deployment_scripts.preconfigured_workflows import create_preconfigured_workflows
 from external.deployment_scripts.preconfigured_katas import import_preconfigured_katas
 from codemie.clients.postgres import alembic_upgrade_postgres
+from codemie.service.budget.startup_reconciliation_service import budget_startup_reconciliation_service
 
 # Rate limiting imports (EPMCDME-10160)
 from slowapi.middleware import SlowAPIMiddleware
@@ -141,12 +139,11 @@ def _setup_litellm_cache_cleanup_scheduler():
     Sets up periodic cleanup jobs using APScheduler based on configured TTL values.
     """
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
-    from codemie.enterprise.litellm import get_litellm_service_or_none
+    from codemie.service.llm_proxy.provider_registry import get_active_llm_proxy_provider
 
-    # Get enterprise service
-    litellm_service = get_litellm_service_or_none()
-    if litellm_service is None:
-        logger.warning("LiteLLM enterprise service not available, skipping cache cleanup scheduler")
+    provider = get_active_llm_proxy_provider()
+    if not provider.is_available():
+        logger.warning("LLM proxy provider not available, skipping cache cleanup scheduler")
         return
 
     litellm_scheduler = AsyncIOScheduler()
@@ -154,7 +151,7 @@ def _setup_litellm_cache_cleanup_scheduler():
     # Customer cache cleanup
     customer_cleanup_interval_minutes = max(1, config.LITELLM_CUSTOMER_CACHE_TTL // 60)
     litellm_scheduler.add_job(
-        litellm_service.clean_expired_cache,
+        provider.clean_expired_customer_cache,
         "interval",
         minutes=customer_cleanup_interval_minutes,
         id="litellm_customer_cache_cleanup",
@@ -164,7 +161,7 @@ def _setup_litellm_cache_cleanup_scheduler():
     # Models cache cleanup
     models_cleanup_interval_minutes = max(1, config.LITELLM_MODELS_CACHE_TTL // 60)
     litellm_scheduler.add_job(
-        litellm_service.clean_expired_models_cache,
+        provider.clean_expired_models_cache,
         "interval",
         minutes=models_cleanup_interval_minutes,
         id="litellm_models_cache_cleanup",
@@ -264,6 +261,20 @@ def _initialize_enterprise_services(app: FastAPI) -> tuple:
     app.state.litellm_service = litellm_service
     set_global_litellm_service(litellm_service)
 
+    if litellm_service is not None:
+        from codemie.enterprise.litellm.llm_proxy_provider_adapter import LiteLLMLLMProxyProvider
+        from codemie.service.llm_proxy.provider_registry import register_llm_proxy_provider
+
+        register_llm_proxy_provider(LiteLLMLLMProxyProvider(litellm_service))
+        logger.info("LiteLLM proxy lifecycle provider registered")
+
+    if litellm_service is not None and config.LLM_PROXY_BUDGET_CHECK_ENABLED:
+        from codemie.enterprise.litellm.budget_provider_adapter import LiteLLMBudgetEnforcementProvider
+        from codemie.service.budget.provider_registry import register_budget_enforcement_provider
+
+        register_budget_enforcement_provider(LiteLLMBudgetEnforcementProvider(litellm_service))
+        logger.info("LiteLLM budget enforcement provider registered")
+
     return langfuse_service, litellm_service
 
 
@@ -273,6 +284,28 @@ def _setup_litellm_features():
         _initialize_litellm_models()
         if config.LLM_PROXY_BUDGET_CHECK_ENABLED:
             _setup_litellm_cache_cleanup_scheduler()
+
+
+def _schedule_budget_reconciliation(app: FastAPI, tasks: list[asyncio.Task]) -> None:
+    """Schedule budget reconciliation after readiness if enabled."""
+    if not is_litellm_enabled():
+        return
+
+    if not config.LLM_PROXY_BUDGET_CHECK_ENABLED:
+        logger.info("Budget check disabled, skipping background task scheduling")
+        return
+
+    if not config.LLM_PROXY_BUDGET_RECONCILIATION_ENABLED:
+        logger.info("Budget startup reconciliation disabled, skipping background task scheduling")
+        return
+
+    reconciliation_task = asyncio.create_task(
+        budget_startup_reconciliation_service.run(),
+        name="budget_startup_reconciliation",
+    )
+    app.state.budget_reconciliation_task = reconciliation_task
+    tasks.append(reconciliation_task)
+    logger.info("Budget startup reconciliation task scheduled")
 
 
 def _initialize_database_and_defaults():
@@ -325,13 +358,13 @@ def _setup_conversation_analysis_scheduler(app: FastAPI):
 
 def _setup_spend_tracking_scheduler(app: FastAPI):
     """Setup spend tracking collector scheduler if enabled."""
-    if not config.LITELLM_SPEND_COLLECTOR_ENABLED:
+    if not (config.LITELLM_SPEND_COLLECTOR_ENABLED or config.LITELLM_BUDGET_RESET_TRACKER_ENABLED):
         return
 
     if not config.LLM_PROXY_ENABLED:
         logger.warning(
-            "LITELLM_SPEND_COLLECTOR_ENABLED=True but LLM_PROXY_ENABLED=False; "
-            "spend collector requires the LiteLLM proxy - skipping scheduler setup"
+            "Spend tracking scheduler enabled but LLM_PROXY_ENABLED=False; "
+            "spend tracking requires the LiteLLM proxy — skipping scheduler setup"
         )
         return
 
@@ -409,17 +442,17 @@ async def _run_keycloak_migration() -> None:
         # Non-fatal: log and continue. App starts regardless.
 
 
-async def _shutdown_services(app: FastAPI, langfuse_service, litellm_service, tasks: list):
+async def _shutdown_services(app: FastAPI, langfuse_service, tasks: list):
     """Shutdown all services and background tasks."""
+    from codemie.service.llm_proxy.provider_registry import get_active_llm_proxy_provider
+
     logger.info("Shutting down CodeMie application...")
 
     if langfuse_service is not None:
         langfuse_service.shutdown()
         logger.info("LangFuse service shutdown complete")
 
-    if litellm_service is not None:
-        litellm_service.close()
-        logger.info("LiteLLM service shutdown complete")
+    get_active_llm_proxy_provider().close()
 
     plugin_service = get_global_plugin_service()
     if plugin_service is not None:
@@ -478,13 +511,6 @@ async def lifespan(app: FastAPI):
 
     # Setup LiteLLM features
     _setup_litellm_features()
-    if is_litellm_enabled():
-        if config.LLM_PROXY_BUDGET_CHECK_ENABLED:
-            await ensure_predefined_budgets()
-        if config.LLM_PROXY_BUDGET_SYNC_ENABLED:
-            await sync_budgets_from_litellm()
-        if config.LLM_PROXY_BUDGET_BACKFILL_ENABLED:
-            await backfill_user_budget_assignments()
 
     # Instrument SQLAlchemy engines explicitly after they are created.
     # PostgresClient uses from-imports (sqlmodel.create_engine /
@@ -531,11 +557,12 @@ async def lifespan(app: FastAPI):
     _setup_conversation_analysis_scheduler(app)
     _setup_spend_tracking_scheduler(app)
     _setup_leaderboard_scheduler(app)
+    _schedule_budget_reconciliation(app, tasks)
 
     yield
 
     # Cleanup on shutdown
-    await _shutdown_services(app, langfuse_service, litellm_service, tasks)
+    await _shutdown_services(app, langfuse_service, tasks)
 
 
 def custom_openapi():
@@ -633,7 +660,9 @@ app.include_router(user_kata_progress.router)
 app.include_router(ai_kata.router)
 app.include_router(skill.router)
 app.include_router(dynamic_config.router)
-app.include_router(budget_router.router)
+if is_litellm_enabled() and config.LLM_PROXY_BUDGET_CHECK_ENABLED:
+    app.include_router(budget_router.router)
+app.include_router(project_budget_router.router)
 app.include_router(sharepoint_oauth.router)
 
 # User management routers (EPMCDME-10160)
@@ -778,6 +807,36 @@ async def broker_auth_required_handler(request: Request, exc: BrokerAuthRequired
     )
 
 
+def _validation_error_details(exc: RequestValidationError) -> tuple[list, list[str]]:
+    errors = exc.errors()
+    detailed_errors: list[str] = []
+    for error in errors:
+        loc = error.get("loc", [])
+        msg = error.get("msg", "Validation error")
+        detailed_errors.append(f"{_validation_error_path(loc)}: {msg}")
+    return errors, detailed_errors
+
+
+def _validation_error_path(loc: list) -> str:
+    path_parts: list[str] = []
+    for item in loc:
+        if item == "body":
+            continue
+        if isinstance(item, int):
+            path_parts[-1] = f"{path_parts[-1]}[{item}]"
+            continue
+        path_parts.append(str(item))
+    return ".".join(path_parts) if path_parts else "request"
+
+
+def _validation_error_message(detailed_errors: list[str]) -> str:
+    if not detailed_errors:
+        return "Validation Error"
+    if len(detailed_errors) == 1:
+        return detailed_errors[0]
+    return "; ".join(detailed_errors)
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     """
@@ -787,43 +846,13 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     fails to meet the expected schema or type constraints and converts them into
     a standardized JSON response with detailed field information.
     """
-    logger.exception(exc)
+    errors, detailed_errors = _validation_error_details(exc)
+    error_message = _validation_error_message(detailed_errors)
 
-    # Extract detailed error information
-    errors = exc.errors()
-
-    # Format errors with field location and message
-    detailed_errors = []
-    for error in errors:
-        # Get field path (e.g., ['body', 'history', 0, 'role'])
-        loc = error.get("loc", [])
-        msg = error.get("msg", "Validation error")
-
-        # Convert location to readable string (e.g., "history[0].role")
-        # Skip 'body' as it's the request body marker
-        path_parts = []
-        for item in loc:
-            if item == "body":
-                continue
-            if isinstance(item, int):
-                # Array index
-                path_parts[-1] = f"{path_parts[-1]}[{item}]"
-            else:
-                # Field name
-                path_parts.append(str(item))
-
-        field_path = ".".join(path_parts) if path_parts else "request"
-
-        # Build detailed error message
-        detailed_errors.append(f"{field_path}: {msg}")
-
-    # Join multiple messages
-    if not detailed_errors:
-        error_message = "Validation Error"
-    elif len(detailed_errors) == 1:
-        error_message = detailed_errors[0]
-    else:
-        error_message = "; ".join(detailed_errors)
+    logger.warning(
+        f"Request validation failed: status=422, method={request.method}, path={request.url.path}, "
+        f"errors={detailed_errors or errors}"
+    )
 
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

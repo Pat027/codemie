@@ -14,6 +14,8 @@
 
 """Tests for LiteLLM LLM factory (codemie.enterprise.litellm.llm_factory)."""
 
+import pytest
+
 from unittest.mock import MagicMock, patch
 
 
@@ -226,3 +228,242 @@ class TestCreateLiteLLMEmbeddingModel:
                                         mock_check_budget.assert_called_once_with(
                                             user_email="test@example.com", user_id=None
                                         )
+
+
+class TestResolveDirectProjectBudgetRuntime:
+    """Test _resolve_direct_project_budget_runtime() direct budget path behavior."""
+
+    def test_calls_sync_before_resolve_and_dispatch_and_returns_provider_runtime(self):
+        """Sync helper must run before budget resolve/dispatch and preserve provider values."""
+        from codemie.service.budget.budget_enums import BudgetCategory as CoreBudgetCategory
+        from codemie.enterprise.litellm.llm_factory import _resolve_direct_project_budget_runtime
+
+        model_details = MagicMock()
+        model_details.base_name = "gpt-4.1"
+
+        litellm_context = MagicMock()
+        litellm_context.current_project = "project-1"
+
+        resolved = MagicMock()
+        provider_result = MagicMock()
+        provider_result.body_overrides = {"user": "runtime-user"}
+        provider_result.headers = {"x-budget-runtime": "true"}
+        provider_result.api_key = "runtime-api-key"
+        provider_result.base_url = "https://runtime.example"
+
+        execution_order: list[str] = []
+
+        def _helper_side_effect(**_: str) -> None:
+            execution_order.append("sync")
+
+        def _resolve_side_effect(**_: str) -> MagicMock:
+            execution_order.append("resolve")
+            return resolved
+
+        def _dispatch_side_effect(*args: object, **kwargs: str) -> MagicMock:
+            assert args[0] is resolved
+            execution_order.append("dispatch")
+            return provider_result
+
+        with patch("codemie.enterprise.litellm.dependencies.get_premium_username", return_value=None):
+            with patch(
+                "codemie.enterprise.litellm.llm_factory._get_direct_request_category_budget_id", return_value=None
+            ):
+                with patch(
+                    "codemie.service.settings.settings.SettingsService.get_project_member_budget_tracking_enabled",
+                    return_value=True,
+                ):
+                    with patch(
+                        "codemie.enterprise.litellm.llm_factory.ensure_project_member_runtime_ready_sync",
+                        side_effect=_helper_side_effect,
+                    ) as mock_sync:
+                        with patch(
+                            "codemie.service.budget.budget_resolution_service.budget_resolution_service.resolve_sync",
+                            side_effect=_resolve_side_effect,
+                        ) as mock_resolve:
+                            with patch(
+                                "codemie.service.budget.budget_resolution_service.budget_resolution_service.dispatch_runtime_sync",
+                                side_effect=_dispatch_side_effect,
+                            ) as mock_dispatch:
+                                result = _resolve_direct_project_budget_runtime(
+                                    llm_model_details=model_details,
+                                    litellm_context=litellm_context,
+                                    user_id="user-1",
+                                    user_email="user@example.com",
+                                )
+
+        assert execution_order == ["sync", "resolve", "dispatch"]
+        assert result == (
+            "runtime-user",
+            {"x-budget-runtime": "true"},
+            "runtime-api-key",
+            "https://runtime.example",
+        )
+        mock_sync.assert_called_once_with(
+            user_id="user-1",
+            user_email="user@example.com",
+            project_name="project-1",
+            budget_category=CoreBudgetCategory.PLATFORM,
+        )
+        mock_resolve.assert_called_once_with(
+            user_id="user-1",
+            project_name="project-1",
+            budget_category=CoreBudgetCategory.PLATFORM,
+        )
+        mock_dispatch.assert_called_once_with(
+            resolved,
+            user_id="user-1",
+            user_email="user@example.com",
+            model="gpt-4.1",
+        )
+
+    def test_helper_failure_bubbles_up(self):
+        """Sync helper failures must not be swallowed."""
+        from codemie.enterprise.litellm.llm_factory import _resolve_direct_project_budget_runtime
+
+        model_details = MagicMock()
+        model_details.base_name = "gpt-4.1"
+
+        litellm_context = MagicMock()
+        litellm_context.current_project = "project-1"
+
+        with patch("codemie.enterprise.litellm.dependencies.get_premium_username", return_value=None):
+            with patch(
+                "codemie.enterprise.litellm.llm_factory._get_direct_request_category_budget_id", return_value=None
+            ):
+                with patch(
+                    "codemie.service.settings.settings.SettingsService.get_project_member_budget_tracking_enabled",
+                    return_value=True,
+                ):
+                    with patch(
+                        "codemie.enterprise.litellm.llm_factory.ensure_project_member_runtime_ready_sync",
+                        side_effect=RuntimeError("sync failed"),
+                    ):
+                        with patch(
+                            "codemie.service.budget.budget_resolution_service.budget_resolution_service.resolve_sync"
+                        ) as mock_resolve:
+                            with patch(
+                                "codemie.service.budget.budget_resolution_service.budget_resolution_service.dispatch_runtime_sync"
+                            ) as mock_dispatch:
+                                with pytest.raises(RuntimeError, match="sync failed"):
+                                    _resolve_direct_project_budget_runtime(
+                                        llm_model_details=model_details,
+                                        litellm_context=litellm_context,
+                                        user_id="user-1",
+                                        user_email="user@example.com",
+                                    )
+
+        mock_resolve.assert_not_called()
+        mock_dispatch.assert_not_called()
+
+    @pytest.mark.parametrize("missing_field", ["context", "project", "user_id", "user_email"])
+    def test_early_return_when_required_inputs_missing(self, missing_field: str):
+        """Missing context/project/user inputs must keep the existing early return behavior."""
+        from codemie.enterprise.litellm.llm_factory import _resolve_direct_project_budget_runtime
+
+        model_details = MagicMock()
+        model_details.base_name = "gpt-4.1"
+
+        litellm_context = MagicMock()
+        litellm_context.current_project = "project-1"
+        user_id: str | None = "user-1"
+        user_email: str | None = "user@example.com"
+
+        if missing_field == "context":
+            litellm_context = None
+        if missing_field == "project":
+            litellm_context.current_project = None
+        if missing_field == "user_id":
+            user_id = None
+        if missing_field == "user_email":
+            user_email = None
+
+        with patch("codemie.enterprise.litellm.llm_factory.ensure_project_member_runtime_ready_sync") as mock_sync:
+            with patch(
+                "codemie.service.budget.budget_resolution_service.budget_resolution_service.resolve_sync"
+            ) as mock_resolve:
+                with patch(
+                    "codemie.service.budget.budget_resolution_service.budget_resolution_service.dispatch_runtime_sync"
+                ) as mock_dispatch:
+                    result = _resolve_direct_project_budget_runtime(
+                        llm_model_details=model_details,
+                        litellm_context=litellm_context,
+                        user_id=user_id,
+                        user_email=user_email,
+                    )
+
+        assert result == (None, {}, None, None)
+        mock_sync.assert_not_called()
+        mock_resolve.assert_not_called()
+        mock_dispatch.assert_not_called()
+
+    def test_premium_model_uses_premium_category_when_runtime_budget_assigned(self):
+        from codemie.service.budget.budget_enums import BudgetCategory as CoreBudgetCategory
+        from codemie.enterprise.litellm.llm_factory import _resolve_direct_project_budget_runtime
+
+        model_details = MagicMock()
+        model_details.base_name = "claude-opus-4-6-20260205"
+
+        litellm_context = MagicMock()
+        litellm_context.current_project = "project-1"
+
+        resolved = MagicMock()
+        provider_result = MagicMock()
+        provider_result.body_overrides = {"user": "premium-runtime-user"}
+        provider_result.headers = {"x-budget-runtime": "true"}
+        provider_result.api_key = "runtime-api-key"
+        provider_result.base_url = "https://runtime.example"
+
+        with patch(
+            "codemie.enterprise.litellm.dependencies.get_premium_username",
+            return_value="user@example.com_codemie_premium_models",
+        ):
+            with patch(
+                "codemie.enterprise.litellm.llm_factory._get_direct_request_category_budget_id",
+                return_value="premium-runtime-budget",
+            ):
+                with patch(
+                    "codemie.service.settings.settings.SettingsService.get_project_member_budget_tracking_enabled",
+                    return_value=True,
+                ):
+                    with patch(
+                        "codemie.enterprise.litellm.llm_factory.ensure_project_member_runtime_ready_sync"
+                    ) as mock_sync:
+                        with patch(
+                            "codemie.service.budget.budget_resolution_service.budget_resolution_service.resolve_sync",
+                            return_value=resolved,
+                        ) as mock_resolve:
+                            with patch(
+                                "codemie.service.budget.budget_resolution_service.budget_resolution_service.dispatch_runtime_sync",
+                                return_value=provider_result,
+                            ) as mock_dispatch:
+                                result = _resolve_direct_project_budget_runtime(
+                                    llm_model_details=model_details,
+                                    litellm_context=litellm_context,
+                                    user_id="user-1",
+                                    user_email="user@example.com",
+                                )
+
+        assert result == (
+            "premium-runtime-user",
+            {"x-budget-runtime": "true"},
+            "runtime-api-key",
+            "https://runtime.example",
+        )
+        mock_sync.assert_called_once_with(
+            user_id="user-1",
+            user_email="user@example.com",
+            project_name="project-1",
+            budget_category=CoreBudgetCategory.PREMIUM_MODELS,
+        )
+        mock_resolve.assert_called_once_with(
+            user_id="user-1",
+            project_name="project-1",
+            budget_category=CoreBudgetCategory.PREMIUM_MODELS,
+        )
+        mock_dispatch.assert_called_once_with(
+            resolved,
+            user_id="user-1",
+            user_email="user@example.com",
+            model="claude-opus-4-6-20260205",
+        )

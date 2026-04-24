@@ -60,5 +60,8 @@ import-katas:
 	@echo "Importing AI Katas from GitHub..."
 	poetry run import-katas
 
+sonar-local:
+	@node scripts/sonar/run-local-sonar.js
+
 run:
 	poetry run uvicorn codemie.rest_api.main:app --host=0.0.0.0 --port=8080 --reload

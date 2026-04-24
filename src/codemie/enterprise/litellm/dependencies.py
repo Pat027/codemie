@@ -232,14 +232,11 @@ def require_litellm_enabled() -> None:
 
 
 async def ensure_predefined_budgets() -> None:
-    """Force-create/update all predefined budgets at application startup.
+    """Force-create or update predefined budgets during reconciliation.
 
     Delegates to BudgetService.ensure_predefined_budgets() which keeps both DB
     and LiteLLM in sync. Config is the source of truth — existing values are
     overwritten to match the configured definitions.
-
-    Called once during application startup (in main.py lifespan) when
-    LiteLLM is enabled and LLM_PROXY_BUDGET_CHECK_ENABLED is True.
     """
     from codemie.clients.postgres import get_async_session
     from codemie.service.budget.budget_service import budget_service
@@ -255,13 +252,10 @@ async def ensure_predefined_budgets() -> None:
 
 
 async def sync_budgets_from_litellm() -> None:
-    """Pull all budgets from LiteLLM and upsert into DB at application startup.
+    """Mirror all provider budgets into the local DB during reconciliation.
 
     Delegates to BudgetService.sync_budgets_from_litellm() which mirrors all
     LiteLLM budget definitions into the local DB.
-
-    Called once during application startup (in main.py lifespan) when
-    LiteLLM is enabled and LLM_PROXY_BUDGET_SYNC_ENABLED is True.
     """
     from codemie.clients.postgres import get_async_session
     from codemie.service.budget.budget_service import budget_service
@@ -280,14 +274,36 @@ async def sync_budgets_from_litellm() -> None:
         raise
 
 
+async def backfill_project_budget_assignments_from_settings() -> None:
+    """Migrate project LiteLLM settings into project budget entities during reconciliation.
+
+    Delegates to BudgetService.backfill_project_budget_assignments_from_settings() which creates
+    Budget + ProjectBudgetAssignment + ProjectMemberBudgetAssignment rows for every project
+    LiteLLM key that lacks a corresponding budget hierarchy.
+    """
+    from codemie.clients.postgres import get_async_session
+    from codemie.service.budget.budget_service import budget_service
+
+    logger.info("Starting project budget migration from settings...")
+    try:
+        async with get_async_session() as session:
+            result = await budget_service.backfill_project_budget_assignments_from_settings(session)
+        logger.info(
+            f"✓ Project budget migration complete: migrated={result.migrated}, "
+            f"members={result.migrated_members}, skipped_existing={result.skipped_existing}, "
+            f"skipped_not_found={result.skipped_not_found}, failed={result.failed}, "
+            f"total_settings={result.total_settings}"
+        )
+    except Exception as e:
+        logger.error(f"✗ Project budget migration failed: {e}")
+        raise
+
+
 async def backfill_user_budget_assignments() -> None:
-    """Import existing LiteLLM customer budget assignments into DB at application startup.
+    """Import missing LiteLLM customer budget assignments during reconciliation.
 
-    Delegates to BudgetService.backfill_user_budget_assignments_from_litellm()
+    Delegates to BudgetService.backfill_user_budget_assignments()
     which mirrors missing user/category assignments from LiteLLM customers.
-
-    Called once during application startup (in main.py lifespan) when
-    LiteLLM is enabled and LLM_PROXY_BUDGET_BACKFILL_ENABLED is True.
     """
     from codemie.clients.postgres import get_async_session
     from codemie.service.budget.budget_service import budget_service
@@ -295,7 +311,7 @@ async def backfill_user_budget_assignments() -> None:
     logger.info("Backfilling user budget assignments from LiteLLM...")
     try:
         async with get_async_session() as session:
-            result = await budget_service.backfill_user_budget_assignments_from_litellm(session)
+            result = await budget_service.backfill_user_budget_assignments(session)
         logger.info(
             f"User budget assignments backfilled: imported={result.imported}, "
             f"skipped_existing={result.skipped_existing}, "
@@ -457,16 +473,11 @@ def is_proxy_budget_enabled() -> bool:
 def is_premium_model(model: str) -> bool:
     """Return True when *model* matches any alias in LITELLM_PREMIUM_MODELS_ALIASES (case-insensitive partial match).
 
-    Always returns False when the premium models feature is disabled.
-
     Result is cached per model name for the process lifetime — the alias list is set at
     startup and does not change while the application is running.  Call
     ``is_premium_model.cache_clear()`` in tests that patch the config value.
     """
     from codemie.configs import config
-
-    if not is_premium_models_enabled():
-        return False
 
     aliases: list[str] = config.LITELLM_PREMIUM_MODELS_ALIASES
     if not aliases:
@@ -480,12 +491,12 @@ def get_premium_username(user_email: str, model: str) -> str | None:
     """Derive the LiteLLM username for premium budget attribution.
 
     Returns the stable category-based user_id (``{user_email}_codemie_premium_models``)
-    when the feature is enabled and *model* is a premium model; otherwise ``None``.
-    The username uses a fixed category suffix, independent of the configured budget_id.
+    when *model* matches a configured premium alias; otherwise ``None``. The username
+    uses a fixed category suffix, independent of the configured budget_id.
     """
     from codemie.enterprise.litellm.budget_categories import BudgetCategory, build_user_id
 
-    if not is_premium_models_enabled() or not is_premium_model(model):
+    if not is_premium_model(model):
         return None
 
     return build_user_id(user_email, BudgetCategory.PREMIUM_MODELS)
@@ -574,40 +585,6 @@ def get_customer_spending(user_id: str, on_raise: bool = False):
         return None
 
 
-def get_key_spending_info(key_aliases: list[str], include_details: bool = True):
-    """
-    Get spending information for specific API keys.
-
-    This function wraps the enterprise service call with error handling.
-
-    Args:
-        key_aliases: List of key aliases to query
-        include_details: Include detailed fields
-
-    Returns:
-        List of KeySpendingInfo objects or empty list if not available
-
-    Usage:
-        from codemie.enterprise.litellm import get_key_spending_info
-
-        keys = get_key_spending_info(["key-1", "key-2"])
-        for key in keys:
-            print(f"{key.key_alias}: {key.spend}")
-    """
-    from codemie.configs import logger
-
-    litellm = get_litellm_service_or_none()
-    if litellm is None:
-        logger.debug(_LITELLM_NOT_AVAILABLE_MSG)
-        return []
-
-    try:
-        return litellm.get_key_info(key_aliases, include_details=include_details)
-    except Exception as e:
-        logger.error(f"Error getting key spending info: {e}")
-        return []
-
-
 def get_customer_list_spending(on_raise: bool = False):
     """Get all customer budget entries from LiteLLM /customer/list.
 
@@ -618,7 +595,7 @@ def get_customer_list_spending(on_raise: bool = False):
         on_raise: If True, raises exceptions on errors. If False, returns None on errors.
 
     Returns:
-        List of CustomerBudgetEntry objects, or None if service not enabled or error occurred.
+        List of PersonalBudgetEntry objects, or None if service not enabled or error occurred.
 
     Raises:
         Exception: If a backend error occurs while fetching data (only when on_raise=True)
@@ -667,6 +644,26 @@ def get_all_keys_spending(api_keys: list[str], on_raise: bool = False) -> list[d
         if on_raise:
             raise
         return None
+
+
+def get_key_spending_info(key_aliases: list[str], on_raise: bool = False) -> list[dict]:
+    """Backward-compatible wrapper for fetching key info by alias.
+
+    Legacy callers expect an empty list when LiteLLM is unavailable or the
+    request fails with ``on_raise=False``.
+    """
+    litellm = get_litellm_service_or_none()
+    if litellm is None:
+        logger.debug(_LITELLM_NOT_AVAILABLE_MSG)
+        return []
+
+    try:
+        return litellm.get_key_info(key_aliases)
+    except Exception as e:
+        logger.error(f"Error getting key info: {e}")
+        if on_raise:
+            raise
+        return []
 
 
 def get_user_keys_spending(

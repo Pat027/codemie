@@ -130,6 +130,19 @@ async def admin_access_only(request: Request):
         )
 
 
+async def admin_or_maintainer_access_only(request: Request):
+    """Checks if current user is admin or maintainer."""
+    if not request.state.user.is_admin_or_maintainer:
+        logger.warning("Access denied: admin or maintainer privileges required")
+        raise ExtendedHTTPException(
+            code=status.HTTP_403_FORBIDDEN,
+            message=ACCESS_DENIED_MESSAGE,
+            details="This action requires administrator or maintainer privileges.",
+            help="If you believe you should have elevated access, please contact your"
+            " system administrator or check your account settings.",
+        )
+
+
 async def maintainer_access_only(request: Request):
     """Checks if current user is maintainer."""
     if not request.state.user.is_maintainer:

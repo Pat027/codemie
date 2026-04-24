@@ -65,6 +65,12 @@ poetry run pytest tests/
 
 # Run all checks (recommended before commit)
 make verify
+
+# Run the shared local SonarQube check
+make sonar-local
+
+# Install the repo pre-commit hook
+poetry run pre-commit install
 ```
 
 ## Code Standards

@@ -19,6 +19,8 @@ from codemie.core.exceptions import ExtendedHTTPException
 from codemie.rest_api.security.authentication import (
     authenticate,
     admin_access_only,
+    admin_or_maintainer_access_only,
+    get_bind_key,
     maintainer_access_only,
     application_access_check,
     kb_access_check,
@@ -105,6 +107,38 @@ async def test_maintainer_access_only_success(mocker):
 
     result = await maintainer_access_only(request)
     assert result is None
+
+
+@pytest.mark.anyio
+@patch.object(config, 'ENV', 'dev')
+@patch.object(config, 'ENABLE_USER_MANAGEMENT', True)
+async def test_admin_or_maintainer_access_only_success_for_maintainer(mocker):
+    request = mocker.MagicMock()
+    request.state.user = User(id='1', username='test', roles=[], is_admin=False, is_maintainer=True)
+
+    result = await admin_or_maintainer_access_only(request)
+
+    assert result is None
+
+
+@pytest.mark.anyio
+@patch.object(config, 'ENV', 'dev')
+@patch.object(config, 'ENABLE_USER_MANAGEMENT', True)
+async def test_admin_or_maintainer_access_only_failure_for_regular_user(mocker):
+    request = mocker.MagicMock()
+    request.state.user = User(id='1', username='test', roles=[], is_admin=False, is_maintainer=False)
+
+    with pytest.raises(ExtendedHTTPException) as exc_info:
+        await admin_or_maintainer_access_only(request)
+
+    assert exc_info.value.code == 403
+
+
+def test_get_bind_key_returns_non_empty_string():
+    bind_key = get_bind_key()
+
+    assert isinstance(bind_key, str)
+    assert bind_key
 
 
 @pytest.mark.anyio

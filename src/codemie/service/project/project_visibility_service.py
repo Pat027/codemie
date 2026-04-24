@@ -54,6 +54,8 @@ class ProjectVisibilityService:
         search: Optional[str] = None,
         page: int = 0,
         per_page: int = 20,
+        has_assigned_budgets: bool = False,
+        budget_category: str | None = None,
         include_counters: bool = True,
         sort_by: str | None = None,
         sort_order: str | None = None,
@@ -75,6 +77,8 @@ class ProjectVisibilityService:
             search=search,
             page=page,
             per_page=per_page,
+            has_assigned_budgets=has_assigned_budgets,
+            budget_category=budget_category,
             sort_by=sort_by,
             sort_order=sort_order,
         )
@@ -174,6 +178,7 @@ class ProjectVisibilityService:
             }
             for member in members
         ]
+        current_membership = next((member for member in members if member.user_id == user_id), None)
 
         return {
             "name": project.name,
@@ -186,6 +191,7 @@ class ProjectVisibilityService:
             "cost_center_id": project.cost_center_id,
             "cost_center_name": cost_center.name if cost_center else None,
             "members": member_list,
+            "is_project_admin": bool(current_membership.is_project_admin) if current_membership else False,
         }
 
 

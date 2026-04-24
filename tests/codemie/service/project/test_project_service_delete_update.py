@@ -501,6 +501,58 @@ class TestProjectServiceUpdateProject:
         )
         assert result is updated
 
+    @patch("codemie.service.project.project_service.SettingsService")
+    @patch("codemie.service.project.project_service.cost_center_service")
+    @patch("codemie.service.project.project_service.application_repository")
+    @patch("codemie.service.project.project_service.get_session")
+    def test_update_project_persists_budget_tracking_flag(
+        self,
+        mock_get_session,
+        mock_app_repo,
+        mock_cc_service,
+        mock_settings_service,
+    ):
+        mock_session = MagicMock()
+        mock_get_session.return_value.__enter__.return_value = mock_session
+        project = _make_app("my-project")
+        project.cost_center_id = None
+        mock_app_repo.get_by_name.return_value = project
+        mock_app_repo.update_project.return_value = project
+
+        ProjectService.update_project(
+            user=self._make_super_admin(),
+            project_name="my-project",
+            project_member_budget_tracking_enabled=True,
+        )
+
+        mock_settings_service.set_project_member_budget_tracking_enabled.assert_called_once_with("my-project", True)
+
+    @patch("codemie.service.project.project_service.SettingsService")
+    @patch("codemie.service.project.project_service.cost_center_service")
+    @patch("codemie.service.project.project_service.application_repository")
+    @patch("codemie.service.project.project_service.get_session")
+    def test_update_project_disables_budget_tracking_flag(
+        self,
+        mock_get_session,
+        mock_app_repo,
+        mock_cc_service,
+        mock_settings_service,
+    ):
+        mock_session = MagicMock()
+        mock_get_session.return_value.__enter__.return_value = mock_session
+        project = _make_app("my-project")
+        project.cost_center_id = None
+        mock_app_repo.get_by_name.return_value = project
+        mock_app_repo.update_project.return_value = project
+
+        ProjectService.update_project(
+            user=self._make_super_admin(),
+            project_name="my-project",
+            project_member_budget_tracking_enabled=False,
+        )
+
+        mock_settings_service.set_project_member_budget_tracking_enabled.assert_called_once_with("my-project", False)
+
     @patch("codemie.service.project.project_service.cost_center_service")
     @patch("codemie.service.project.project_service.application_repository")
     @patch("codemie.service.project.project_service.get_session")

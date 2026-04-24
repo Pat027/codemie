@@ -191,21 +191,14 @@ async def reload_llm_models(admin: User = Depends(authenticate)):
     )
 
     try:
-        from codemie.enterprise.litellm import get_litellm_service_or_none, get_available_models
-        from codemie.core.exceptions import ExtendedHTTPException
+        from codemie.enterprise.litellm import require_litellm_enabled, get_available_models
+        from codemie.service.llm_proxy.provider_registry import get_active_llm_proxy_provider
         from codemie.service.llm_service.llm_service import llm_service
 
-        litellm_service = get_litellm_service_or_none()
-        if litellm_service is None:
-            raise ExtendedHTTPException(
-                code=400,
-                message="LiteLLM service not available",
-                details="LiteLLM enterprise package may not be installed or LiteLLM is disabled in configuration.",
-            )
+        require_litellm_enabled()
 
         # Clear the models cache to force fresh fetch
-        litellm_service.models_cache.clear()
-        logger.info("Cleared LiteLLM models cache")
+        get_active_llm_proxy_provider().reload_models_cache()
 
         # Fetch fresh models from LiteLLM proxy
         models = get_available_models()

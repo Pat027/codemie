@@ -45,6 +45,7 @@ from codemie.rest_api.routers.projects import (
 )
 from codemie.configs import config
 from codemie.rest_api.security.user import User
+from codemie.service.budget.budget_enums import BudgetCategory
 
 
 @pytest.fixture
@@ -225,6 +226,9 @@ class TestProjectsVisibilityEndpoints:
             per_page=20,
             include_counters=True,
             include_spending=False,
+            include_budgets=False,
+            has_assigned_budgets=False,
+            budget_category=None,
             sort_by=None,
             sort_order="asc",
             user=regular_user,
@@ -245,6 +249,8 @@ class TestProjectsVisibilityEndpoints:
             search="shared",
             page=0,
             per_page=20,
+            has_assigned_budgets=False,
+            budget_category=None,
             include_counters=True,
             sort_by=None,
             sort_order="asc",
@@ -339,6 +345,99 @@ class TestProjectsVisibilityEndpoints:
         )
 
     @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.budget_repository.get_all_keyed_by_id", new_callable=AsyncMock)
+    @patch("codemie.rest_api.routers.projects._spend_repo.get_latest_budget_rows_for_project", new_callable=AsyncMock)
+    @patch("codemie.rest_api.routers.projects._spend_repo.get_latest_key_spending_for_project", new_callable=AsyncMock)
+    @patch("codemie.rest_api.routers.projects._get_project_detail_sync")
+    @pytest.mark.anyio
+    async def test_get_project_detail_fetches_spending_for_project_admin(
+        self,
+        mock_get_project_detail_sync,
+        mock_get_latest_key_spending,
+        mock_get_latest_budget_rows,
+        mock_get_all_keyed_by_id,
+        mock_config,
+    ):
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        mock_get_project_detail_sync.return_value = {
+            "name": "proj-a",
+            "description": "desc",
+            "project_type": "shared",
+            "created_by": "owner-1",
+            "created_at": datetime(2026, 2, 10, tzinfo=UTC),
+            "user_count": 2,
+            "admin_count": 1,
+            "members": [],
+            "is_project_admin": True,
+        }
+        mock_get_latest_key_spending.return_value = None
+        mock_get_latest_budget_rows.return_value = []
+        mock_get_all_keyed_by_id.return_value = {}
+        project_admin_user = User(
+            id="user-1",
+            username="user1",
+            email="user1@example.com",
+            is_admin=False,
+            admin_project_names=["proj-a"],
+            project_names=["proj-a"],
+        )
+
+        result = await get_project_detail(
+            request=MagicMock(method="GET", url=SimpleNamespace(path="/v1/projects/proj-a")),
+            project_name="proj-a",
+            include_spending=True,
+            user=project_admin_user,
+        )
+
+        assert isinstance(result, ProjectDetailResponse)
+        mock_get_latest_key_spending.assert_awaited_once()
+        mock_get_latest_budget_rows.assert_awaited_once()
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.SettingsService.get_project_member_budget_tracking_enabled")
+    @patch("codemie.rest_api.routers.projects._get_project_detail_sync")
+    @pytest.mark.anyio
+    async def test_get_project_detail_includes_project_member_budget_tracking_flag(
+        self,
+        mock_get_project_detail_sync,
+        mock_get_tracking_enabled,
+        mock_config,
+    ):
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        mock_get_tracking_enabled.return_value = True
+        mock_get_project_detail_sync.return_value = {
+            "name": "proj-a",
+            "description": "desc",
+            "project_type": "shared",
+            "created_by": "owner-1",
+            "created_at": datetime(2026, 2, 10, tzinfo=UTC),
+            "user_count": 2,
+            "admin_count": 1,
+            "members": [],
+            "is_project_admin": True,
+            "cost_center_id": None,
+            "cost_center_name": None,
+        }
+
+        result = await get_project_detail(
+            request=MagicMock(method="GET", url=SimpleNamespace(path="/v1/projects/proj-a")),
+            project_name="proj-a",
+            include_spending=False,
+            user=User(
+                id="user-1",
+                username="user1",
+                email="user1@example.com",
+                is_admin=False,
+                admin_project_names=["proj-a"],
+                project_names=["proj-a"],
+            ),
+        )
+
+        assert isinstance(result, ProjectDetailResponse)
+        assert result.project_member_budget_tracking_enabled is True
+        mock_get_tracking_enabled.assert_called_once_with("proj-a")
+
+    @patch("codemie.rest_api.routers.projects.config")
     @patch("codemie.rest_api.routers.projects.get_session")
     @patch("codemie.rest_api.routers.projects.project_visibility_service")
     @pytest.mark.anyio
@@ -368,7 +467,16 @@ class TestProjectsVisibilityEndpoints:
             100,
         )
 
-        result = await list_projects(search=None, page=0, per_page=10, include_spending=False, user=regular_user)
+        result = await list_projects(
+            search=None,
+            page=0,
+            per_page=10,
+            include_spending=False,
+            include_budgets=False,
+            has_assigned_budgets=False,
+            budget_category=None,
+            user=regular_user,
+        )
 
         assert result.pagination.page == 0
         assert result.pagination.per_page == 10
@@ -393,7 +501,14 @@ class TestProjectsVisibilityEndpoints:
         mock_visibility_service.list_visible_projects_paginated.return_value = ([], 0)
 
         result = await list_projects(
-            search="nonexistent", page=0, per_page=20, include_spending=False, user=regular_user
+            search="nonexistent",
+            page=0,
+            per_page=20,
+            include_spending=False,
+            include_budgets=False,
+            has_assigned_budgets=False,
+            budget_category=None,
+            user=regular_user,
         )
 
         assert isinstance(result, PaginatedProjectListResponse)
@@ -446,6 +561,9 @@ class TestProjectsVisibilityEndpoints:
             per_page=20,
             include_counters=True,
             include_spending=False,
+            include_budgets=False,
+            has_assigned_budgets=False,
+            budget_category=None,
             sort_by=None,
             sort_order="asc",
             user=super_admin_user,
@@ -461,10 +579,186 @@ class TestProjectsVisibilityEndpoints:
             search=None,
             page=0,
             per_page=20,
+            has_assigned_budgets=False,
+            budget_category=None,
             include_counters=True,
             sort_by=None,
             sort_order="asc",
         )
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.get_active_provider")
+    @patch("codemie.rest_api.routers.projects.project_budget_assignment_repository")
+    @patch("codemie.rest_api.routers.projects.get_async_session")
+    @patch("codemie.rest_api.routers.projects.get_session")
+    @patch("codemie.rest_api.routers.projects.project_visibility_service")
+    @pytest.mark.anyio
+    async def test_list_projects_attaches_assigned_budgets_and_skips_invalid_categories(
+        self,
+        mock_visibility_service,
+        mock_get_session,
+        mock_async_session,
+        mock_project_budget_repo,
+        mock_get_active_provider,
+        mock_config,
+        regular_user,
+    ):
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        mock_config.LLM_PROXY_BUDGET_CHECK_ENABLED = True
+        mock_get_active_provider.return_value = SimpleNamespace(provider_name="litellm")
+        mock_session = MagicMock()
+        mock_get_session.return_value.__enter__.return_value = mock_session
+        mock_visibility_service.list_visible_projects_paginated.return_value = (
+            [
+                {
+                    "name": "shared-proj",
+                    "description": "desc",
+                    "project_type": "shared",
+                    "created_by": "owner-1",
+                    "created_at": datetime(2026, 2, 10, tzinfo=UTC),
+                    "user_count": 3,
+                    "admin_count": 1,
+                }
+            ],
+            1,
+        )
+        mock_async_session.return_value = AsyncMock()
+        mock_project_budget_repo.get_assigned_budget_summaries_for_projects = AsyncMock(
+            return_value={
+                "shared-proj": [
+                    SimpleNamespace(
+                        budget_id="budget-1",
+                        name="CLI Budget",
+                        budget_category="cli",
+                        soft_budget=10.0,
+                        max_budget=20.0,
+                        budget_duration="30d",
+                        budget_reset_at="2026-04-23T10:10:00Z",
+                        provider_sync_status="ok",
+                        member_count=2,
+                        allocated_member_budget_total=20.0,
+                        current_spending=5.0,
+                    ),
+                    SimpleNamespace(
+                        budget_id="budget-2",
+                        name="Broken Budget",
+                        budget_category="not-a-category",
+                        soft_budget=1.0,
+                        max_budget=2.0,
+                        budget_duration="30d",
+                        budget_reset_at=None,
+                        provider_sync_status="failed",
+                        member_count=0,
+                        allocated_member_budget_total=0.0,
+                        current_spending=0.0,
+                    ),
+                ]
+            }
+        )
+
+        result = await list_projects(
+            search=None,
+            page=0,
+            per_page=20,
+            include_counters=True,
+            include_spending=False,
+            include_budgets=True,
+            has_assigned_budgets=False,
+            budget_category=None,
+            sort_by=None,
+            sort_order="asc",
+            user=regular_user,
+        )
+
+        assert len(result.data[0].budgets) == 1
+        assert result.data[0].budgets[0].budget_id == "budget-1"
+        assert result.data[0].budgets[0].budget_category == BudgetCategory.CLI
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.budget_repository")
+    @patch("codemie.rest_api.routers.projects.get_async_session")
+    @patch("codemie.rest_api.routers.projects.get_session")
+    @patch("codemie.rest_api.routers.projects.project_visibility_service")
+    @patch("codemie.rest_api.routers.projects._spend_repo")
+    @pytest.mark.anyio
+    async def test_list_projects_builds_spending_summary_from_latest_key_and_budget_rows(
+        self,
+        mock_spend_repo,
+        mock_visibility_service,
+        mock_get_session,
+        mock_async_session,
+        mock_budget_repository,
+        mock_config,
+        super_admin_user,
+    ):
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        mock_session = MagicMock()
+        mock_get_session.return_value.__enter__.return_value = mock_session
+        mock_visibility_service.list_visible_projects_paginated.return_value = (
+            [
+                {
+                    "name": "shared-proj",
+                    "description": "desc",
+                    "project_type": "shared",
+                    "created_by": "owner-1",
+                    "created_at": datetime(2026, 2, 10, tzinfo=UTC),
+                    "user_count": 3,
+                    "admin_count": 1,
+                    "is_project_admin": True,
+                }
+            ],
+            1,
+        )
+        mock_async_session.return_value = AsyncMock()
+        latest_key_row = MagicMock(
+            project_name="shared-proj",
+            budget_id="key-budget",
+            budget_period_spend=5.0,
+            spend_date=datetime(2026, 4, 11, tzinfo=UTC),
+        )
+        stale_key_row = MagicMock(
+            project_name="shared-proj",
+            budget_id="key-budget",
+            budget_period_spend=4.0,
+            spend_date=datetime(2026, 4, 10, tzinfo=UTC),
+        )
+        latest_budget_row = MagicMock(
+            project_name="shared-proj",
+            budget_id="budget-1",
+            budget_period_spend=3.0,
+            spend_date=datetime(2026, 4, 11, tzinfo=UTC),
+        )
+        stale_budget_row = MagicMock(
+            project_name="shared-proj",
+            budget_id="budget-1",
+            budget_period_spend=2.0,
+            spend_date=datetime(2026, 4, 10, tzinfo=UTC),
+        )
+        mock_spend_repo.get_latest_spending_by_project = AsyncMock(
+            side_effect=[[stale_key_row, latest_key_row], [stale_budget_row, latest_budget_row]]
+        )
+        mock_budget = MagicMock()
+        mock_budget.max_budget = 16.0
+        mock_budget_repository.get_all_keyed_by_id = AsyncMock(return_value={"key-budget": mock_budget})
+
+        result = await list_projects(
+            search=None,
+            page=0,
+            per_page=20,
+            include_counters=True,
+            include_spending=True,
+            include_budgets=False,
+            has_assigned_budgets=False,
+            budget_category=None,
+            sort_by=None,
+            sort_order="asc",
+            user=super_admin_user,
+        )
+
+        assert result.data[0].spending is not None
+        assert result.data[0].spending.current_spending == pytest.approx(8.0)
+        assert result.data[0].spending.budget_limit == pytest.approx(16.0)
+        assert result.data[0].spending.total_percent == pytest.approx(50.0)
 
     @patch("codemie.rest_api.routers.projects.config")
     @patch("codemie.rest_api.routers.projects.get_session")
@@ -1147,6 +1441,7 @@ class TestUpdateProjectEndpoint:
             description="new description",
             cost_center_id=None,
             clear_cost_center=False,
+            project_member_budget_tracking_enabled=None,
         )
 
     @patch("codemie.rest_api.routers.projects.config")
@@ -1182,6 +1477,7 @@ class TestUpdateProjectEndpoint:
             description=None,
             cost_center_id=cost_center_id,
             clear_cost_center=False,
+            project_member_budget_tracking_enabled=None,
         )
 
     @patch("codemie.rest_api.routers.projects.config")
@@ -1216,6 +1512,41 @@ class TestUpdateProjectEndpoint:
             description=None,
             cost_center_id=None,
             clear_cost_center=True,
+            project_member_budget_tracking_enabled=None,
+        )
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.project_service")
+    def test_update_budget_tracking_flag_passes_value_to_service(
+        self,
+        mock_project_service,
+        mock_config,
+    ):
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        updated_app = MagicMock()
+        updated_app.name = "my-project"
+        updated_app.description = ""
+        updated_app.project_type = "shared"
+        updated_app.created_by = "user-1"
+        updated_app.date = datetime(2024, 1, 1, tzinfo=UTC)
+        updated_app.cost_center_id = None
+        mock_project_service.update_project.return_value = updated_app
+
+        user = MagicMock(id="user-1")
+        update_project(
+            payload=ProjectUpdateRequest(project_member_budget_tracking_enabled=True),
+            project_name="my-project",
+            user=user,
+        )
+
+        mock_project_service.update_project.assert_called_once_with(
+            user=user,
+            project_name="my-project",
+            name=None,
+            description=None,
+            cost_center_id=None,
+            clear_cost_center=False,
+            project_member_budget_tracking_enabled=True,
         )
 
     @patch("codemie.rest_api.routers.projects.config")
@@ -1247,6 +1578,10 @@ class TestUpdateProjectEndpoint:
         """ProjectUpdateRequest raises ValueError when both cost_center_id and clear_cost_center are set."""
         with pytest.raises(ValueError, match="Provide either cost_center_id or clear_cost_center"):
             ProjectUpdateRequest(cost_center_id=uuid4(), clear_cost_center=True)
+
+    def test_request_model_accepts_budget_tracking_flag_as_mutable_field(self):
+        request = ProjectUpdateRequest(project_member_budget_tracking_enabled=True)
+        assert request.project_member_budget_tracking_enabled is True
 
 
 @pytest.fixture
@@ -1677,6 +2012,9 @@ class TestPersonalProjectSpending:
             per_page=20,
             include_counters=False,
             include_spending=True,
+            include_budgets=False,
+            has_assigned_budgets=False,
+            budget_category=None,
             sort_by=None,
             sort_order='asc',
             user=regular_user,

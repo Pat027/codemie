@@ -18,9 +18,10 @@ Addresses Code Review MEDIUM #5: Layering violation fix.
 Moves assignment logic from router to service layer following API->Service->Repository pattern.
 """
 
-from datetime import UTC, datetime
+import asyncio
+from datetime import UTC, datetime, timezone
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from codemie.configs.logger import logger
 from codemie.configs import config
@@ -31,6 +32,9 @@ from codemie.repository.user_project_repository import user_project_repository
 from codemie.repository.user_repository import user_repository
 from codemie.rest_api.models.user_management import UserProject
 from codemie.rest_api.security.user import User
+from codemie.service.budget.budget_enums import AllocationMode, SyncStatus
+from codemie.service.budget.budget_models import Budget, ProjectBudgetAssignment, ProjectMemberBudgetAssignment
+from codemie.service.budget.provider_registry import get_active_provider
 
 
 _USER_NOT_FOUND = "User not found"
@@ -40,6 +44,143 @@ _PERSONAL_PROJECT_MEMBERSHIP = "Cannot modify membership of a personal project"
 
 class ProjectAssignmentService:
     """Service for managing project membership assignments"""
+
+    @staticmethod
+    def _run_budget_provider_coro(coro):
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop in this thread (normal for sync route handler thread pool).
+            return asyncio.run(coro)
+        # Running inside an async context (e.g. called directly from async code or tests).
+        # Submit to the running loop from this thread and block until done.
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        try:
+            return future.result(timeout=30)
+        except TimeoutError:
+            future.cancel()
+            logger.warning("Project budget provider sync timed out after 30s; skipping")
+            return None
+
+    @staticmethod
+    def _build_member_provider_metadata(member_state) -> dict:
+        raw = dict(member_state.metadata or {})
+        if member_state.provider_member_ref is not None:
+            raw["provider_member_ref"] = member_state.provider_member_ref
+        return {
+            "provider": member_state.provider,
+            "last_synced_at": datetime.now(tz=timezone.utc).isoformat(),
+            "sync_status": member_state.sync_status,
+            "raw": raw,
+        }
+
+    @staticmethod
+    def _get_member_added_allocation_amounts(
+        session: Session,
+        project_name: str,
+        budget_category: str,
+        project_budget_id: str,
+        budget: "Budget",
+    ) -> tuple[float, float]:
+        """Return (allocated_soft_budget, allocated_max_budget) for a newly added member.
+
+        Precedence:
+        1. Copy from the first active equal-mode member allocation for the same
+           project, category, and budget.
+        2. Fall back to the project budget's own soft_budget / max_budget.
+        """
+        equal_alloc = session.exec(
+            select(ProjectMemberBudgetAssignment).where(
+                ProjectMemberBudgetAssignment.project_name == project_name,
+                ProjectMemberBudgetAssignment.budget_category == budget_category,
+                ProjectMemberBudgetAssignment.project_budget_id == project_budget_id,
+                ProjectMemberBudgetAssignment.allocation_mode == AllocationMode.EQUAL.value,
+                ProjectMemberBudgetAssignment.deleted_at.is_(None),
+            )
+        ).first()
+        if equal_alloc is not None:
+            return equal_alloc.allocated_soft_budget, equal_alloc.allocated_max_budget
+        return budget.soft_budget, budget.max_budget
+
+    @staticmethod
+    def _sync_project_budget_member_added(session: Session, project_name: str, user_id: str, actor_id: str) -> None:
+        """Create conservative allocations for a newly added member on active project budgets."""
+        assignments = session.exec(
+            select(ProjectBudgetAssignment).where(
+                ProjectBudgetAssignment.project_name == project_name,
+                ProjectBudgetAssignment.deleted_at.is_(None),
+            )
+        ).all()
+        if not assignments:
+            return
+
+        for assignment in assignments:
+            existing = session.exec(
+                select(ProjectMemberBudgetAssignment).where(
+                    ProjectMemberBudgetAssignment.project_name == project_name,
+                    ProjectMemberBudgetAssignment.budget_category == assignment.budget_category,
+                    ProjectMemberBudgetAssignment.user_id == user_id,
+                    ProjectMemberBudgetAssignment.deleted_at.is_(None),
+                )
+            ).first()
+            if existing is not None:
+                continue
+
+            budget = session.get(Budget, assignment.budget_id)
+            if budget is None:
+                continue
+            soft_budget, max_budget = ProjectAssignmentService._get_member_added_allocation_amounts(
+                session, project_name, assignment.budget_category, assignment.budget_id, budget
+            )
+            allocation = ProjectMemberBudgetAssignment(
+                project_name=project_name,
+                budget_category=assignment.budget_category,
+                project_budget_id=assignment.budget_id,
+                user_id=user_id,
+                allocation_mode=AllocationMode.EQUAL.value,
+                allocated_soft_budget=soft_budget,
+                allocated_max_budget=max_budget,
+                budget_reset_at=budget.budget_reset_at,
+                assigned_by=actor_id,
+                sync_status=SyncStatus.PENDING,
+            )
+            session.add(allocation)
+            logger.info(
+                f"project_member_budget_allocation_created_pending_provider_sync: "
+                f"user_id={user_id!r} project={project_name!r} budget={assignment.budget_id!r}"
+            )
+
+    @staticmethod
+    def _sync_project_budget_member_removed(session: Session, project_name: str, user_id: str) -> None:
+        """Soft-delete active allocations for a removed member and disable provider state."""
+        allocations = session.exec(
+            select(ProjectMemberBudgetAssignment).where(
+                ProjectMemberBudgetAssignment.project_name == project_name,
+                ProjectMemberBudgetAssignment.user_id == user_id,
+                ProjectMemberBudgetAssignment.deleted_at.is_(None),
+            )
+        ).all()
+        if not allocations:
+            return
+
+        provider = get_active_provider()
+        now = datetime.now(tz=timezone.utc)
+        changed = False
+        for allocation in allocations:
+            try:
+                ProjectAssignmentService._run_budget_provider_coro(
+                    provider.delete_member_allocation(allocation=allocation)
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"Failed to delete provider member allocation {allocation.id!r} "
+                    f"for removed member {user_id!r}: {exc}"
+                )
+            allocation.deleted_at = now
+            session.add(allocation)
+            changed = True
+        if changed:
+            session.flush()
 
     @staticmethod
     def _reject_if_personal_project(project: Application, actor: User, action: str) -> None:
@@ -151,6 +292,7 @@ class ProjectAssignmentService:
             project_name=project_name,
             is_project_admin=is_project_admin,
         )
+        ProjectAssignmentService._sync_project_budget_member_added(session, project_name, user_id, actor.id)
 
         logger.info(
             f"User assigned to project: user_id={user_id}, project={project_name}, "
@@ -329,6 +471,7 @@ class ProjectAssignmentService:
                 session.add(user_project)
                 action_taken = "assigned"
                 assigned_count += 1
+                ProjectAssignmentService._sync_project_budget_member_added(session, project_name, user_id, actor.id)
 
             results.append(
                 {
@@ -428,6 +571,7 @@ class ProjectAssignmentService:
         # Execute: bulk delete using pre-fetched records (avoids redundant query)
         for record in existing_assignments.values():
             session.delete(record)
+            ProjectAssignmentService._sync_project_budget_member_removed(session, project_name, record.user_id)
         session.flush()
 
         results = [{"user_id": uid, "action": "removed"} for uid in user_ids]
@@ -484,6 +628,8 @@ class ProjectAssignmentService:
                 details=f"User '{user_id}' is not a member of project '{project_name}'",
                 help="Verify the user is assigned to this project",
             )
+
+        ProjectAssignmentService._sync_project_budget_member_removed(session, project_name, user_id)
 
         logger.info(f"User removed from project: user_id={user_id}, project={project_name}, by={actor.id}")
 

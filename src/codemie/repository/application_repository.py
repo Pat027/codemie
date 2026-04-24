@@ -29,6 +29,7 @@ from codemie.configs.logger import logger
 from codemie.core.db_utils import escape_like_wildcards
 from codemie.core.models import Application
 from codemie.rest_api.models.user_management import UserProject
+from codemie.service.budget.budget_models import ProjectBudgetAssignment
 
 
 class ApplicationRepository:
@@ -108,6 +109,26 @@ class ApplicationRepository:
             return statement
 
         return statement.order_by(case((Application.name == search, 1), else_=2))
+
+    @staticmethod
+    def _apply_assigned_budget_filter(
+        statement: Select[tuple[Application]],
+        has_assigned_budgets: bool = False,
+        budget_category: str | None = None,
+    ) -> Select[tuple[Application]]:
+        """Filter projects by active assigned project budgets when requested."""
+        if not has_assigned_budgets and budget_category is None:
+            return statement
+
+        conditions = [
+            ProjectBudgetAssignment.project_name == Application.name,
+            ProjectBudgetAssignment.deleted_at.is_(None),
+        ]
+        if budget_category is not None:
+            conditions.append(ProjectBudgetAssignment.budget_category == budget_category)
+
+        assigned_budget_exists = select(ProjectBudgetAssignment.id).where(*conditions).exists()
+        return statement.where(assigned_budget_exists)
 
     def get_by_name(self, session: Session, name: str) -> Optional[Application]:
         """Get application by name
@@ -301,6 +322,8 @@ class ApplicationRepository:
         search: Optional[str] = None,
         page: int = 0,
         per_page: int = 20,
+        has_assigned_budgets: bool = False,
+        budget_category: str | None = None,
         sort_by: str | None = None,
         sort_order: str | None = None,
     ) -> tuple[list[Application], int]:
@@ -337,6 +360,11 @@ class ApplicationRepository:
         else:
             visibility_condition = self._build_visibility_condition(user_id)
             count_base_statement = count_base_statement.where(visibility_condition)
+        count_base_statement = self._apply_assigned_budget_filter(
+            count_base_statement,
+            has_assigned_budgets=has_assigned_budgets,
+            budget_category=budget_category,
+        )
 
         # Count total (with filters applied, without ANY ordering for performance)
         count_statement = select(func.count()).select_from(count_base_statement.subquery())
@@ -351,6 +379,11 @@ class ApplicationRepository:
         else:
             visibility_condition = self._build_visibility_condition(user_id)
             data_statement = data_statement.where(visibility_condition)
+        data_statement = self._apply_assigned_budget_filter(
+            data_statement,
+            has_assigned_budgets=has_assigned_budgets,
+            budget_category=budget_category,
+        )
 
         if sort_by and sort_by in self._SORT_COLUMN_MAP:
             col = self._SORT_COLUMN_MAP[sort_by]

@@ -401,6 +401,68 @@ class TestUserRepositorySoftDelete:
         db_session.add.assert_not_called()
 
 
+class TestUserRepositoryFetchBudgetAssignmentsMap:
+    """Test fetch_budget_assignments_map helper."""
+
+    def test_fetch_budget_assignments_map_returns_empty_for_empty_input(self, user_repository, db_session):
+        result = user_repository.fetch_budget_assignments_map(db_session, [])
+
+        assert result == {}
+        db_session.exec.assert_not_called()
+
+    def test_fetch_budget_assignments_map_groups_assignments_and_spending(
+        self,
+        user_repository,
+        db_session,
+        mocker,
+    ):
+        email_result = mocker.MagicMock()
+        email_result.all.return_value = ["User1@example.com", "user2@example.com"]
+        rows_result = mocker.MagicMock()
+        user_1 = mocker.MagicMock(id="user-1")
+        user_2 = mocker.MagicMock(id="user-2")
+        assignment_1 = mocker.MagicMock()
+        assignment_2 = mocker.MagicMock()
+        budget_1 = mocker.MagicMock()
+        rows_result.all.return_value = [
+            (user_1, assignment_1, budget_1, 12.5),
+            (user_1, None, None, None),
+            (user_2, assignment_2, None, None),
+        ]
+        db_session.exec.side_effect = [email_result, rows_result]
+
+        result = user_repository.fetch_budget_assignments_map(db_session, ["user-1", "user-2"])
+
+        assert result == {
+            "user-1": [(assignment_1, budget_1, 12.5)],
+            "user-2": [(assignment_2, None, None)],
+        }
+
+
+class TestUserRepositoryGetByEmails:
+    """Test get_by_emails helper."""
+
+    def test_get_by_emails_returns_empty_for_empty_input(self, user_repository, db_session):
+        result = user_repository.get_by_emails(db_session, [])
+
+        assert result == {}
+        db_session.exec.assert_not_called()
+
+    def test_get_by_emails_returns_lowercased_email_map(self, user_repository, db_session, mocker):
+        user_1 = mocker.MagicMock(email="Alice@Example.com")
+        user_2 = mocker.MagicMock(email="bob@example.com")
+        mock_result = mocker.MagicMock()
+        mock_result.all.return_value = [user_1, user_2]
+        db_session.exec.return_value = mock_result
+
+        result = user_repository.get_by_emails(db_session, ["alice@example.com", "BOB@example.com"])
+
+        assert result == {
+            "alice@example.com": user_1,
+            "bob@example.com": user_2,
+        }
+
+
 class TestUserRepositoryCountActiveAdmins:
     """Test count_active_admins method."""
 

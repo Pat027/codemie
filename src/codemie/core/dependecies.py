@@ -220,10 +220,10 @@ def get_llm_by_credentials(
         llm_model_details=llm_model_details,
         litellm_context=context,
         user_email=user_email,
+        user_id=user_id,
         temperature=temperature,
         top_p=top_p,
         streaming=streaming,
-        user_id=user_id,
     )
 
     if litellm_llm:

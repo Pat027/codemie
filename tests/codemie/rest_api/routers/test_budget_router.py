@@ -29,12 +29,14 @@ from datetime import datetime, UTC
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi.routing import APIRoute
 
 from codemie.core.exceptions import ExtendedHTTPException
 from codemie.enterprise.litellm.budget_categories import BudgetCategory
 from codemie.rest_api.routers.budget_router import (
     BudgetCreateRequest,
     BudgetUpdateRequest,
+    router,
     create_budget,
     get_budget,
     list_budgets,
@@ -51,6 +53,16 @@ from codemie.service.budget.budget_models import Budget
 
 def _admin_user() -> User:
     return User(id="admin-1", username="admin", email="admin@example.com", is_admin=True)
+
+
+def _maintainer_user() -> User:
+    return User(
+        id="maintainer-1",
+        username="maintainer",
+        email="maintainer@example.com",
+        is_admin=True,
+        is_maintainer=True,
+    )
 
 
 def _make_budget_row(**kwargs) -> Budget:
@@ -345,3 +357,33 @@ class TestListBudgetsEndpoint:
         mock_list.assert_called_once()
         _, kwargs = mock_list.call_args
         assert kwargs["category"] == "cli"
+
+
+def test_budget_read_routes_use_admin_or_maintainer_dependency():
+    route_map = {
+        (route.path, tuple(sorted(route.methods or []))): route
+        for route in router.routes
+        if isinstance(route, APIRoute)
+    }
+
+    list_route = route_map[("/v1/admin/budgets", ("GET",))]
+    detail_route = route_map[("/v1/admin/budgets/{budgetId}", ("GET",))]
+
+    for route in (list_route, detail_route):
+        dependency_calls = {dependency.call.__name__ for dependency in route.dependant.dependencies}
+        assert "admin_or_maintainer_access_only" in dependency_calls
+        assert "maintainer_access_only" not in dependency_calls
+
+
+def test_budget_write_routes_keep_maintainer_dependency():
+    write_routes = [
+        route
+        for route in router.routes
+        if isinstance(route, APIRoute)
+        and route.path in {"/v1/admin/budgets", "/v1/admin/budgets/sync", "/v1/admin/budgets/assignments/backfill"}
+        and "GET" not in (route.methods or set())
+    ]
+
+    for route in write_routes:
+        dependency_calls = {dependency.call.__name__ for dependency in route.dependant.dependencies}
+        assert "maintainer_access_only" in dependency_calls

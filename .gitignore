@@ -20,6 +20,8 @@ venv
 .coverage
 coverage.xml
 .codebox/
+.scannerwork/
+node_modules/
 
 .sonar/
 devbox.*
@@ -43,7 +45,6 @@ bmad/*
 .gemini/*
 /_bmad*
 /.agent/
-/.codex/
 /.crush/
 /.cursor/
 /.opencode/
@@ -54,3 +55,5 @@ bmad/*
 /.agents/skills/bmad*
 /.mcp.json*
 /CLAUDE.local.md
+/.superpowers/
+/docs/superpowers/

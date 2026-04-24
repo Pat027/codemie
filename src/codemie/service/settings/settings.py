@@ -64,6 +64,8 @@ from codemie.rest_api.models.settings import (
     SonarCredentials,
     AbilitySetting,
     LiteLLMCredentials,
+    ALIAS_TERM,
+    PROJECT_NAME_TERM,
 )
 from codemie.rest_api.utils.default_applications import ensure_application_exists
 from codemie.service.settings.base_settings import BaseSettingsService, SearchFields
@@ -116,6 +118,8 @@ class SettingsService(BaseSettingsService):
     IDE_PROJECT_NAME = IDE_PREFIX + "virtual"
     AUTH_VALUE = "auth_value"
     IS_CLOUD = "is_cloud"
+    ENABLED = "enabled"
+    PROJECT_MEMBER_BUDGET_TRACKING_ALIAS = "project_member_budget_tracking_enabled"
 
     LIST_OF_SENSITIVE_FIELDS: List[str] = [
         TOKEN,
@@ -305,6 +309,46 @@ class SettingsService(BaseSettingsService):
             credential_values=credential_values,
         )
         cls.create_setting("system", sr, SettingType.PROJECT)
+
+    @classmethod
+    def upsert_project_setting(
+        cls,
+        *,
+        project_name: str,
+        alias: str,
+        credential_type: CredentialTypes,
+        credential_values: List[CredentialValues],
+        is_global: bool = False,
+    ) -> None:
+        """Create or update a project-scoped setting by alias."""
+        request = SettingRequest(
+            project_name=project_name,
+            alias=alias,
+            credential_type=credential_type,
+            credential_values=credential_values,
+            is_global=is_global,
+        )
+        existing = Settings.get_by_fields(
+            {
+                ALIAS_TERM: alias,
+                PROJECT_NAME_TERM: project_name,
+                "credential_type": credential_type.value,
+                "setting_type": SettingType.PROJECT.value,
+            }
+        )
+        if existing:
+            cls.update_settings(
+                credential_id=existing.id,
+                request=request,
+                settings_type=SettingType.PROJECT,
+            )
+            return
+
+        cls.create_setting(
+            user_id="system",
+            request=request,
+            settings_type=SettingType.PROJECT,
+        )
 
     @classmethod
     def create_setting(
@@ -716,6 +760,90 @@ class SettingsService(BaseSettingsService):
             required_fields=cls.LITELLM_FIELDS,
             credential_class=LiteLLMCredentials,
         )
+
+    @classmethod
+    def get_project_litellm_creds_by_alias(cls, project_name: str, alias: str) -> Optional[LiteLLMCredentials]:
+        """Retrieve project-scoped LiteLLM credentials by integration alias."""
+        if not project_name or not alias:
+            return None
+
+        setting = cls.retrieve_setting(
+            {
+                SearchFields.ALIAS: alias,
+                SearchFields.PROJECT_NAME: project_name,
+                SearchFields.CREDENTIAL_TYPE: CredentialTypes.LITE_LLM,
+                SearchFields.SETTING_TYPE: SettingType.PROJECT.value,
+            }
+        )
+        if not setting:
+            return None
+
+        return cls._build_credential_result(setting, cls.LITELLM_FIELDS, LiteLLMCredentials)
+
+    @classmethod
+    def get_project_member_budget_tracking_enabled(cls, project_name: str) -> bool:
+        """Return whether project-member budget tracking is enabled for the project."""
+        if not project_name:
+            return False
+
+        setting = cls.retrieve_setting(
+            {
+                SearchFields.ALIAS: cls.PROJECT_MEMBER_BUDGET_TRACKING_ALIAS,
+                SearchFields.PROJECT_NAME: project_name,
+                SearchFields.CREDENTIAL_TYPE: CredentialTypes.ENVIRONMENT_VARS,
+                SearchFields.SETTING_TYPE: SettingType.PROJECT.value,
+            }
+        )
+        if not setting:
+            return False
+
+        enabled = setting.normalize_values().get(cls.ENABLED)
+        return str(enabled).lower() == "true"
+
+    @classmethod
+    def set_project_member_budget_tracking_enabled(cls, project_name: str, enabled: bool) -> None:
+        """Persist the project-wide project-member budget tracking flag."""
+        if not project_name:
+            return
+
+        cls.upsert_project_setting(
+            project_name=project_name,
+            alias=cls.PROJECT_MEMBER_BUDGET_TRACKING_ALIAS,
+            credential_type=CredentialTypes.ENVIRONMENT_VARS,
+            credential_values=[CredentialValues(key=cls.ENABLED, value=str(enabled).lower())],
+        )
+
+    @classmethod
+    def upsert_project_litellm_creds_by_alias(cls, project_name: str, alias: str, api_key: str) -> None:
+        """Store project-scoped LiteLLM credentials as an encrypted project integration."""
+        if not project_name or not alias or not api_key:
+            return
+
+        cls.upsert_project_setting(
+            project_name=project_name,
+            alias=alias,
+            credential_type=CredentialTypes.LITE_LLM,
+            credential_values=[
+                CredentialValues(key=cls.API_KEY, value=api_key),
+            ],
+        )
+
+    @classmethod
+    def delete_project_litellm_creds_by_alias(cls, project_name: str, alias: str) -> None:
+        """Delete project-scoped LiteLLM credentials by integration alias."""
+        if not project_name or not alias:
+            return
+
+        setting = Settings.get_by_fields(
+            {
+                ALIAS_TERM: alias,
+                PROJECT_NAME_TERM: project_name,
+                "credential_type": CredentialTypes.LITE_LLM.value,
+                "setting_type": SettingType.PROJECT.value,
+            }
+        )
+        if setting:
+            Settings.delete_setting(setting.id)
 
     @classmethod
     def _extract_api_keys_from_settings(

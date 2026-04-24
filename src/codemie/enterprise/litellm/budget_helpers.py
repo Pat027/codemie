@@ -23,21 +23,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from tenacity import before_sleep_log, retry, retry_if_result, stop_after_attempt, wait_exponential
-
 from codemie.enterprise.litellm.dependencies import get_litellm_service_or_none
 
 if TYPE_CHECKING:
     from codemie_enterprise.litellm import BudgetTable
 
 logger = logging.getLogger(__name__)
-
-# Shared retry config: 3 attempts, exponential backoff 1-10 s.
-# The enterprise service catches all HTTP exceptions internally and returns
-# None (on error) or False (delete failure), so we retry on those sentinel values.
-_RETRY_ATTEMPTS = 3
-_RETRY_WAIT = wait_exponential(multiplier=1, min=1, max=10)
-_BEFORE_SLEEP = before_sleep_log(logger, logging.WARNING)
 
 
 def create_budget_in_litellm(
@@ -46,30 +37,18 @@ def create_budget_in_litellm(
     soft_budget: float,
     budget_duration: str,
 ) -> BudgetTable | None:
-    """Create a proxy budget via the enterprise budget facade.
-
-    Retries up to 3 times on transient failures (indicated by None return).
-    """
+    """Create a proxy budget via the enterprise budget facade."""
     service = get_litellm_service_or_none()
     if service is None:
         logger.debug("LiteLLM not available - skipping create_budget_in_litellm")
         return None
 
-    @retry(
-        retry=retry_if_result(lambda r: r is None),
-        stop=stop_after_attempt(_RETRY_ATTEMPTS),
-        wait=_RETRY_WAIT,
-        before_sleep=_BEFORE_SLEEP,
+    return service.create_managed_budget(
+        budget_id=budget_id,
+        max_budget=max_budget,
+        soft_budget=soft_budget,
+        budget_duration=budget_duration,
     )
-    def _call() -> BudgetTable | None:
-        return service.create_managed_budget(
-            budget_id=budget_id,
-            max_budget=max_budget,
-            soft_budget=soft_budget,
-            budget_duration=budget_duration,
-        )
-
-    return _call()
 
 
 def update_budget_in_litellm(
@@ -80,31 +59,21 @@ def update_budget_in_litellm(
 ) -> BudgetTable | None:
     """Update a proxy budget via LiteLLM POST /budget/update.
 
-    Retries up to 3 times on transient failures (indicated by None return).
-    Returns updated BudgetTable or None after all attempts exhausted.
+    Returns updated BudgetTable or None on failure.
     """
     service = get_litellm_service_or_none()
     if service is None:
         logger.debug("LiteLLM not available - skipping update_budget_in_litellm")
         return None
 
-    @retry(
-        retry=retry_if_result(lambda r: r is None),
-        stop=stop_after_attempt(_RETRY_ATTEMPTS),
-        wait=_RETRY_WAIT,
-        before_sleep=_BEFORE_SLEEP,
+    result = service.update_managed_budget(
+        budget_id=budget_id,
+        max_budget=max_budget,
+        soft_budget=soft_budget,
+        budget_duration=budget_duration,
     )
-    def _call() -> BudgetTable | None:
-        return service.update_managed_budget(
-            budget_id=budget_id,
-            max_budget=max_budget,
-            soft_budget=soft_budget,
-            budget_duration=budget_duration,
-        )
-
-    result = _call()
     if result is None:
-        logger.error(f"Failed to update budget {budget_id!r} in LiteLLM after {_RETRY_ATTEMPTS} attempts")
+        logger.error(f"Failed to update budget {budget_id!r} in LiteLLM")
     return result
 
 

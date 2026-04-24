@@ -277,6 +277,7 @@ class UserBudgetAssignmentInfo(BaseModel):
     max_budget: Optional[float] = None
     budget_duration: Optional[str] = None
     budget_reset_at: Optional[str] = None
+    current_spending: Optional[float] = None
 
 
 class AdminUserListItem(BaseModel):

@@ -43,12 +43,9 @@ class TestLiteLLMCredentials:
         assert "api_key" in str(exc_info.value)
         assert "Field required" in str(exc_info.value)
 
-        # Test missing url
-        with pytest.raises(ValidationError) as exc_info:
-            LiteLLMCredentials(api_key="test-key")
-
-        assert "url" in str(exc_info.value)
-        assert "Field required" in str(exc_info.value)
+        # url now defaults to empty string when omitted
+        credentials = LiteLLMCredentials(api_key="test-key")
+        assert credentials.url == ""
 
     def test_credentials_serialization(self):
         """Test serialization of LiteLLMCredentials."""

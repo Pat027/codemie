@@ -43,6 +43,7 @@ from codemie.rest_api.security import user as security_user
 
 _INVALID_EMAIL_OR_PASSWORD = "Invalid email or password"
 _ACCOUNT_DEACTIVATED = "Account is deactivated"
+DEFAULT_LOCAL_TEST_USER_ID = "dev-codemie-user"
 
 # TTL cache for authenticated users: auth_token → User.
 # Skips all DB operations for repeated requests with the same token within TTL.
@@ -509,22 +510,19 @@ class AuthenticationService:
             await session.commit()
 
         if is_new_user:
-            import asyncio
+            from codemie.service.budget.provider_registry import get_active_provider
 
-            from codemie.enterprise.litellm.dependencies import get_litellm_service_or_none
-
-            litellm_svc = get_litellm_service_or_none()
-            if litellm_svc:
-                try:
-                    await asyncio.get_event_loop().run_in_executor(
-                        None, litellm_svc.get_or_create_customer_with_budget, security_user_ins.id
-                    )
-                    logger.debug(f"LiteLLM default budget assigned for new user: {security_user_ins.id}")
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to assign LiteLLM budget for new user {security_user_ins.id}, "
-                        f"will retry on first LLM request: {e}"
-                    )
+            try:
+                await get_active_provider().provision_global_user(
+                    user_id=security_user_ins.id,
+                    user_email=security_user_ins.email,
+                )
+                logger.debug(f"Budget provider provisioned new user: {security_user_ins.id}")
+            except Exception as e:
+                logger.warning(
+                    f"Failed to provision budget for new user {security_user_ins.id}, "
+                    f"will retry on first LLM request: {e}"
+                )
 
         if pre_sync_email and security_user_ins.email != pre_sync_email:
             from codemie.service.project.personal_project_service import personal_project_service
@@ -578,6 +576,7 @@ class AuthenticationService:
                     email_verified=True,
                     is_active=True,
                     is_admin=True,
+                    is_maintainer=True,
                 )
                 db_user = await user_repository.acreate(session, db_user)
                 logger.info(f"Dev header user created: user_id={db_user.id}")

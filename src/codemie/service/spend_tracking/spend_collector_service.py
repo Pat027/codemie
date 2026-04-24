@@ -14,25 +14,22 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import re
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from codemie.clients.postgres import get_async_session
-from codemie.configs import logger
-from codemie.enterprise.litellm.budget_categories import derive_category_from_user_id
-from codemie.enterprise.litellm.dependencies import get_all_keys_spending, get_customer_list_spending
+from codemie.configs import config, logger
 from codemie.repository.application_repository import ApplicationRepository
 from codemie.repository.budget_repository import budget_repository
-from codemie.repository.cost_center_repository import cost_center_repository
+from codemie.repository.project_budget_repository import project_member_budget_assignment_repository
 from codemie.repository.project_spend_tracking_repository import ProjectSpendTrackingRepository
-from codemie.rest_api.models.settings import CredentialTypes, LiteLLMCredentials, Settings
 from codemie.service.budget.budget_models import Budget
+from codemie.service.budget.provider import PersonalSpendEntry
+from codemie.service.budget.provider_registry import get_active_provider
 from codemie.service.spend_tracking.spend_models import ProjectSpendTracking
-from codemie.service.settings.settings import SettingsService
 
 
 class InvalidSpendSnapshotError(ValueError):
@@ -75,186 +72,176 @@ class LiteLLMSpendCollectorService:
         target_snapshot_at = self._resolve_snapshot_at(target_date)
         logger.info(f"Starting spend collection for {target_snapshot_at.isoformat(timespec='milliseconds')}")
 
-        key_count = await self._collect_key_based(target_snapshot_at)
         budget_count = await self._collect_budget_based(target_snapshot_at)
+        project_budget_count = await self._collect_provider_project_budgets(target_snapshot_at)
 
-        total = key_count + budget_count
+        total = budget_count + project_budget_count
         logger.info(
             f"Spend collection for {target_snapshot_at} complete: "
-            f"{key_count} key rows + {budget_count} budget rows = {total} total"
+            f"{budget_count} budget rows + "
+            f"{project_budget_count} project/member budget rows = {total} total"
         )
         return total
 
-    async def _collect_key_based(self, target_snapshot_at: datetime) -> int:
-        """Run the key-based spend collection path.
+    async def collect_member_budget_reset_window(
+        self,
+        snapshot_at: datetime | None = None,
+    ) -> int:
+        """Collect member-budget spend only for allocations whose budgets reset within the configured window."""
+        target_snapshot_at = snapshot_at or datetime.now(timezone.utc)
+        window_end = target_snapshot_at + timedelta(minutes=config.LITELLM_BUDGET_RESET_WINDOW_MINUTES)
+        logger.info(
+            "Starting member budget reset-window collection for "
+            f"{target_snapshot_at.isoformat(timespec='milliseconds')}.."
+            f"{window_end.isoformat(timespec='milliseconds')}"
+        )
 
-        Loads active applications, decrypts API keys, queries LiteLLM per-key spend,
-        and writes key rows into project_spend_tracking.
-
-        Args:
-            target_snapshot_at: Snapshot timestamp.
-
-        Returns:
-            Count of rows inserted.
-        """
         async with get_async_session() as session:
-            all_apps = await self._app_repository.aget_all_non_deleted(session)
-            apps_by_name = {app.name: app for app in all_apps}
-            cost_center_ids = [
-                app.cost_center_id for app in all_apps if isinstance(getattr(app, "cost_center_id", None), UUID)
-            ]
-            cost_center_map = await cost_center_repository.aget_by_ids(session, cost_center_ids)
-
-            project_names = [app.name for app in all_apps]
-            if not project_names:
-                logger.info("No projects found; key-based spend collection skipped")
-                return 0
-
-            settings_list = Settings.get_by_project_names(project_names, CredentialTypes.LITE_LLM)
-            logger.debug(f"Loaded {len(settings_list)} LiteLLM settings for {len(project_names)} projects")
-
-            key_details = self._build_key_details(settings_list)
-            if not key_details:
-                logger.info("No LiteLLM API keys found; key-based spend collection skipped")
-                return 0
-
-            logger.info(f"Querying LiteLLM spend for {len(key_details)} API key(s)")
-
-            all_key_hashes = [key_hash for _, key_hash in key_details.values()]
-            prev_rows = await self._tracking_repository.get_latest_before_by_key_hashes(
-                session,
-                all_key_hashes,
-                target_snapshot_at,
+            eligible_allocations = await (
+                project_member_budget_assignment_repository.get_allocations_resetting_within_window(
+                    session=session,
+                    window_start=target_snapshot_at,
+                    window_end=window_end,
+                )
             )
-            logger.debug(f"Loaded {len(prev_rows)} prior key baseline rows for delta calculation")
+            if not eligible_allocations:
+                logger.info("No member budget allocations found in reset window; skipping collection")
+                return 0
+
+            provider_member_refs = {
+                row.provider_metadata.get("provider_member_ref")
+                for row in eligible_allocations
+                if row.provider_metadata.get("provider_member_ref")
+            }
+            if not provider_member_refs:
+                logger.info("No provider member refs found for reset-window allocations; skipping collection")
+                return 0
+
+            member_snapshots = await get_active_provider().collect_member_budget_spend_for_refs(provider_member_refs)
+            if not member_snapshots:
+                logger.info("Provider returned no reset-window member spend snapshots")
+                return 0
 
             budgets_map = await budget_repository.get_all_keyed_by_id(session)
-            logger.debug(f"Loaded {len(budgets_map)} budget(s) for reset detection")
+            prev_rows = await self._tracking_repository.get_latest_before_by_member_budget_ids(
+                session,
+                [(s.project_name, s.budget_id, s.user_id) for s in member_snapshots],
+                target_snapshot_at,
+            )
 
             rows_to_insert: list[ProjectSpendTracking] = []
-            for api_key, (project_name, key_hash) in key_details.items():
-                row = await self._build_key_spend_row(
-                    api_key,
-                    project_name,
-                    key_hash,
-                    apps_by_name,
-                    cost_center_map,
-                    prev_rows,
-                    target_snapshot_at,
-                    budgets_map,
+            for snapshot in member_snapshots:
+                budget = budgets_map.get(snapshot.budget_id)
+                prev_row = prev_rows.get((snapshot.project_name, snapshot.budget_id, snapshot.user_id))
+                daily_spend, cumulative_spend = self._compute_spend_snapshot(
+                    current_budget_period_spend=self._quantize_spend(snapshot.spend),
+                    prev_row=prev_row,
+                    snapshot_at=target_snapshot_at,
+                    budget=budget,
                 )
-                if row is not None:
-                    rows_to_insert.append(row)
+                rows_to_insert.append(
+                    ProjectSpendTracking(
+                        id=uuid4(),
+                        project_name=snapshot.project_name,
+                        spend_date=target_snapshot_at,
+                        daily_spend=daily_spend,
+                        cumulative_spend=(
+                            snapshot.cumulative_spend if snapshot.cumulative_spend is not None else cumulative_spend
+                        ),
+                        budget_period_spend=self._quantize_spend(snapshot.spend),
+                        budget_id=snapshot.budget_id,
+                        budget_category=snapshot.budget_category.value,
+                        user_id=snapshot.user_id,
+                        provider_subject_id=snapshot.provider_subject_id,
+                        spend_subject_type="member_budget",
+                    )
+                )
 
-            skipped = len(key_details) - len(rows_to_insert)
-            logger.info(f"Inserting {len(rows_to_insert)} key row(s) for {target_snapshot_at} (skipped: {skipped})")
-            await self._tracking_repository.insert_key_entries(session, rows_to_insert)
+            await self._tracking_repository.insert_member_budget_entries(session, rows_to_insert)
+            logger.info(f"Inserted {len(rows_to_insert)} member budget reset-window row(s)")
+            return len(rows_to_insert)
 
-        return len(rows_to_insert)
+    async def _collect_provider_project_budgets(self, target_snapshot_at: datetime) -> int:
+        """Collect provider-neutral project/member budget snapshots."""
+        provider = get_active_provider()
+        project_snapshots = await provider.collect_project_budget_spend()
+        member_snapshots = await provider.collect_member_budget_spend()
+        if not project_snapshots and not member_snapshots:
+            return 0
 
-    def _build_key_details(self, settings_list: list) -> dict[str, tuple[str, str]]:
-        """Build a mapping of api_key -> (project_name, key_hash) from decrypted LiteLLM settings.
-
-        Args:
-            settings_list: List of Settings objects for LiteLLM credentials.
-
-        Returns:
-            Dict mapping raw API key to (project_name, key_hash).
-        """
-        key_details: dict[str, tuple[str, str]] = {}
-        for setting in settings_list:
-            SettingsService._decrypt_credentials(setting)
-            cred = SettingsService._build_credential_result(setting, SettingsService.LITELLM_FIELDS, LiteLLMCredentials)
-            if cred and cred.api_key:
-                key_hash = self._hash_key(cred.api_key)
-                key_details[cred.api_key] = (setting.project_name, key_hash)
-                logger.debug(f"Resolved API key for project '{setting.project_name}' (hash prefix: {key_hash[:8]}...)")
-            else:
-                logger.warning(f"No API key in LiteLLM setting {setting.id} for project {setting.project_name}")
-        return key_details
-
-    async def _build_key_spend_row(
-        self,
-        api_key: str,
-        project_name: str,
-        key_hash: str,
-        apps_by_name: dict,
-        cost_center_map: dict,
-        prev_rows: dict[str, ProjectSpendTracking],
-        target_snapshot_at: datetime,
-        budgets_map: dict[str, Budget] | None = None,
-    ) -> ProjectSpendTracking | None:
-        """Fetch LiteLLM spend for one API key and build a tracking row, or return None to skip.
-
-        Args:
-            api_key: Raw LiteLLM API key.
-            project_name: Project name associated with the key.
-            key_hash: SHA-256 hex digest of the API key.
-            apps_by_name: Application objects indexed by name, for cost center lookup.
-            cost_center_map: Cost center objects indexed by ID.
-            prev_rows: Most recent stored rows per key_hash, for delta calculation.
-            target_snapshot_at: Snapshot timestamp.
-            budgets_map: All budget rows keyed by budget_id, for reset detection.
-
-        Returns:
-            A ProjectSpendTracking row ready for insertion, or None if the entry should be skipped.
-        """
-        project = apps_by_name.get(project_name)
-        project_cost_center_id = getattr(project, "cost_center_id", None)
-        cost_center = cost_center_map.get(project_cost_center_id) if isinstance(project_cost_center_id, UUID) else None
-
-        logger.debug(f"Querying LiteLLM spend for project '{project_name}' (hash prefix: {key_hash[:8]}...)")
-        spending_result = await asyncio.to_thread(get_all_keys_spending, [api_key])
-        if not spending_result:
-            logger.warning(
-                f"No spending data from LiteLLM for key (hash prefix: {key_hash[:8]}...) "
-                f"in project {project_name}; skipping"
+        async with get_async_session() as session:
+            budgets_map = await budget_repository.get_all_keyed_by_id(session)
+            project_rows: list[ProjectSpendTracking] = []
+            project_pairs = [(s.project_name, s.budget_id) for s in project_snapshots]
+            project_prev = await self._tracking_repository.get_latest_before_by_project_budget_ids(
+                session,
+                project_pairs,
+                target_snapshot_at,
+                spend_subject_type="project_budget",
             )
-            return None
+            for snapshot in project_snapshots:
+                budget = budgets_map.get(snapshot.budget_id)
+                prev_row = project_prev.get((snapshot.project_name, snapshot.budget_id))
+                daily_spend, cumulative_spend = self._compute_spend_snapshot(
+                    current_budget_period_spend=self._quantize_spend(snapshot.spend),
+                    prev_row=prev_row,
+                    snapshot_at=target_snapshot_at,
+                    budget=budget,
+                )
+                project_rows.append(
+                    ProjectSpendTracking(
+                        id=uuid4(),
+                        project_name=snapshot.project_name,
+                        spend_date=target_snapshot_at,
+                        daily_spend=daily_spend,
+                        cumulative_spend=(
+                            snapshot.cumulative_spend if snapshot.cumulative_spend is not None else cumulative_spend
+                        ),
+                        budget_period_spend=self._quantize_spend(snapshot.spend),
+                        budget_id=snapshot.budget_id,
+                        budget_category=snapshot.budget_category.value,
+                        provider_subject_id=snapshot.provider_subject_id,
+                        spend_subject_type="project_budget",
+                    )
+                )
 
-        spending_payload = spending_result[0]
-        current_budget_period_spend = self._extract_budget_period_spend(spending_payload)
-        budget_id = spending_payload.get("budget_id")
-        budget = budgets_map.get(budget_id) if (budgets_map and budget_id) else None
-        prev_row = prev_rows.get(key_hash)
-
-        try:
-            daily_spend, cumulative_spend = self._compute_spend_snapshot(
-                current_budget_period_spend=current_budget_period_spend,
-                prev_row=prev_row,
-                snapshot_at=target_snapshot_at,
-                budget=budget,
+            member_rows: list[ProjectSpendTracking] = []
+            member_triples = [(s.project_name, s.budget_id, s.user_id) for s in member_snapshots]
+            member_prev = await self._tracking_repository.get_latest_before_by_member_budget_ids(
+                session,
+                member_triples,
+                target_snapshot_at,
             )
-        except InvalidSpendSnapshotError as exc:
-            logger.warning(f"Skipping invalid spend snapshot for project {project_name!r}: {exc}")
-            return None
+            for snapshot in member_snapshots:
+                budget = budgets_map.get(snapshot.budget_id)
+                prev_row = member_prev.get((snapshot.project_name, snapshot.budget_id, snapshot.user_id))
+                daily_spend, cumulative_spend = self._compute_spend_snapshot(
+                    current_budget_period_spend=self._quantize_spend(snapshot.spend),
+                    prev_row=prev_row,
+                    snapshot_at=target_snapshot_at,
+                    budget=budget,
+                )
+                member_rows.append(
+                    ProjectSpendTracking(
+                        id=uuid4(),
+                        project_name=snapshot.project_name,
+                        spend_date=target_snapshot_at,
+                        daily_spend=daily_spend,
+                        cumulative_spend=(
+                            snapshot.cumulative_spend if snapshot.cumulative_spend is not None else cumulative_spend
+                        ),
+                        budget_period_spend=self._quantize_spend(snapshot.spend),
+                        budget_id=snapshot.budget_id,
+                        budget_category=snapshot.budget_category.value,
+                        user_id=snapshot.user_id,
+                        provider_subject_id=snapshot.provider_subject_id,
+                        spend_subject_type="member_budget",
+                    )
+                )
 
-        logger.debug(
-            f"Project '{project_name}' (hash prefix: {key_hash[:8]}...): "
-            f"budget_period_spend={current_budget_period_spend}, "
-            f"lifetime_cumulative={cumulative_spend}, "
-            f"prev_budget_period={prev_row.budget_period_spend if prev_row else 'n/a'}, "
-            f"daily_delta={daily_spend}"
-        )
-
-        if daily_spend == Decimal("0"):
-            logger.debug(f"Project '{project_name}' (hash prefix: {key_hash[:8]}...) has zero delta; skipping snapshot")
-            return None
-
-        return ProjectSpendTracking(
-            id=uuid4(),
-            project_name=project_name,
-            cost_center_id=cost_center.id if cost_center else None,
-            cost_center_name=cost_center.name if cost_center else None,
-            key_hash=key_hash,
-            spend_date=target_snapshot_at,
-            daily_spend=daily_spend,
-            cumulative_spend=cumulative_spend,
-            budget_period_spend=current_budget_period_spend,
-            budget_id=spending_payload.get("budget_id"),
-            budget_category=budget.budget_category if budget else None,
-            spend_subject_type="key",
-        )
+            await self._tracking_repository.insert_project_budget_entries(session, project_rows)
+            await self._tracking_repository.insert_member_budget_entries(session, member_rows)
+            return len(project_rows) + len(member_rows)
 
     async def _collect_budget_based(self, target_snapshot_at: datetime) -> int:
         """Run the budget-based spend collection path using /customer/list.
@@ -269,39 +256,39 @@ class LiteLLMSpendCollectorService:
         Returns:
             Count of rows inserted.
         """
-        customer_entries = await asyncio.to_thread(get_customer_list_spending)
-        if not customer_entries:
-            logger.info("No customer budget entries from LiteLLM; budget-based spend collection skipped")
+        personal_entries = await get_active_provider().collect_personal_spend()
+        if not personal_entries:
+            logger.info("No personal spend entries from provider; budget-based spend collection skipped")
             return 0
 
-        logger.info(f"Processing {len(customer_entries)} customer budget entries")
+        entries_with_budget_id = [e for e in personal_entries if e.budget_id]
+        if not entries_with_budget_id:
+            logger.info("No personal spend entries with budget_id; budget-based spend collection skipped")
+            return 0
+
+        logger.info(f"Processing {len(entries_with_budget_id)} personal spend entries")
 
         async with get_async_session() as session:
+            budgets_map = await budget_repository.get_all_keyed_by_id(session)
+            logger.debug(f"Loaded {len(budgets_map)} budget(s) for reset detection")
+            deduped_entries = self._dedupe_personal_entries(entries_with_budget_id, budgets_map)
             project_budget_category_triples = [
-                (
-                    self._normalize_project_name(entry.user_id, entry.budget_id),
-                    entry.budget_id,
-                    derive_category_from_user_id(entry.user_id).value,
-                )
-                for entry in customer_entries
+                (entry.user_identifier, entry.budget_id, entry.budget_category) for entry in deduped_entries
             ]
-            prev_rows = await self._tracking_repository.get_latest_before_by_project_budget_categories(
+
+            prev_rows = await self._tracking_repository.get_latest_before_by_budget_category_ids(
                 session,
                 project_budget_category_triples,
                 target_snapshot_at,
             )
             logger.debug(f"Loaded {len(prev_rows)} prior budget baseline rows for delta calculation")
 
-            budgets_map = await budget_repository.get_all_keyed_by_id(session)
-            logger.debug(f"Loaded {len(budgets_map)} budget(s) for reset detection")
-
             rows_to_insert: list[ProjectSpendTracking] = []
-            for entry in customer_entries:
-                project_name = self._normalize_project_name(entry.user_id, entry.budget_id)
-                budget_category = derive_category_from_user_id(entry.user_id).value
-                current_budget_period_spend = self._quantize_spend(Decimal(str(entry.spend)))
+            for entry in deduped_entries:
+                project_name = entry.user_identifier
+                current_budget_period_spend = self._quantize_spend(entry.spend)
                 budget = budgets_map.get(entry.budget_id)
-                prev_row = prev_rows.get((project_name, entry.budget_id, budget_category))
+                prev_row = prev_rows.get((project_name, entry.budget_id, entry.budget_category))
 
                 try:
                     daily_spend, cumulative_spend = self._compute_spend_snapshot(
@@ -342,38 +329,64 @@ class LiteLLMSpendCollectorService:
                         cumulative_spend=cumulative_spend,
                         budget_period_spend=current_budget_period_spend,
                         budget_id=entry.budget_id,
-                        budget_category=budget_category,
+                        budget_category=entry.budget_category,
                         spend_subject_type="budget",
                     )
                 )
 
-            skipped = len(customer_entries) - len(rows_to_insert)
+            skipped = len(deduped_entries) - len(rows_to_insert)
             logger.info(f"Inserting {len(rows_to_insert)} budget row(s) for {target_snapshot_at} (skipped: {skipped})")
             await self._tracking_repository.insert_budget_entries(session, rows_to_insert)
 
         return len(rows_to_insert)
 
     @staticmethod
-    def _normalize_project_name(user_id: str, budget_id: str) -> str:
-        """Derive canonical project_name (email) from LiteLLM customer user_id.
+    def _dedupe_personal_entries(
+        entries: list[PersonalSpendEntry],
+        budgets_map: dict[str, Budget],
+    ) -> list[PersonalSpendEntry]:
+        """Collapse provider duplicates to one row per budget snapshot conflict key."""
+        deduped: dict[tuple[str, str, str], PersonalSpendEntry] = {}
+        categories_by_budget_assignment: dict[tuple[str, str], set[str]] = {}
+        duplicate_count = 0
 
-        Uses the stable ``_codemie_{category.value}`` suffixes defined by
-        ``build_user_id()`` — independent of the operator-configurable budget_id.
+        for entry in entries:
+            assignment_key = (entry.user_identifier, entry.budget_id)
+            categories_by_budget_assignment.setdefault(assignment_key, set()).add(entry.budget_category)
 
-        Examples:
-            'alice@example.com', 'default'         -> 'alice@example.com'
-            'alice@example.com_codemie_cli', *any* -> 'alice@example.com'
-            'alice@example.com_codemie_premium_models', *any* -> 'alice@example.com'
-        """
-        from codemie.enterprise.litellm.budget_categories import BudgetCategory
+            budget = budgets_map.get(entry.budget_id)
+            resolved_category = budget.budget_category if budget else entry.budget_category
+            key = (entry.user_identifier, entry.budget_id, resolved_category)
+            normalized_entry = entry.model_copy(update={"budget_category": resolved_category})
+            existing = deduped.get(key)
 
-        for category in BudgetCategory:
-            if category == BudgetCategory.PLATFORM:
+            if existing is None:
+                deduped[key] = normalized_entry
                 continue
-            suffix = f"_codemie_{category.value}"
-            if user_id.endswith(suffix):
-                return user_id[: -len(suffix)]
-        return user_id
+
+            duplicate_count += 1
+            if normalized_entry.spend >= existing.spend:
+                deduped[key] = normalized_entry
+
+        for (user_identifier, budget_id), categories in categories_by_budget_assignment.items():
+            if len(categories) < 2:
+                continue
+
+            budget = budgets_map.get(budget_id)
+            resolved_category = budget.budget_category if budget else None
+            logger.warning(
+                f"Personal spend provider returned multiple categories for user_identifier={user_identifier!r} "
+                f"budget_id={budget_id!r}: categories={sorted(categories)!r}, "
+                f"resolved_category={resolved_category!r}"
+            )
+
+        if duplicate_count:
+            logger.warning(
+                f"Collapsed {duplicate_count} duplicate personal spend entr"
+                f"{'y' if duplicate_count == 1 else 'ies'} into {len(deduped)} unique budget snapshot keys"
+            )
+
+        return list(deduped.values())
 
     def _compute_spend_snapshot(
         self,

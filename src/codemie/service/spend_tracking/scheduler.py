@@ -25,6 +25,24 @@ from codemie.service.conversation_analysis.leader_lock import LeaderLockContext
 # Distinct advisory lock ID for the spend tracking job — must differ from
 # LeaderLockContext.ADVISORY_LOCK_ID (987654321) used by ConversationAnalysisService.
 _SPEND_TRACKING_LOCK_ID = 987654322
+_SPEND_TRACKING_RESET_WINDOW_LOCK_ID = 987654323
+
+
+def _build_cron_trigger(cron_expression: str) -> CronTrigger | None:
+    """Return a UTC cron trigger or None when the expression is invalid."""
+    cron_parts = cron_expression.split()
+    if len(cron_parts) != 5:
+        return None
+
+    minute, hour, day, month, day_of_week = cron_parts
+    return CronTrigger(
+        minute=minute,
+        hour=hour,
+        day=day,
+        month=month,
+        day_of_week=day_of_week,
+        timezone="UTC",
+    )
 
 
 class SpendTrackingScheduler:
@@ -53,29 +71,22 @@ class SpendTrackingScheduler:
         """Register enabled jobs and start the scheduler."""
         if config.LITELLM_SPEND_COLLECTOR_ENABLED:
             self._register_spend_collector_job()
+        if config.LITELLM_BUDGET_RESET_TRACKER_ENABLED:
+            self._register_budget_reset_tracker_job()
 
         if not self.scheduler.running:
             self.scheduler.start()
 
     def _register_spend_collector_job(self) -> None:
         """Register the LiteLLM spend collector cron job."""
-        cron_parts = config.LITELLM_SPEND_COLLECTOR_SCHEDULE.split()
-        if len(cron_parts) != 5:
+        trigger = _build_cron_trigger(config.LITELLM_SPEND_COLLECTOR_SCHEDULE)
+        if trigger is None:
             logger.error(
                 f"Invalid LITELLM_SPEND_COLLECTOR_SCHEDULE cron expression: "
                 f"{config.LITELLM_SPEND_COLLECTOR_SCHEDULE!r}; skipping job registration"
             )
             return
 
-        minute, hour, day, month, day_of_week = cron_parts
-        trigger = CronTrigger(
-            minute=minute,
-            hour=hour,
-            day=day,
-            month=month,
-            day_of_week=day_of_week,
-            timezone="UTC",
-        )
         self.scheduler.add_job(
             self._run_spend_collector,
             trigger=trigger,
@@ -86,6 +97,28 @@ class SpendTrackingScheduler:
         logger.info(
             f"Registered LiteLLM spend collector job with schedule: "
             f"{config.LITELLM_SPEND_COLLECTOR_SCHEDULE!r} (UTC)"
+        )
+
+    def _register_budget_reset_tracker_job(self) -> None:
+        """Register the member budget reset-window tracker cron job."""
+        trigger = _build_cron_trigger(config.LITELLM_BUDGET_RESET_TRACKER_SCHEDULE)
+        if trigger is None:
+            logger.error(
+                f"Invalid LITELLM_BUDGET_RESET_TRACKER_SCHEDULE cron expression: "
+                f"{config.LITELLM_BUDGET_RESET_TRACKER_SCHEDULE!r}; skipping job registration"
+            )
+            return
+
+        self.scheduler.add_job(
+            self._run_budget_reset_tracker,
+            trigger=trigger,
+            id="litellm_budget_reset_tracker",
+            replace_existing=True,
+            name="LiteLLM Budget Reset Tracker",
+        )
+        logger.info(
+            f"Registered LiteLLM budget reset tracker job with schedule: "
+            f"{config.LITELLM_BUDGET_RESET_TRACKER_SCHEDULE!r} (UTC)"
         )
 
     async def _run_spend_collector(self) -> None:
@@ -105,6 +138,19 @@ class SpendTrackingScheduler:
                 logger.info(f"LiteLLM spend collector completed: {count} rows inserted")
             except Exception as e:
                 logger.error(f"LiteLLM spend collector failed: {e}", exc_info=True)
+
+    async def _run_budget_reset_tracker(self) -> None:
+        """Wrapper for the member budget reset-window tracker job."""
+        with LeaderLockContext(lock_id=_SPEND_TRACKING_RESET_WINDOW_LOCK_ID) as lock:
+            if not lock.acquired:
+                logger.info("LiteLLM budget reset tracker: not the leader, skipping")
+                return
+
+            try:
+                count = await self._spend_collector_service.collect_member_budget_reset_window()
+                logger.info(f"LiteLLM budget reset tracker completed: {count} rows inserted")
+            except Exception as e:
+                logger.error(f"LiteLLM budget reset tracker failed: {e}", exc_info=True)
 
     def stop(self) -> None:
         """Stop the scheduler gracefully."""

@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
 # Import from codemie (allowed in integration layer)
 from codemie.configs import config, logger
+from codemie.clients.postgres import get_async_session
 from codemie.core.constants import (
     REQUEST_ID,
     LLM_MODEL,
@@ -61,6 +62,8 @@ from codemie.core.utils import calculate_token_cost
 from codemie.rest_api.security.authentication import BEARER_AUTHORIZATION_HEADER, authenticate
 from codemie.rest_api.security.user import User
 from codemie.enterprise.litellm.dependencies import check_user_budget
+from codemie.service.budget.budget_enums import BudgetCategory as CoreBudgetCategory
+from codemie.service.budget.budget_resolution_service import budget_resolution_service
 from codemie.service.budget.budget_service import budget_service
 from codemie.service.llm_service.llm_service import llm_service
 from codemie.service.monitoring.llm_proxy_monitoring_service import LLMProxyMonitoringService
@@ -75,10 +78,14 @@ from .dependencies import (
     is_premium_models_enabled,
 )
 from .llm_factory import generate_litellm_headers_from_context
+from .project_member_runtime_sync import ensure_project_member_runtime_ready
+from .runtime_budget_selection import RuntimeBudgetMode, select_runtime_budget_mode
 
 # Import proxy utils from loader (with enterprise package availability check)
 from ..loader import inject_user_into_body, parse_usage_from_response
 
+
+LITELLM_CUSTOMER_ID_HEADER = "x-litellm-customer-id"
 
 # HTTP headers that should NOT be forwarded between proxies (hop-by-hop headers)
 # See: https://datatracker.ietf.org/doc/html/rfc2616#section-13.5.1
@@ -99,6 +106,7 @@ PROXY_HOP_BY_HOP_HEADERS = {
     HEADER_CODEMIE_SESSION_ID,
     HEADER_CODEMIE_REQUEST_ID,
     BEARER_AUTHORIZATION_HEADER.lower(),
+    LITELLM_CUSTOMER_ID_HEADER,
 }
 
 # Hop-by-hop headers that must NOT be forwarded from upstream responses to clients.
@@ -262,6 +270,65 @@ def _inject_user_into_request_body_from_bytes(body_bytes: bytes, user_id: str, r
     )
 
 
+def _stream_body_bytes(body_bytes: bytes):
+    async def passthrough():
+        yield body_bytes
+
+    return passthrough()
+
+
+async def _resolve_tracking_identity(user: User, request_info: dict) -> tuple[BudgetCategory, str, str | None, str]:
+    llm_model = request_info.get(LLM_MODEL, "unknown")
+    category_budget_ids = await budget_service.get_all_category_budget_ids_for_request(user.id)
+    premium_budget_id = category_budget_ids.get(BudgetCategory.PREMIUM_MODELS.value) or get_category_budget_id(
+        BudgetCategory.PREMIUM_MODELS
+    )
+    username = get_premium_username(user.username, llm_model)
+    if username is not None and premium_budget_id:
+        return BudgetCategory.PREMIUM_MODELS, username, premium_budget_id, llm_model
+
+    return _resolve_non_premium_tracking_identity(
+        user=user,
+        request_info=request_info,
+        category_budget_ids=category_budget_ids,
+        llm_model=llm_model,
+    )
+
+
+def _resolve_non_premium_tracking_identity(
+    *,
+    user: User,
+    request_info: dict,
+    category_budget_ids: dict[str, str | None],
+    llm_model: str,
+) -> tuple[BudgetCategory, str, str | None, str]:
+    from codemie.enterprise.litellm.budget_categories import build_user_id
+
+    cli_request = bool(request_info.get(CODEMIE_CLI)) or request_info.get(CLIENT_TYPE) in {
+        "codemie-cli",
+        "codemie_cli",
+    }
+    cli_budget_id = category_budget_ids.get(BudgetCategory.CLI.value)
+    if cli_request and (cli_budget_id or get_category_budget_id(BudgetCategory.CLI)):
+        return (
+            BudgetCategory.CLI,
+            build_user_id(user.username, BudgetCategory.CLI),
+            cli_budget_id or get_category_budget_id(BudgetCategory.CLI),
+            llm_model,
+        )
+
+    username = get_proxy_username(user.username)
+    if username is not None:
+        return BudgetCategory.CLI, username, get_category_budget_id(BudgetCategory.CLI), llm_model
+
+    return (
+        BudgetCategory.PLATFORM,
+        user.username,
+        category_budget_ids.get(BudgetCategory.PLATFORM.value),
+        llm_model,
+    )
+
+
 async def _create_body_stream_with_optional_injection(
     body_bytes: bytes, has_own_credentials: bool, user: User, request_info: dict
 ):
@@ -286,49 +353,110 @@ async def _create_body_stream_with_optional_injection(
     if has_own_credentials:
         # Passthrough without user injection - budget tracked against integration key
         logger.debug(f"Passthrough mode (own credentials): {user.username}")
+        return _stream_body_bytes(body_bytes)
 
-        async def passthrough():
-            yield body_bytes
+    category, username, tracking_budget_id, llm_model = await _resolve_tracking_identity(user, request_info)
 
-        return passthrough()
+    project_runtime = await _resolve_project_budget_runtime(
+        user=user,
+        category=category,
+        request_info=request_info,
+    )
+    project_name = request_info.get(PROJECT) or None
+    if project_runtime is not None:
+        from codemie.service.settings.settings import SettingsService
 
-    else:
-        llm_model = request_info.get(LLM_MODEL, "unknown")
-        username = get_premium_username(user.username, llm_model)
-        if username is not None:
-            category = BudgetCategory.PREMIUM_MODELS
-        else:
-            username = get_proxy_username(user.username)
-            if username is not None:
-                category = BudgetCategory.CLI
-            else:
-                category = BudgetCategory.PLATFORM
-                username = user.username
-
-        tracking_budget_id = get_category_budget_id(category)
-        budget_id = tracking_budget_id if category != BudgetCategory.PLATFORM else None
-        await budget_service.track_proxy_budget_assignment_for_request(
-            user_id=user.id,
-            category=category,
-            budget_id=tracking_budget_id,
+        member_tracking_enabled = SettingsService.get_project_member_budget_tracking_enabled(project_name)
+        selection = select_runtime_budget_mode(
+            has_user_litellm_credentials=False,
+            project_name=project_name,
+            project_member_tracking_enabled=member_tracking_enabled,
+            resolved_project_budget=True,
         )
-
-        if budget_id:
+        project_runtime_username = project_runtime.body_overrides.get("user")
+        if selection.mode == RuntimeBudgetMode.PROJECT_BUDGET_WITH_MEMBER_TRACKING:
+            if not isinstance(project_runtime_username, str) or not project_runtime_username:
+                raise RuntimeError(
+                    f"Project member runtime selected but provider returned no runtime user for {project_name!r}"
+                )
+            username = project_runtime_username
             logger.debug(
-                f"Dedicated proxy budget selected for {user.username}: "
-                f"using username {username} with budget_id={budget_id} (model={llm_model})"
+                f"Project budget selected for {user.username}: using provider runtime subject {username} "
+                f"(project={request_info.get(PROJECT)!r}, category={category.value!r}, model={llm_model})"
+            )
+            request_info["litellm_customer_id"] = username
+            return _inject_user_into_request_body_from_bytes(
+                body_bytes=body_bytes,
+                user_id=username,
+                request_info=request_info,
             )
 
-        logger.debug(f"Injecting user for budget tracking: {username} (model={llm_model})")
+        logger.debug(
+            f"Project-only budget selected for {user.username}: using project key without customer override "
+            f"(project={request_info.get(PROJECT)!r}, category={category.value!r}, model={llm_model})"
+        )
+        return _stream_body_bytes(body_bytes)
 
-        check_user_budget(user_email=username, budget_id=budget_id, user_id=user.id)
+    budget_id = tracking_budget_id if category != BudgetCategory.PLATFORM else None
+    await budget_service.track_proxy_budget_assignment_for_request(
+        user_id=user.id,
+        category=category,
+        budget_id=tracking_budget_id,
+    )
 
-        return _inject_user_into_request_body_from_bytes(
-            body_bytes=body_bytes, user_id=username, request_info=request_info
+    if budget_id:
+        logger.debug(
+            f"Dedicated proxy budget selected for {user.username}: "
+            f"using username {username} with budget_id={budget_id} (model={llm_model})"
         )
 
+    logger.debug(f"Injecting user for budget tracking: {username} (model={llm_model})")
 
-def _prepare_proxy_headers(request: Request) -> dict | Response:
+    check_user_budget(user_email=username, budget_id=budget_id, user_id=user.id)
+    request_info["litellm_customer_id"] = username
+
+    return _inject_user_into_request_body_from_bytes(body_bytes=body_bytes, user_id=username, request_info=request_info)
+
+
+async def _resolve_project_budget_runtime(user: User, category: BudgetCategory, request_info: dict):
+    """Resolve project-scoped budget runtime overrides, falling back to global behavior."""
+    project_name = request_info.get(PROJECT) or None
+    if not project_name:
+        return None
+
+    core_category = CoreBudgetCategory(category.value)
+    await ensure_project_member_runtime_ready(
+        user_id=user.id,
+        user_email=user.username,
+        project_name=project_name,
+        budget_category=core_category,
+    )
+
+    async with get_async_session() as session:
+        resolved = await budget_resolution_service.resolve(
+            session,
+            user_id=user.id,
+            project_name=project_name,
+            budget_category=core_category,
+        )
+
+    provider_result = await budget_resolution_service.dispatch_runtime(
+        resolved, user_id=user.id, user_email=user.username, model=request_info.get(LLM_MODEL)
+    )
+    if provider_result is None:
+        return None
+
+    if provider_result.headers:
+        request_info["budget_provider_headers"] = provider_result.headers
+    if provider_result.api_key:
+        request_info["budget_provider_api_key"] = provider_result.api_key
+    if provider_result.base_url:
+        request_info["budget_provider_base_url"] = provider_result.base_url
+
+    return provider_result
+
+
+def _prepare_proxy_headers(request: Request, request_info: dict | None = None) -> dict | Response:
     """
     Prepare headers for proxying (uses codemie services).
 
@@ -343,7 +471,9 @@ def _prepare_proxy_headers(request: Request) -> dict | Response:
 
     # Get integration key or use default
     integration_id = request.headers.get(HEADER_CODEMIE_INTEGRATION)
-    if integration_id:
+    if request_info is not None and request_info.get("budget_provider_api_key"):
+        headers["Authorization"] = f"Bearer {request_info['budget_provider_api_key']}"
+    elif integration_id:
         try:
             api_key = _get_integration_api_key(integration_id)
             headers["Authorization"] = f"Bearer {api_key}"
@@ -352,6 +482,11 @@ def _prepare_proxy_headers(request: Request) -> dict | Response:
     else:
         proxy_key = config.LITE_LLM_PROXY_APP_KEY or config.LITE_LLM_APP_KEY
         headers["Authorization"] = f"Bearer {proxy_key}"
+
+    if request_info is not None and request_info.get("litellm_customer_id"):
+        headers[LITELLM_CUSTOMER_ID_HEADER] = request_info["litellm_customer_id"]
+    if request_info is not None and request_info.get("budget_provider_headers"):
+        headers.update(request_info["budget_provider_headers"])
 
     # Add project tags from context
     try:
@@ -827,12 +962,16 @@ async def _proxy_to_llm_proxy(
     )
 
     # Prepare headers (uses codemie services)
-    headers = _prepare_proxy_headers(request)
+    headers = _prepare_proxy_headers(request, request_info)
     if isinstance(headers, Response):
         return headers
 
     # Proxy request
-    url = httpx.URL(path=endpoint)
+    provider_base_url = request_info.get("budget_provider_base_url")
+    if provider_base_url:
+        url = httpx.URL(f"{str(provider_base_url).rstrip('/')}/{endpoint.lstrip('/')}")
+    else:
+        url = httpx.URL(path=endpoint)
 
     try:
         llm_proxy_client = get_llm_proxy_client()

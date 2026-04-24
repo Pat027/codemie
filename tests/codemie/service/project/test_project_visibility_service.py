@@ -14,6 +14,7 @@
 
 """Tests for project visibility service."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,6 +24,87 @@ from codemie.service.project.project_visibility_service import ProjectVisibility
 
 
 class TestProjectVisibilityService:
+    def test_list_visible_projects_delegates_to_repository(self):
+        mock_session = MagicMock()
+        visible_projects = [SimpleNamespace(name="proj-a")]
+
+        with patch(
+            "codemie.service.project.project_visibility_service.application_repository.list_visible_projects",
+            return_value=visible_projects,
+        ) as mock_list_visible_projects:
+            result = ProjectVisibilityService.list_visible_projects(
+                session=mock_session,
+                user_id="user-1",
+                is_admin=False,
+                search="proj",
+                limit=10,
+            )
+
+        assert result == visible_projects
+        mock_list_visible_projects.assert_called_once_with(
+            session=mock_session,
+            user_id="user-1",
+            is_admin=False,
+            search="proj",
+            limit=10,
+        )
+
+    def test_list_visible_projects_paginated_enriches_projects_with_counts_and_cost_center(self):
+        mock_session = MagicMock()
+        project = SimpleNamespace(
+            name="proj-a",
+            description="Project A",
+            project_type="shared",
+            created_by="owner-1",
+            date="2026-04-24T00:00:00Z",
+            cost_center_id="cc-1",
+        )
+        cost_center = SimpleNamespace(name="Cost Center A")
+
+        with (
+            patch(
+                "codemie.service.project.project_visibility_service.application_repository.list_visible_projects_paginated",
+                return_value=([project], 1),
+            ),
+            patch(
+                "codemie.service.project.project_visibility_service.application_repository.get_project_member_counts_bulk",
+                return_value={"proj-a": (2, 1)},
+            ),
+            patch(
+                "codemie.service.project.project_visibility_service.application_repository.get_project_entity_counts_bulk",
+                return_value={"proj-a": {"datasources": 3}},
+            ),
+            patch(
+                "codemie.service.project.project_visibility_service.cost_center_repository.get_by_ids",
+                return_value={"cc-1": cost_center},
+            ),
+        ):
+            result, total_count = ProjectVisibilityService.list_visible_projects_paginated(
+                session=mock_session,
+                user_id="user-1",
+                is_admin=False,
+                search="proj",
+                page=0,
+                per_page=20,
+                include_counters=True,
+            )
+
+        assert total_count == 1
+        assert result == [
+            {
+                "name": "proj-a",
+                "description": "Project A",
+                "project_type": "shared",
+                "created_by": "owner-1",
+                "created_at": "2026-04-24T00:00:00Z",
+                "user_count": 2,
+                "admin_count": 1,
+                "counters": {"datasources": 3},
+                "cost_center_id": "cc-1",
+                "cost_center_name": "Cost Center A",
+            }
+        ]
+
     @patch("codemie.service.project.project_visibility_service.logger")
     def test_get_visible_project_or_404_logs_and_raises(self, mock_logger):
         mock_session = MagicMock()
@@ -52,3 +134,61 @@ class TestProjectVisibilityService:
         assert "timestamp=" in log_message
         # project_name should NOT be in logs (PII removal)
         assert "hidden-proj" not in log_message
+
+    def test_get_visible_project_or_404_returns_project_when_visible(self):
+        mock_session = MagicMock()
+        project = SimpleNamespace(name="proj-a")
+
+        with patch(
+            "codemie.service.project.project_visibility_service.application_repository.get_visible_project",
+            return_value=project,
+        ):
+            result = ProjectVisibilityService.get_visible_project_or_404(
+                session=mock_session,
+                project_name="proj-a",
+                user_id="user-1",
+                is_admin=False,
+                action="GET /v1/projects/proj-a",
+            )
+
+        assert result is project
+
+    def test_get_visible_project_with_members_includes_current_user_project_admin_flag(self):
+        mock_session = MagicMock()
+        project = SimpleNamespace(
+            name="proj-a",
+            description="Project A",
+            project_type="shared",
+            created_by="owner-1",
+            date="2026-04-24T00:00:00Z",
+            cost_center_id=None,
+        )
+        current_member = SimpleNamespace(user_id="user-1", is_project_admin=True, date="2026-04-24T00:00:00Z")
+        other_member = SimpleNamespace(user_id="user-2", is_project_admin=False, date="2026-04-24T00:00:00Z")
+
+        with (
+            patch.object(ProjectVisibilityService, "get_visible_project_or_404", return_value=project),
+            patch(
+                "codemie.service.project.project_visibility_service.application_repository.get_project_member_counts_bulk",
+                return_value={"proj-a": (2, 1)},
+            ),
+            patch(
+                "codemie.service.project.project_visibility_service.application_repository.get_project_members",
+                return_value=[current_member, other_member],
+            ),
+        ):
+            result = ProjectVisibilityService.get_visible_project_with_members(
+                session=mock_session,
+                project_name="proj-a",
+                user_id="user-1",
+                is_admin=False,
+                action="GET /v1/projects/proj-a",
+            )
+
+        assert result["user_count"] == 2
+        assert result["admin_count"] == 1
+        assert result["is_project_admin"] is True
+        assert result["members"] == [
+            {"user_id": "user-1", "is_project_admin": True, "date": "2026-04-24T00:00:00Z"},
+            {"user_id": "user-2", "is_project_admin": False, "date": "2026-04-24T00:00:00Z"},
+        ]

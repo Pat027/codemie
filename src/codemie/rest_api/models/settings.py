@@ -168,7 +168,7 @@ class DialCredentials(BaseModel):
 
 class LiteLLMCredentials(BaseModel):
     api_key: str
-    url: str
+    url: str = ""
 
 
 class LiteLLMContext(BaseModel):
@@ -398,6 +398,21 @@ class Settings(BaseModelWithSQLSupport, SettingsBase, table=True):
                 .where(cls.project_name == project_name)
                 .where(cls.credential_type == credential_type)
                 .where(cls.credential_values.contains([{"key": "resource_id", "value": resource_id}]))
+            )
+            return session.exec(statement).all()
+
+    @classmethod
+    def get_all_project_litellm_settings(cls) -> list["Settings"]:
+        """Return all PROJECT-scoped LITE_LLM settings across all projects.
+
+        Returned instances are detached (session is closed on return).
+        Only scalar column attributes are safe to access.
+        """
+        with Session(cls.get_engine()) as session:
+            statement = (
+                select(cls)
+                .where(cls.setting_type == SettingType.PROJECT.value)
+                .where(cls.credential_type == CredentialTypes.LITE_LLM.value)
             )
             return session.exec(statement).all()
 

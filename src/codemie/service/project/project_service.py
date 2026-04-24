@@ -31,6 +31,7 @@ from codemie.repository.user_project_repository import user_project_repository
 from codemie.repository.user_repository import user_repository
 from codemie.rest_api.security.user import User
 from codemie.service.cost_center_service import cost_center_service
+from codemie.service.settings.settings import SettingsService
 from codemie.service.user.authentication_service import invalidate_user_from_cache
 
 
@@ -155,6 +156,7 @@ class ProjectService:
         description: str | None = None,
         cost_center_id: UUID | None = None,
         clear_cost_center: bool = False,
+        project_member_budget_tracking_enabled: bool | None = None,
     ) -> Application:
         with get_session() as session:
             project = application_repository.get_by_name(session, project_name)
@@ -198,6 +200,11 @@ class ProjectService:
                 description=validated_description,
                 cost_center_id=resolved_cost_center_id,
             )
+            if project_member_budget_tracking_enabled is not None:
+                SettingsService.set_project_member_budget_tracking_enabled(
+                    project.name,
+                    project_member_budget_tracking_enabled,
+                )
             session.commit()
             session.refresh(project)
             return project

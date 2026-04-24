@@ -28,8 +28,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from codemie.core.exceptions import ExtendedHTTPException, ValidationException
-from codemie.enterprise.litellm.budget_categories import BudgetCategory
+from codemie.service.budget.budget_enums import BudgetCategory
 from codemie.service.budget.budget_models import Budget
+from codemie.service.budget.provider import PersonalBudgetEntry
 from codemie.service.budget.budget_service import BudgetService
 
 
@@ -177,7 +178,7 @@ class TestCreateBudgetLiteLLMRollback:
 
     @pytest.mark.asyncio
     async def test_rolls_back_when_litellm_fails(self):
-        """If create_budget_in_litellm returns None, DB row is rolled back and 502 raised."""
+        """Provider sync failures roll back the insert and surface a 502."""
         service = _make_service()
         mock_session = AsyncMock()
         mock_session.rollback = AsyncMock()
@@ -198,16 +199,18 @@ class TestCreateBudgetLiteLLMRollback:
                 new=AsyncMock(return_value=inserted_budget),
             ),
             patch(
-                "codemie.service.budget.budget_service.asyncio.to_thread",
-                new=AsyncMock(return_value=None),  # LiteLLM returns None → failure
-            ),
+                "codemie.service.budget.budget_service.get_active_provider",
+            ) as mock_get_active_provider,
         ):
+            mock_provider = MagicMock()
+            mock_provider.ensure_global_budget = AsyncMock(side_effect=RuntimeError("sync failed"))
+            mock_get_active_provider.return_value = mock_provider
             request = _make_create_request()
             with pytest.raises(ExtendedHTTPException) as exc_info:
                 await service.create_budget(mock_session, request, actor_id="admin")
 
         assert exc_info.value.code == 502
-        mock_session.rollback.assert_called_once()
+        mock_session.rollback.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_returns_budget_when_litellm_succeeds(self):
@@ -235,14 +238,16 @@ class TestCreateBudgetLiteLLMRollback:
                 new=AsyncMock(return_value=inserted_budget),
             ),
             patch(
-                "codemie.service.budget.budget_service.asyncio.to_thread",
-                new=AsyncMock(return_value=litellm_result),
-            ),
+                "codemie.service.budget.budget_service.get_active_provider",
+            ) as mock_get_active_provider,
             patch(
                 "codemie.service.budget.budget_service.budget_repository.update",
                 new=AsyncMock(return_value=updated_budget),
             ),
         ):
+            mock_provider = MagicMock()
+            mock_provider.ensure_global_budget = AsyncMock(return_value=litellm_result)
+            mock_get_active_provider.return_value = mock_provider
             request = _make_create_request()
             result = await service.create_budget(mock_session, request, actor_id="admin")
 
@@ -278,23 +283,19 @@ class TestBackfillUserBudgetAssignments:
         mock_session.begin_nested = MagicMock(return_value=_AsyncContext())
 
         entry = SimpleNamespace(
-            user_id="user@example.com_codemie_cli",
+            user_identifier="user@example.com",
             budget_id="cli-budget",
+            budget_category=BudgetCategory.CLI,
             soft_budget=10,
             max_budget=100,
             budget_duration="30d",
             budget_reset_at=None,
         )
 
-        litellm = MagicMock()
-        litellm.get_customer_list.return_value = [entry]
-
         with (
-            patch("codemie.enterprise.litellm.get_litellm_service_or_none", return_value=litellm),
             patch(
-                "codemie.service.budget.budget_service.asyncio.to_thread",
-                new=AsyncMock(side_effect=[[entry], []]),
-            ),
+                "codemie.service.budget.budget_service.get_active_provider",
+            ) as mock_get_active_provider,
             patch(
                 "codemie.service.budget.budget_service.budget_repository.get_user_id_by_identifier",
                 new=AsyncMock(return_value="user-1"),
@@ -312,6 +313,11 @@ class TestBackfillUserBudgetAssignments:
                 new=AsyncMock(),
             ) as mock_upsert_assignment,
         ):
+            mock_provider = MagicMock()
+            mock_provider.list_personal_budget_assignments = AsyncMock(
+                return_value=[PersonalBudgetEntry(**entry.__dict__)]
+            )
+            mock_get_active_provider.return_value = mock_provider
             result = await service.backfill_user_budget_assignments_from_litellm(mock_session, actor_id="admin")
 
         assert result.imported == 1
@@ -334,8 +340,9 @@ class TestBackfillUserBudgetAssignments:
         mock_session.begin_nested = MagicMock(return_value=_AsyncContext())
 
         entry = SimpleNamespace(
-            user_id="user@example.com",
+            user_identifier="user@example.com",
             budget_id="platform-budget",
+            budget_category=BudgetCategory.PLATFORM,
             soft_budget=10,
             max_budget=100,
             budget_duration="30d",
@@ -343,11 +350,9 @@ class TestBackfillUserBudgetAssignments:
         )
 
         with (
-            patch("codemie.enterprise.litellm.get_litellm_service_or_none", return_value=MagicMock()),
             patch(
-                "codemie.service.budget.budget_service.asyncio.to_thread",
-                new=AsyncMock(side_effect=[[entry], []]),
-            ),
+                "codemie.service.budget.budget_service.get_active_provider",
+            ) as mock_get_active_provider,
             patch(
                 "codemie.service.budget.budget_service.budget_repository.get_user_id_by_identifier",
                 new=AsyncMock(return_value="user-1"),
@@ -361,8 +366,166 @@ class TestBackfillUserBudgetAssignments:
                 new=AsyncMock(),
             ) as mock_upsert_assignment,
         ):
+            mock_provider = MagicMock()
+            mock_provider.list_personal_budget_assignments = AsyncMock(
+                return_value=[PersonalBudgetEntry(**entry.__dict__)]
+            )
+            mock_get_active_provider.return_value = mock_provider
             result = await service.backfill_user_budget_assignments_from_litellm(mock_session, actor_id="admin")
 
         assert result.imported == 0
         assert result.skipped_existing == 1
         mock_upsert_assignment.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Cache tests
+# ---------------------------------------------------------------------------
+
+
+def test_clear_budget_assignment_cache_empties_cache():
+    """clear_budget_assignment_cache() removes all entries."""
+    from codemie.service.budget.budget_service import _budget_assignment_cache, clear_budget_assignment_cache
+
+    _budget_assignment_cache[("u1", "platform")] = "budget-1"
+    assert len(_budget_assignment_cache) >= 1
+    clear_budget_assignment_cache()
+    assert len(_budget_assignment_cache) == 0
+
+
+@pytest.mark.asyncio
+async def test_get_user_category_budget_id_for_request_caches_result():
+    """get_user_category_budget_id_for_request() populates cache and returns value."""
+    from unittest.mock import AsyncMock, patch
+
+    from codemie.enterprise.litellm.budget_categories import BudgetCategory
+    from codemie.service.budget.budget_service import (
+        BudgetService,
+        _budget_assignment_cache,
+        clear_budget_assignment_cache,
+    )
+
+    clear_budget_assignment_cache()
+    svc = BudgetService()
+
+    mock_session = AsyncMock()
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+    with (
+        patch(
+            "codemie.clients.postgres.get_async_session",
+            return_value=mock_cm,
+        ),
+        patch(
+            "codemie.service.budget.budget_service.budget_repository.get_user_category_budget_id",
+            new=AsyncMock(return_value="budget-42"),
+        ),
+    ):
+        result = await svc.get_user_category_budget_id_for_request("u1", BudgetCategory.PLATFORM)
+
+    assert result == "budget-42"
+    assert _budget_assignment_cache[("u1", BudgetCategory.PLATFORM.value)] == "budget-42"
+
+
+@pytest.mark.asyncio
+async def test_get_user_category_budget_id_for_request_uses_cache():
+    """get_user_category_budget_id_for_request() skips DB on warm cache hit."""
+    from unittest.mock import patch
+
+    from codemie.enterprise.litellm.budget_categories import BudgetCategory
+    from codemie.service.budget.budget_service import (
+        BudgetService,
+        _budget_assignment_cache,
+        clear_budget_assignment_cache,
+    )
+
+    clear_budget_assignment_cache()
+    _budget_assignment_cache[("u1", BudgetCategory.PLATFORM.value)] = "cached-budget"
+    svc = BudgetService()
+
+    with patch("codemie.clients.postgres.get_async_session") as mock_session_ctx:
+        result = await svc.get_user_category_budget_id_for_request("u1", BudgetCategory.PLATFORM)
+        mock_session_ctx.assert_not_called()
+
+    assert result == "cached-budget"
+
+
+@pytest.mark.asyncio
+async def test_load_bulk_budget_users_raises_when_any_user_missing():
+    service = _make_service()
+    session = AsyncMock()
+    result_mock = MagicMock()
+    result_mock.scalars.return_value.all.return_value = [SimpleNamespace(id="user-1", email="user1@example.com")]
+    session.execute = AsyncMock(return_value=result_mock)
+
+    with pytest.raises(ExtendedHTTPException) as exc_info:
+        await service._load_bulk_budget_users(
+            session=session,
+            user_ids=["user-1", "missing-user"],
+            select=lambda model: MagicMock(where=lambda *args, **kwargs: MagicMock()),
+            user_model=SimpleNamespace(id=MagicMock(in_=MagicMock(return_value=True))),
+        )
+
+    assert "Users not found" in exc_info.value.message
+
+
+@pytest.mark.asyncio
+async def test_propagate_bulk_budget_assignments_calls_assign_and_clear():
+    service = _make_service()
+    db_users = {"user-1": SimpleNamespace(email="user1@example.com")}
+    assignments = {
+        BudgetCategory.CLI: "cli-budget",
+        BudgetCategory.PLATFORM: None,
+    }
+
+    with patch("codemie.service.budget.budget_service.get_active_provider") as mock_get_provider:
+        mock_provider = MagicMock()
+        mock_provider.assign_user_budget = AsyncMock()
+        mock_provider.clear_user_budget = AsyncMock()
+        mock_get_provider.return_value = mock_provider
+
+        await service._propagate_bulk_budget_assignments(db_users, assignments)
+
+    mock_provider.assign_user_budget.assert_awaited_once_with(
+        user_email="user1@example.com",
+        budget_category=BudgetCategory.CLI,
+        budget_id="cli-budget",
+    )
+    mock_provider.clear_user_budget.assert_awaited_once_with(
+        user_email="user1@example.com",
+        budget_category=BudgetCategory.PLATFORM,
+    )
+
+
+@pytest.mark.asyncio
+async def test_propagate_bulk_budget_assignments_continues_when_clear_fails():
+    service = _make_service()
+    db_users = {"user-1": SimpleNamespace(email="user1@example.com")}
+    assignments = {BudgetCategory.PLATFORM: None}
+
+    with (
+        patch("codemie.service.budget.budget_service.get_active_provider") as mock_get_provider,
+        patch("codemie.service.budget.budget_service.logger") as mock_logger,
+    ):
+        mock_provider = MagicMock()
+        mock_provider.clear_user_budget = AsyncMock(side_effect=RuntimeError("provider unavailable"))
+        mock_get_provider.return_value = mock_provider
+
+        await service._propagate_bulk_budget_assignments(db_users, assignments)
+
+    mock_logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_resolve_backfill_category_uses_prefetched_provider_metadata_when_noncanonical():
+    service = _make_service()
+    prefetched_state = SimpleNamespace(metadata={"budget_category": "cli"})
+    provider = SimpleNamespace(get_project_budget_state_by_ref=AsyncMock(return_value=prefetched_state))
+
+    category, fetched, state = await service._resolve_backfill_category(provider, "legacy-alias")
+
+    assert category == "cli"
+    assert fetched is True
+    assert state is prefetched_state

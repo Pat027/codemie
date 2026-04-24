@@ -26,6 +26,8 @@ from starlette.datastructures import Headers
 
 from codemie.core.constants import (
     CODEMIE_CLI,
+    LLM_MODEL,
+    PROJECT,
     HEADER_CODEMIE_CLI,
     HEADER_CODEMIE_CLI_MODEL,
     HEADER_CODEMIE_CLIENT,
@@ -33,6 +35,7 @@ from codemie.core.constants import (
     HEADER_CODEMIE_REQUEST_ID,
     HEADER_CODEMIE_SESSION_ID,
 )
+from codemie.enterprise.litellm.budget_categories import BudgetCategory
 from codemie.enterprise.litellm.proxy_router import (
     _build_premium_budget_error_body,
     _check_cli_version,
@@ -40,8 +43,10 @@ from codemie.enterprise.litellm.proxy_router import (
     _get_integration_api_key,
     _handle_error_response,
     _prepare_proxy_headers,
+    _resolve_project_budget_runtime,
     register_proxy_endpoints,
 )
+from codemie.service.budget.budget_enums import BudgetCategory as CoreBudgetCategory
 
 
 class TestExtractRequestInfo:
@@ -123,6 +128,149 @@ class TestExtractRequestInfo:
         result = _extract_request_info(headers)
 
         assert result[CODEMIE_CLI] == ""
+
+
+class TestResolveProjectBudgetRuntime:
+    """Tests for _resolve_project_budget_runtime."""
+
+    @staticmethod
+    def _build_session_context(session: MagicMock) -> MagicMock:
+        context = MagicMock()
+        context.__aenter__ = AsyncMock(return_value=session)
+        context.__aexit__ = AsyncMock(return_value=None)
+        return context
+
+    @pytest.mark.asyncio
+    async def test_returns_none_without_project_name_and_skips_runtime_resolution(self):
+        user = MagicMock()
+        user.id = "user-1"
+        user.username = "user@example.com"
+        request_info = {LLM_MODEL: "gpt-4.1-mini"}
+
+        with patch(
+            "codemie.enterprise.litellm.proxy_router.ensure_project_member_runtime_ready",
+            new_callable=AsyncMock,
+        ) as mock_ensure:
+            with patch(
+                "codemie.enterprise.litellm.proxy_router.budget_resolution_service.resolve",
+                new_callable=AsyncMock,
+            ) as mock_resolve:
+                with patch(
+                    "codemie.enterprise.litellm.proxy_router.budget_resolution_service.dispatch_runtime",
+                    new_callable=AsyncMock,
+                ) as mock_dispatch:
+                    result = await _resolve_project_budget_runtime(
+                        user=user,
+                        category=BudgetCategory.CLI,
+                        request_info=request_info,
+                    )
+
+        assert result is None
+        mock_ensure.assert_not_called()
+        mock_resolve.assert_not_called()
+        mock_dispatch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_awaits_member_sync_before_dispatch_and_applies_provider_overrides(self):
+        user = MagicMock()
+        user.id = "user-1"
+        user.username = "user@example.com"
+        request_info = {PROJECT: "project-a", LLM_MODEL: "gpt-4.1-mini"}
+        session = MagicMock()
+        session_context = self._build_session_context(session)
+        resolved_context = MagicMock()
+        provider_result = MagicMock()
+        provider_result.headers = {"x-budget-header": "budget-value"}
+        provider_result.api_key = "provider-api-key"
+        provider_result.base_url = "https://runtime.provider"
+        provider_result.body_overrides = {"user": "runtime-subject"}
+
+        call_order: list[str] = []
+
+        async def _ensure_side_effect(*, user_id: str, user_email: str, project_name: str, budget_category):
+            assert user_id == user.id
+            assert user_email == user.username
+            assert project_name == "project-a"
+            assert budget_category == CoreBudgetCategory.CLI
+            call_order.append("ensure")
+
+        async def _resolve_side_effect(*args, **kwargs):
+            call_order.append("resolve")
+            return resolved_context
+
+        async def _dispatch_side_effect(*args, **kwargs):
+            call_order.append("dispatch")
+            return provider_result
+
+        with patch(
+            "codemie.enterprise.litellm.proxy_router.ensure_project_member_runtime_ready",
+            new_callable=AsyncMock,
+            side_effect=_ensure_side_effect,
+        ):
+            with patch(
+                "codemie.service.settings.settings.SettingsService.get_project_member_budget_tracking_enabled",
+                return_value=True,
+            ):
+                with patch(
+                    "codemie.enterprise.litellm.proxy_router.get_async_session",
+                    return_value=session_context,
+                ):
+                    with patch(
+                        "codemie.enterprise.litellm.proxy_router.budget_resolution_service.resolve",
+                        new_callable=AsyncMock,
+                        side_effect=_resolve_side_effect,
+                    ):
+                        with patch(
+                            "codemie.enterprise.litellm.proxy_router.budget_resolution_service.dispatch_runtime",
+                            new_callable=AsyncMock,
+                            side_effect=_dispatch_side_effect,
+                        ):
+                            result = await _resolve_project_budget_runtime(
+                                user=user,
+                                category=BudgetCategory.CLI,
+                                request_info=request_info,
+                            )
+
+        assert result is provider_result
+        assert call_order == ["ensure", "resolve", "dispatch"]
+        assert request_info["budget_provider_headers"] == {"x-budget-header": "budget-value"}
+        assert request_info["budget_provider_api_key"] == "provider-api-key"
+        assert request_info["budget_provider_base_url"] == "https://runtime.provider"
+
+    @pytest.mark.asyncio
+    async def test_member_sync_failure_propagates_without_fallback(self):
+        user = MagicMock()
+        user.id = "user-1"
+        user.username = "user@example.com"
+        request_info = {PROJECT: "project-a", LLM_MODEL: "gpt-4.1-mini"}
+        session_context = self._build_session_context(MagicMock())
+
+        with patch(
+            "codemie.enterprise.litellm.proxy_router.ensure_project_member_runtime_ready",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("sync failed"),
+        ):
+            with patch(
+                "codemie.enterprise.litellm.proxy_router.get_async_session",
+                return_value=session_context,
+            ):
+                with patch(
+                    "codemie.enterprise.litellm.proxy_router.budget_resolution_service.resolve",
+                    new_callable=AsyncMock,
+                ) as mock_resolve:
+                    with patch(
+                        "codemie.enterprise.litellm.proxy_router.budget_resolution_service.dispatch_runtime",
+                        new_callable=AsyncMock,
+                    ) as mock_dispatch:
+                        with pytest.raises(RuntimeError, match="sync failed"):
+                            await _resolve_project_budget_runtime(
+                                user=user,
+                                category=BudgetCategory.CLI,
+                                request_info=request_info,
+                            )
+
+        mock_resolve.assert_not_called()
+        mock_dispatch.assert_not_called()
 
 
 class TestPrepareProxyHeaders:
@@ -390,6 +538,60 @@ class TestCreateBodyStreamWithOptionalInjection:
         )
         mock_inject.assert_called_once_with(
             body_bytes=b"{}", user_id="user@example.com_codemie_premium_models", request_info=request_info
+        )
+
+    @pytest.mark.asyncio
+    async def test_premium_model_uses_runtime_assigned_budget_without_predefined_budget(self):
+        """Runtime-assigned premium budget must enable premium routing without predefined config."""
+        from codemie.enterprise.litellm.proxy_router import _create_body_stream_with_optional_injection
+
+        user = MagicMock()
+        user.id = "user-1"
+        user.username = "user@example.com"
+        request_info = {
+            "llm_model": "claude-opus-4-6-20260205",
+            "session_id": "session-123",
+            "request_id": "request-456",
+        }
+
+        with patch(
+            "codemie.enterprise.litellm.proxy_router.get_premium_username",
+            return_value="user@example.com_codemie_premium_models",
+        ):
+            with patch("codemie.enterprise.litellm.proxy_router.get_category_budget_id", return_value=None):
+                with patch(
+                    "codemie.enterprise.litellm.proxy_router.budget_service.get_all_category_budget_ids_for_request",
+                    new=AsyncMock(
+                        return_value={
+                            "platform": None,
+                            "cli": None,
+                            "premium_models": "runtime-premium-budget",
+                        }
+                    ),
+                ):
+                    with patch("codemie.enterprise.litellm.proxy_router.check_user_budget") as mock_check_user_budget:
+                        with patch(
+                            "codemie.enterprise.litellm.proxy_router._inject_user_into_request_body_from_bytes"
+                        ) as mock_inject:
+                            mock_inject.return_value = "stream"
+
+                            result = await _create_body_stream_with_optional_injection(
+                                body_bytes=b"{}",
+                                has_own_credentials=False,
+                                user=user,
+                                request_info=request_info,
+                            )
+
+        assert result == "stream"
+        mock_check_user_budget.assert_called_once_with(
+            user_email="user@example.com_codemie_premium_models",
+            budget_id="runtime-premium-budget",
+            user_id=user.id,
+        )
+        mock_inject.assert_called_once_with(
+            body_bytes=b"{}",
+            user_id="user@example.com_codemie_premium_models",
+            request_info=request_info,
         )
 
     @pytest.mark.asyncio

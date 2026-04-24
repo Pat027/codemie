@@ -332,8 +332,9 @@ class UserManagementService:
                         max_budget=b.max_budget if b else None,
                         budget_duration=b.budget_duration if b else None,
                         budget_reset_at=b.budget_reset_at if b else None,
+                        current_spending=current_spending,
                     )
-                    for a, b in budget_assignments_map.get(u.id, [])
+                    for a, b, current_spending in budget_assignments_map.get(u.id, [])
                 ],
                 date=u.date,
             )
@@ -547,19 +548,23 @@ class UserManagementService:
 
             session.commit()
 
-            # Assign default LiteLLM budget immediately upon user creation
-            from codemie.enterprise.litellm.dependencies import get_litellm_service_or_none
+            # Provision budget immediately upon user creation (fail-open)
+            import asyncio
 
-            litellm_svc = get_litellm_service_or_none()
-            if litellm_svc:
-                try:
-                    _ = litellm_svc.get_or_create_customer_with_budget(new_user_id)
-                    logger.debug(f"LiteLLM default budget assigned for new user: {new_user_id}")
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to assign LiteLLM budget for new user {new_user_id}, "
-                        f"will retry on first LLM request: {e}"
+            from codemie.service.budget.provider_registry import get_active_provider
+
+            try:
+                asyncio.run(
+                    get_active_provider().provision_global_user(
+                        user_id=new_user_id,
+                        user_email=email,
                     )
+                )
+                logger.debug(f"Budget provider provisioned new user: {new_user_id}")
+            except Exception as e:
+                logger.warning(
+                    f"Failed to provision budget for new user {new_user_id}, will retry on first LLM request: {e}"
+                )
 
             logger.info(f"user_created: actor_user_id={actor_user_id}, target_user_id={new_user_id}")
 

@@ -4,17 +4,6 @@
     "pr": ""
   },
   "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Edit|MultiEdit|Write|Update",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "cd \"$CLAUDE_PROJECT_DIR\" && make ruff"
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "matcher": "",

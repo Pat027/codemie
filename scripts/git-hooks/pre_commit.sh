@@ -17,7 +17,8 @@ set -euo pipefail
 
 # Pre-commit hook for Codemie:
 # 1) Ruff fast formatting/fixes; if any changes applied -> show files and exit 1
-# 2) If no changes applied -> run ruff check + pytest and print a concise summary
+# 2) If no changes applied -> run ruff check + pytest
+# 3) If tests pass -> run the shared local SonarQube check
 
 # Friendly failure message for any unexpected error
 trap 'echo "[pre-commit] Error: hook failed. See output above for details."; echo "[pre-commit] Tip: you can run '\''make verify'\'' locally to reproduce."' ERR
@@ -56,7 +57,7 @@ if [[ -n "$changed_files" ]]; then
   exit 1
 fi
 
-# --- 2. Full verification (Ruff + Pytest, print concise summary) ---
+# --- 2. Full verification (Ruff + Pytest) ---
 echo "[pre-commit] No formatting changes detected. Running ruff checks and tests..."
 
 # 2.a Ruff check (non-mutating)
@@ -86,11 +87,21 @@ if [[ $pytest_rc -ne 0 ]]; then
   exit $pytest_rc
 fi
 
+# 2.c Shared local SonarQube check
+echo "[pre-commit] Tests passed. Running shared local SonarQube check..."
+if ! make sonar-local; then
+  echo "[pre-commit] SonarQube check failed."
+  echo "[pre-commit] Tip: run 'make sonar-local' to reproduce locally."
+  exit 1
+fi
+
 # Success path: always print concise summary before committing
 # Note: pre-commit may hide stdout on success; print to stderr to ensure visibility
 if [[ -n "$summary_line" ]]; then
   >&2 echo "[pre-commit] Tests passed. Summary: $summary_line"
+  >&2 echo "[pre-commit] SonarQube check passed."
 else
   >&2 echo "[pre-commit] Tests completed. See pytest output above."
+  >&2 echo "[pre-commit] SonarQube check passed."
 fi
 # Proceed with commit

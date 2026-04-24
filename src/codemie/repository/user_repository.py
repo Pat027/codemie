@@ -16,6 +16,7 @@ from datetime import datetime, UTC
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import and_
 from sqlmodel import Session, select, func, or_
 
 from codemie.core.db_utils import escape_like_wildcards
@@ -26,6 +27,7 @@ from codemie.rest_api.models.user_management import (
     UserProject,
     UserKnowledgeBase,
 )
+from codemie.service.spend_tracking.spend_models import ProjectSpendTracking
 
 
 class UserRepository:
@@ -198,28 +200,84 @@ class UserRepository:
     def fetch_budget_assignments_map(self, session: Session, user_ids: list[str]) -> dict[str, list[tuple]]:
         """Bulk-load budget assignments with budget details for a set of user IDs.
 
-        Returns a dict mapping user_id to a list of (UserBudgetAssignment, Budget | None) tuples.
-        Budget details are resolved via a LEFT JOIN on the budgets table, mirroring the same
-        budget lookup pattern used in the projects list endpoint.
+        Returns a dict mapping user_id to a list of
+        (UserBudgetAssignment, Budget | None, current_spending | None) tuples.
+        Budget details and the latest tracked spend are resolved via LEFT JOINs.
         """
         from codemie.service.budget.budget_models import Budget, UserBudgetAssignment
 
         if not user_ids:
             return {}
 
+        user_emails = [
+            email.lower()
+            for email in session.exec(select(UserDB.email).where(UserDB.id.in_(user_ids))).all()  # type: ignore[attr-defined]
+        ]
+
+        latest_spend_dates_subq = (
+            select(
+                func.lower(ProjectSpendTracking.project_name).label("user_identifier"),
+                ProjectSpendTracking.budget_id.label("budget_id"),
+                ProjectSpendTracking.budget_category.label("budget_category"),
+                func.max(ProjectSpendTracking.spend_date).label("max_spend_date"),
+            )
+            .where(func.lower(ProjectSpendTracking.project_name).in_(user_emails))
+            .where(ProjectSpendTracking.spend_subject_type == "budget")
+            .group_by(
+                func.lower(ProjectSpendTracking.project_name),
+                ProjectSpendTracking.budget_id,
+                ProjectSpendTracking.budget_category,
+            )
+            .subquery()
+        )
+
+        latest_budget_spend_subq = (
+            select(
+                func.lower(ProjectSpendTracking.project_name).label("user_identifier"),
+                ProjectSpendTracking.budget_id.label("budget_id"),
+                ProjectSpendTracking.budget_category.label("budget_category"),
+                ProjectSpendTracking.budget_period_spend.label("current_spending"),
+            )
+            .join(
+                latest_spend_dates_subq,
+                and_(
+                    func.lower(ProjectSpendTracking.project_name) == latest_spend_dates_subq.c.user_identifier,
+                    ProjectSpendTracking.budget_id == latest_spend_dates_subq.c.budget_id,
+                    ProjectSpendTracking.budget_category == latest_spend_dates_subq.c.budget_category,
+                    ProjectSpendTracking.spend_date == latest_spend_dates_subq.c.max_spend_date,
+                ),
+            )
+            .where(ProjectSpendTracking.spend_subject_type == "budget")
+            .subquery()
+        )
+
         rows = session.exec(
-            select(UserDB, UserBudgetAssignment, Budget)
+            select(UserDB, UserBudgetAssignment, Budget, latest_budget_spend_subq.c.current_spending)
             .outerjoin(UserBudgetAssignment, UserDB.id == UserBudgetAssignment.user_id)
             .outerjoin(Budget, UserBudgetAssignment.budget_id == Budget.budget_id)
+            .outerjoin(
+                latest_budget_spend_subq,
+                and_(
+                    latest_budget_spend_subq.c.user_identifier == func.lower(UserDB.email),
+                    latest_budget_spend_subq.c.budget_id == UserBudgetAssignment.budget_id,
+                    latest_budget_spend_subq.c.budget_category == UserBudgetAssignment.category,
+                ),
+            )
             .where(UserDB.id.in_(user_ids))  # type: ignore[attr-defined]
         ).all()
 
         assignments_map: dict[str, list[tuple]] = {}
-        for user_row, assignment_row, budget_row in rows:
+        for user_row, assignment_row, budget_row, current_spending in rows:
             if user_row.id not in assignments_map:
                 assignments_map[user_row.id] = []
             if assignment_row:
-                assignments_map[user_row.id].append((assignment_row, budget_row))
+                assignments_map[user_row.id].append(
+                    (
+                        assignment_row,
+                        budget_row,
+                        float(current_spending) if current_spending is not None else None,
+                    )
+                )
         return assignments_map
 
     def count_active_admins(self, session: Session) -> int:

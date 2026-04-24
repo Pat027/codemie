@@ -23,6 +23,9 @@ from langchain_core.language_models import LanguageModelInput
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel
 
+from .project_member_runtime_sync import ensure_project_member_runtime_ready_sync
+from .runtime_budget_selection import RuntimeBudgetMode, select_runtime_budget_mode
+
 if TYPE_CHECKING:
     from codemie.configs.llm_config import LLMModel
     from codemie.rest_api.models.settings import LiteLLMContext, LiteLLMCredentials
@@ -33,6 +36,15 @@ logger = logging.getLogger(__name__)
 _BM = TypeVar("_BM", bound=BaseModel)
 _DictOrPydanticClass = dict[str, Any] | type[_BM]
 _DictOrPydantic = dict | _BM
+
+
+def _metadata_value(metadata: dict[str, Any], key: str) -> Any:
+    if key in metadata:
+        return metadata[key]
+    raw = metadata.get("raw")
+    if isinstance(raw, dict):
+        return raw.get(key)
+    return None
 
 
 class LiteLLMChatOpenAI(AzureChatOpenAI):
@@ -113,10 +125,10 @@ def create_litellm_chat_model(
     llm_model_details: "LLMModel",
     litellm_context: Optional["LiteLLMContext"],
     user_email: Optional[str],
+    user_id: Optional[str] = None,
     temperature: Optional[float] = None,
     top_p: Optional[float] = None,
     streaming: bool = True,
-    user_id: Optional[str] = None,
 ) -> AzureChatOpenAI:
     """
     Create LiteLLM chat model instance (enterprise business logic).
@@ -143,10 +155,6 @@ def create_litellm_chat_model(
         Exception: If model creation fails
     """
 
-    # Import config dynamically to avoid circular import
-    # Config is okay to import since it's just data, not business logic
-    from codemie.configs import config
-
     logger.debug(f"Creating LiteLLM chat model: {llm_model_details.base_name}")
 
     # Extract credentials from context
@@ -160,29 +168,23 @@ def create_litellm_chat_model(
     if creds and not creds.api_key:
         creds.api_key = "empty_key"
 
-    # Build base arguments for model
-    base_args = {
-        'azure_endpoint': config.LITE_LLM_URL,
-        'openai_api_version': llm_model_details.api_version or config.OPENAI_API_VERSION,
-        'openai_api_key': creds.api_key if creds else config.LITE_LLM_APP_KEY,
-        'openai_api_type': config.OPENAI_API_TYPE,
-        'deployment_name': llm_model_details.base_name,
-        'model_name': llm_model_details.base_name,
-        'streaming': streaming,
-        'max_retries': config.AZURE_OPENAI_MAX_RETRIES,
-        'temperature': temperature,
-        'top_p': top_p,
-    }
+    base_args = _build_chat_model_base_args(
+        llm_model_details=llm_model_details,
+        creds=creds,
+        temperature=temperature,
+        top_p=top_p,
+        streaming=streaming,
+    )
 
-    # Handle budget checking for app key users (no credentials)
-    if creds:
-        logger.debug(f"Using own credentials for LiteLLM by user: {user_email}")
-    else:
-        # Check budget for non-credentialed users
-        from .dependencies import check_user_budget
-
-        check_user_budget(user_email=user_email, user_id=user_id)
-        base_args["model_kwargs"] = {"user": user_email}
+    _configure_direct_runtime_overrides(
+        llm_model_details=llm_model_details,
+        litellm_context=litellm_context,
+        user_email=user_email,
+        user_id=user_id,
+        creds=creds,
+        merged_headers=merged_headers,
+        request_params=base_args,
+    )
 
     # Enable streaming usage tracking
     if streaming:
@@ -198,6 +200,214 @@ def create_litellm_chat_model(
 
     # Return LiteLLMChatOpenAI instance with intelligent structured output method selection
     return LiteLLMChatOpenAI(llm_model_details=llm_model_details, **filtered_args)
+
+
+def _build_chat_model_base_args(
+    *,
+    llm_model_details: "LLMModel",
+    creds: Optional["LiteLLMCredentials"],
+    temperature: Optional[float],
+    top_p: Optional[float],
+    streaming: bool,
+) -> dict[str, Any]:
+    from codemie.configs import config
+
+    return {
+        'azure_endpoint': config.LITE_LLM_URL,
+        'openai_api_version': llm_model_details.api_version or config.OPENAI_API_VERSION,
+        'openai_api_key': creds.api_key if creds else config.LITE_LLM_APP_KEY,
+        'openai_api_type': config.OPENAI_API_TYPE,
+        'deployment_name': llm_model_details.base_name,
+        'model_name': llm_model_details.base_name,
+        'streaming': streaming,
+        'max_retries': config.AZURE_OPENAI_MAX_RETRIES,
+        'temperature': temperature,
+        'top_p': top_p,
+    }
+
+
+def _build_embedding_model_params(
+    *,
+    embedding_model: str,
+    creds: Optional["LiteLLMCredentials"],
+) -> dict[str, Any]:
+    from codemie.configs import config
+    from codemie.service.llm_service.llm_service import LLMService
+
+    return {
+        'openai_api_key': creds.api_key if creds and creds.api_key else config.LITE_LLM_APP_KEY,
+        "azure_endpoint": config.LITE_LLM_URL,
+        "deployment": embedding_model,
+        "model": embedding_model,
+        "tiktoken_model_name": LLMService.BASE_NAME_GPT_41_MINI,
+        "openai_api_type": config.OPENAI_API_TYPE,
+        "api_version": config.OPENAI_API_VERSION,
+        "max_retries": 10,
+        "show_progress_bar": True,
+        "check_embedding_ctx_length": False,
+    }
+
+
+def _has_project_runtime_overrides(
+    runtime_user: str | None,
+    runtime_headers: dict[str, str],
+    runtime_api_key: str | None,
+    runtime_base_url: str | None,
+) -> bool:
+    return bool(runtime_user or runtime_headers or runtime_api_key or runtime_base_url)
+
+
+def _apply_project_runtime_overrides(
+    *,
+    merged_headers: dict[str, str],
+    request_params: dict[str, Any],
+    runtime_user: str | None,
+    runtime_headers: dict[str, str],
+    runtime_api_key: str | None,
+    runtime_base_url: str | None,
+) -> None:
+    from codemie.configs import config
+
+    merged_headers.update(runtime_headers)
+    request_params["openai_api_key"] = runtime_api_key or config.LITE_LLM_APP_KEY
+    if runtime_base_url:
+        request_params["azure_endpoint"] = runtime_base_url
+    if runtime_user:
+        request_params["model_kwargs"] = {"user": runtime_user}
+
+
+def _configure_direct_runtime_overrides(
+    *,
+    llm_model_details: "LLMModel",
+    litellm_context: Optional["LiteLLMContext"],
+    user_email: Optional[str],
+    user_id: Optional[str],
+    creds: Optional["LiteLLMCredentials"],
+    merged_headers: dict[str, str],
+    request_params: dict[str, Any],
+) -> None:
+    if creds:
+        logger.debug(f"Using own credentials for LiteLLM by user: {user_email}")
+        return
+
+    (
+        project_runtime_user,
+        project_runtime_headers,
+        project_runtime_api_key,
+        project_runtime_base_url,
+    ) = _resolve_direct_project_budget_runtime(
+        llm_model_details=llm_model_details,
+        litellm_context=litellm_context,
+        user_id=user_id,
+        user_email=user_email,
+    )
+
+    if _has_project_runtime_overrides(
+        project_runtime_user,
+        project_runtime_headers,
+        project_runtime_api_key,
+        project_runtime_base_url,
+    ):
+        _apply_project_runtime_overrides(
+            merged_headers=merged_headers,
+            request_params=request_params,
+            runtime_user=project_runtime_user,
+            runtime_headers=project_runtime_headers,
+            runtime_api_key=project_runtime_api_key,
+            runtime_base_url=project_runtime_base_url,
+        )
+        return
+
+    from .dependencies import check_user_budget
+
+    check_user_budget(user_email=user_email, user_id=user_id)
+    request_params["model_kwargs"] = {"user": user_email}
+
+
+def _get_direct_request_category_budget_id(user_id: str, category: str) -> str | None:
+    """Return the user's currently assigned budget id for a direct request category."""
+    from sqlmodel import Session, select
+
+    from codemie.service.budget.budget_models import UserBudgetAssignment
+
+    with Session(UserBudgetAssignment.get_engine()) as session:
+        return session.exec(
+            select(UserBudgetAssignment.budget_id).where(
+                UserBudgetAssignment.user_id == user_id,
+                UserBudgetAssignment.category == category,
+            )
+        ).first()
+
+
+def _resolve_direct_project_budget_runtime(
+    *,
+    llm_model_details: "LLMModel",
+    litellm_context: Optional["LiteLLMContext"],
+    user_id: Optional[str],
+    user_email: Optional[str],
+) -> tuple[str | None, dict[str, str], str | None, str | None]:
+    """Resolve project budget headers for direct LiteLLM chat model usage."""
+    if not litellm_context or not litellm_context.current_project or not user_id or not user_email:
+        return None, {}, None, None
+
+    from codemie.service.budget.budget_enums import BudgetCategory as CoreBudgetCategory
+    from codemie.service.budget.budget_resolution_service import budget_resolution_service
+
+    from .dependencies import get_category_budget_id, get_premium_username
+    from .budget_categories import BudgetCategory as LiteLLMBudgetCategory
+
+    premium_assigned_budget_id = _get_direct_request_category_budget_id(
+        user_id, CoreBudgetCategory.PREMIUM_MODELS.value
+    )
+
+    category = (
+        CoreBudgetCategory.PREMIUM_MODELS
+        if (
+            get_premium_username(user_email, llm_model_details.base_name) is not None
+            and (premium_assigned_budget_id or get_category_budget_id(LiteLLMBudgetCategory.PREMIUM_MODELS))
+        )
+        else CoreBudgetCategory.PLATFORM
+    )
+
+    from codemie.service.settings.settings import SettingsService
+
+    project_name = litellm_context.current_project
+    member_tracking_enabled = SettingsService.get_project_member_budget_tracking_enabled(project_name)
+
+    if member_tracking_enabled:
+        ensure_project_member_runtime_ready_sync(
+            user_id=user_id,
+            user_email=user_email,
+            project_name=project_name,
+            budget_category=category,
+        )
+
+    resolved = budget_resolution_service.resolve_sync(
+        user_id=user_id,
+        project_name=project_name,
+        budget_category=category,
+    )
+    provider_result = budget_resolution_service.dispatch_runtime_sync(
+        resolved, user_id=user_id, user_email=user_email, model=llm_model_details.base_name
+    )
+    if provider_result is None:
+        return None, {}, None, None
+
+    selection = select_runtime_budget_mode(
+        has_user_litellm_credentials=False,
+        project_name=project_name,
+        project_member_tracking_enabled=member_tracking_enabled,
+        resolved_project_budget=True,
+    )
+    runtime_user = provider_result.body_overrides.get("user")
+    if selection.mode == RuntimeBudgetMode.PROJECT_BUDGET_WITH_MEMBER_TRACKING:
+        if not isinstance(runtime_user, str) or not runtime_user:
+            raise RuntimeError(
+                f"Project member runtime selected but provider returned no runtime user for {project_name!r}"
+            )
+        return runtime_user, provider_result.headers, provider_result.api_key, provider_result.base_url
+
+    return None, provider_result.headers, provider_result.api_key, provider_result.base_url
 
 
 def create_litellm_embedding_model(
@@ -218,13 +428,12 @@ def create_litellm_embedding_model(
         llm_model_details: Model configuration details
         litellm_context: Optional LiteLLM context with credentials
         user_email: User email for budget tracking
+        user_id: Codemie user id for project member budget tracking
 
     Returns:
         AzureOpenAIEmbeddings instance configured for LiteLLM proxy
     """
     from langchain_openai import AzureOpenAIEmbeddings
-    from codemie.configs import config
-    from codemie.service.llm_service.llm_service import LLMService
 
     logger.debug(f"Creating LiteLLM embedding model: {embedding_model}")
 
@@ -234,28 +443,16 @@ def create_litellm_embedding_model(
     # Generate headers
     merged_headers = _generate_litellm_headers(llm_model_details, litellm_context)
 
-    # Build embedding parameters
-    embedding_params = {
-        'openai_api_key': creds.api_key if creds and creds.api_key else config.LITE_LLM_APP_KEY,
-        "azure_endpoint": config.LITE_LLM_URL,
-        "deployment": embedding_model,
-        "model": embedding_model,
-        "tiktoken_model_name": LLMService.BASE_NAME_GPT_41_MINI,
-        "openai_api_type": config.OPENAI_API_TYPE,
-        "api_version": config.OPENAI_API_VERSION,
-        "max_retries": 10,
-        "show_progress_bar": True,
-        "check_embedding_ctx_length": False,
-    }
-
-    # Handle budget checking
-    if creds:
-        logger.debug(f"Using own credentials for LiteLLM by user: {user_email}")
-    else:
-        from .dependencies import check_user_budget
-
-        check_user_budget(user_email=user_email, user_id=user_id)
-        embedding_params["model_kwargs"] = {"user": user_email}
+    embedding_params = _build_embedding_model_params(embedding_model=embedding_model, creds=creds)
+    _configure_direct_runtime_overrides(
+        llm_model_details=llm_model_details,
+        litellm_context=litellm_context,
+        user_email=user_email,
+        user_id=user_id,
+        creds=creds,
+        merged_headers=merged_headers,
+        request_params=embedding_params,
+    )
 
     # Add headers
     if merged_headers:
@@ -394,10 +591,10 @@ def get_litellm_chat_model(
     llm_model_details: "LLMModel",
     litellm_context: Optional["LiteLLMContext"],
     user_email: Optional[str],
+    user_id: Optional[str] = None,
     temperature: Optional[float] = None,
     top_p: Optional[float] = None,
     streaming: bool = True,
-    user_id: Optional[str] = None,
 ) -> Optional["AzureChatOpenAI"]:
     """
     Get LiteLLM chat model if enterprise is enabled AND proxy mode is lite_llm.
@@ -439,14 +636,14 @@ def get_litellm_chat_model(
             llm_model_details=llm_model_details,
             litellm_context=litellm_context,
             user_email=user_email,
+            user_id=user_id,
             temperature=temperature,
             top_p=top_p,
             streaming=streaming,
-            user_id=user_id,
         )
-    except Exception as e:
-        logger.warning(f"Failed to create LiteLLM chat model: {e}", exc_info=True)
-        return None  # Graceful degradation
+    except Exception:
+        logger.exception("Failed to create LiteLLM chat model while LiteLLM proxy is enabled")
+        raise
 
 
 def get_litellm_embedding_model(
@@ -466,6 +663,7 @@ def get_litellm_embedding_model(
         llm_model_details: Model configuration
         litellm_context: LiteLLM context with credentials
         user_email: User email for budget tracking
+        user_id: Codemie user id for project member budget tracking
 
     Returns:
         AzureOpenAIEmbeddings configured for LiteLLM, or None if not available
@@ -495,6 +693,6 @@ def get_litellm_embedding_model(
             user_email=user_email,
             user_id=user_id,
         )
-    except Exception as e:
-        logger.warning(f"Failed to create LiteLLM embedding model: {e}", exc_info=True)
-        return None  # Graceful degradation
+    except Exception:
+        logger.exception("Failed to create LiteLLM embedding model while LiteLLM proxy is enabled")
+        raise

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import func, text
+from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -101,53 +101,93 @@ class ProjectSpendTrackingRepository:
 
         return all_results
 
-    async def get_latest_before_by_project_budget_categories(
+    async def get_latest_before_by_project_budget_ids(
         self,
         session: AsyncSession,
-        project_budget_category_triples: list[tuple[str, str, str]],
+        project_budget_pairs: list[tuple[str, str]],
         before_spend_date: datetime,
-    ) -> dict[tuple[str, str, str], ProjectSpendTracking]:
-        """Return the most recent budget-based row per (project_name, budget_id, budget_category).
+        spend_subject_type: str = "budget",
+    ) -> dict[tuple[str, str], ProjectSpendTracking]:
+        """Return the most recent budget-based row per (project_name, budget_id) before ``before_spend_date``.
 
         Used by the budget spend collector to retrieve the previous snapshot baseline for
-        delta calculation. Missing triples are absent from the result (bootstrap case).
+        delta calculation. Missing pairs are absent from the result (bootstrap case).
 
         Queries are batched to avoid PostgreSQL's stack depth limit when the IN clause
         becomes too large.
 
         Args:
             session: Async database session
-            project_budget_category_triples: List of (project_name, budget_id, budget_category) tuples to look up
+            project_budget_pairs: List of (project_name, budget_id) tuples to look up
             before_spend_date: Upper exclusive bound for the snapshot timestamp
 
         Returns:
-            Dict mapping (project_name, budget_id, budget_category) to the most recent ProjectSpendTracking row
+            Dict mapping (project_name, budget_id) to the most recent ProjectSpendTracking row
         """
+        if not project_budget_pairs:
+            return {}
+
+        from sqlalchemy import tuple_ as sa_tuple
+
+        total_pairs = len(project_budget_pairs)
+        if total_pairs > self._in_clause_batch_size:
+            logger.info(f"Querying {total_pairs} project-budget pairs in batches of {self._in_clause_batch_size}")
+
+        all_results = {}
+
+        # Process in batches to avoid PostgreSQL stack depth limit
+        for i in range(0, total_pairs, self._in_clause_batch_size):
+            batch = project_budget_pairs[i : i + self._in_clause_batch_size]
+            batch_num = (i // self._in_clause_batch_size) + 1
+            total_batches = (total_pairs + self._in_clause_batch_size - 1) // self._in_clause_batch_size
+
+            if total_pairs > self._in_clause_batch_size:
+                logger.debug(f"Processing project-budget batch {batch_num}/{total_batches} ({len(batch)} pairs)")
+
+            # Subquery: max spend_date per (project_name, budget_id) before the target snapshot
+            latest_dates_subq = (
+                select(
+                    ProjectSpendTracking.project_name,
+                    ProjectSpendTracking.budget_id,
+                    func.max(ProjectSpendTracking.spend_date).label("max_spend_date"),
+                )
+                .where(sa_tuple(ProjectSpendTracking.project_name, ProjectSpendTracking.budget_id).in_(batch))
+                .where(ProjectSpendTracking.spend_date < before_spend_date)
+                .where(ProjectSpendTracking.spend_subject_type == spend_subject_type)
+                .group_by(ProjectSpendTracking.project_name, ProjectSpendTracking.budget_id)
+                .subquery()
+            )
+
+            stmt = select(ProjectSpendTracking).join(
+                latest_dates_subq,
+                (ProjectSpendTracking.project_name == latest_dates_subq.c.project_name)
+                & (ProjectSpendTracking.budget_id == latest_dates_subq.c.budget_id)
+                & (ProjectSpendTracking.spend_date == latest_dates_subq.c.max_spend_date),
+            )
+
+            result = await session.execute(stmt)
+            rows = result.scalars().all()
+
+            # Merge batch results into all_results dict
+            all_results.update({(row.project_name, row.budget_id): row for row in rows})
+
+        return all_results
+
+    async def get_latest_before_by_budget_category_ids(
+        self,
+        session: AsyncSession,
+        project_budget_category_triples: list[tuple[str, str, str]],
+        before_spend_date: datetime,
+    ) -> dict[tuple[str, str, str], ProjectSpendTracking]:
+        """Return the most recent budget row per (project_name, budget_id, budget_category)."""
         if not project_budget_category_triples:
             return {}
 
         from sqlalchemy import tuple_ as sa_tuple
 
-        total_triples = len(project_budget_category_triples)
-        if total_triples > self._in_clause_batch_size:
-            logger.info(
-                f"Querying {total_triples} project-budget-category triples in batches of {self._in_clause_batch_size}"
-            )
-
         all_results = {}
-
-        # Process in batches to avoid PostgreSQL stack depth limit
-        for i in range(0, total_triples, self._in_clause_batch_size):
+        for i in range(0, len(project_budget_category_triples), self._in_clause_batch_size):
             batch = project_budget_category_triples[i : i + self._in_clause_batch_size]
-            batch_num = (i // self._in_clause_batch_size) + 1
-            total_batches = (total_triples + self._in_clause_batch_size - 1) // self._in_clause_batch_size
-
-            if total_triples > self._in_clause_batch_size:
-                logger.debug(
-                    f"Processing project-budget-category batch {batch_num}/{total_batches} ({len(batch)} triples)"
-                )
-
-            # Subquery: max spend_date per (project_name, budget_id, budget_category) before the target snapshot
             latest_dates_subq = (
                 select(
                     ProjectSpendTracking.project_name,
@@ -179,13 +219,60 @@ class ProjectSpendTrackingRepository:
                 & (ProjectSpendTracking.budget_category == latest_dates_subq.c.budget_category)
                 & (ProjectSpendTracking.spend_date == latest_dates_subq.c.max_spend_date),
             )
-
             result = await session.execute(stmt)
-            rows = result.scalars().all()
+            all_results.update(
+                {(row.project_name, row.budget_id, row.budget_category): row for row in result.scalars().all()}
+            )
+        return all_results
 
-            # Merge batch results into all_results dict
-            all_results.update({(row.project_name, row.budget_id, row.budget_category): row for row in rows})
+    async def get_latest_before_by_member_budget_ids(
+        self,
+        session: AsyncSession,
+        member_budget_triples: list[tuple[str, str, str]],
+        before_spend_date: datetime,
+    ) -> dict[tuple[str, str, str], ProjectSpendTracking]:
+        """Return the most recent member_budget row per (project_name, budget_id, user_id)."""
+        if not member_budget_triples:
+            return {}
 
+        from sqlalchemy import tuple_ as sa_tuple
+
+        all_results = {}
+        for i in range(0, len(member_budget_triples), self._in_clause_batch_size):
+            batch = member_budget_triples[i : i + self._in_clause_batch_size]
+            latest_dates_subq = (
+                select(
+                    ProjectSpendTracking.project_name,
+                    ProjectSpendTracking.budget_id,
+                    ProjectSpendTracking.user_id,
+                    func.max(ProjectSpendTracking.spend_date).label("max_spend_date"),
+                )
+                .where(
+                    sa_tuple(
+                        ProjectSpendTracking.project_name,
+                        ProjectSpendTracking.budget_id,
+                        ProjectSpendTracking.user_id,
+                    ).in_(batch)
+                )
+                .where(ProjectSpendTracking.spend_date < before_spend_date)
+                .where(ProjectSpendTracking.spend_subject_type == "member_budget")
+                .group_by(
+                    ProjectSpendTracking.project_name,
+                    ProjectSpendTracking.budget_id,
+                    ProjectSpendTracking.user_id,
+                )
+                .subquery()
+            )
+
+            stmt = select(ProjectSpendTracking).join(
+                latest_dates_subq,
+                (ProjectSpendTracking.project_name == latest_dates_subq.c.project_name)
+                & (ProjectSpendTracking.budget_id == latest_dates_subq.c.budget_id)
+                & (ProjectSpendTracking.user_id == latest_dates_subq.c.user_id)
+                & (ProjectSpendTracking.spend_date == latest_dates_subq.c.max_spend_date),
+            )
+            result = await session.execute(stmt)
+            all_results.update({(row.project_name, row.budget_id, row.user_id): row for row in result.scalars().all()})
         return all_results
 
     async def insert_key_entries(
@@ -243,7 +330,7 @@ class ProjectSpendTrackingRepository:
                 )
                 .on_conflict_do_update(
                     index_elements=["project_name", "key_hash", "spend_date"],
-                    index_where=text("spend_subject_type = 'key'"),
+                    index_where=(ProjectSpendTracking.spend_subject_type == "key"),
                     set_={
                         "daily_spend": insert(ProjectSpendTracking).excluded.daily_spend,
                         "cumulative_spend": insert(ProjectSpendTracking).excluded.cumulative_spend,
@@ -314,11 +401,12 @@ class ProjectSpendTrackingRepository:
                 )
                 .on_conflict_do_update(
                     index_elements=["project_name", "budget_id", "budget_category", "spend_date"],
-                    index_where=text("spend_subject_type = 'budget'"),
+                    index_where=(ProjectSpendTracking.spend_subject_type == "budget"),
                     set_={
                         "daily_spend": insert(ProjectSpendTracking).excluded.daily_spend,
                         "cumulative_spend": insert(ProjectSpendTracking).excluded.cumulative_spend,
                         "budget_period_spend": insert(ProjectSpendTracking).excluded.budget_period_spend,
+                        "budget_category": insert(ProjectSpendTracking).excluded.budget_category,
                     },
                 )
             )
@@ -326,6 +414,73 @@ class ProjectSpendTrackingRepository:
             await session.execute(stmt)
 
         # Commit once after all batches
+        await session.commit()
+
+    async def insert_project_budget_entries(
+        self,
+        session: AsyncSession,
+        rows: list[ProjectSpendTracking],
+    ) -> None:
+        """Bulk upsert project_budget rows by ``(project_name, budget_id, spend_date)``."""
+        await self._insert_budget_subject_entries(session, rows, "project_budget")
+
+    async def insert_member_budget_entries(
+        self,
+        session: AsyncSession,
+        rows: list[ProjectSpendTracking],
+    ) -> None:
+        """Bulk upsert member_budget rows by ``(project_name, budget_id, user_id, spend_date)``."""
+        await self._insert_budget_subject_entries(session, rows, "member_budget")
+
+    async def _insert_budget_subject_entries(
+        self,
+        session: AsyncSession,
+        rows: list[ProjectSpendTracking],
+        spend_subject_type: str,
+    ) -> None:
+        if not rows:
+            return
+
+        for i in range(0, len(rows), self._insert_batch_size):
+            batch = rows[i : i + self._insert_batch_size]
+            values = [
+                {
+                    "id": row.id,
+                    "project_name": row.project_name,
+                    "cost_center_id": row.cost_center_id,
+                    "cost_center_name": row.cost_center_name,
+                    "key_hash": None,
+                    "spend_date": row.spend_date,
+                    "daily_spend": row.daily_spend,
+                    "cumulative_spend": row.cumulative_spend,
+                    "budget_period_spend": row.budget_period_spend,
+                    "budget_id": row.budget_id,
+                    "budget_category": row.budget_category,
+                    "user_id": row.user_id,
+                    "provider_subject_id": row.provider_subject_id,
+                    "spend_subject_type": spend_subject_type,
+                }
+                for row in batch
+            ]
+            index_elements = ["project_name", "budget_id", "spend_date"]
+            if spend_subject_type == "member_budget":
+                index_elements = ["project_name", "budget_id", "user_id", "spend_date"]
+            stmt = (
+                insert(ProjectSpendTracking)
+                .values(values)
+                .on_conflict_do_update(
+                    index_elements=index_elements,
+                    index_where=(ProjectSpendTracking.spend_subject_type == spend_subject_type),
+                    set_={
+                        "daily_spend": insert(ProjectSpendTracking).excluded.daily_spend,
+                        "cumulative_spend": insert(ProjectSpendTracking).excluded.cumulative_spend,
+                        "budget_period_spend": insert(ProjectSpendTracking).excluded.budget_period_spend,
+                        "budget_category": insert(ProjectSpendTracking).excluded.budget_category,
+                        "provider_subject_id": insert(ProjectSpendTracking).excluded.provider_subject_id,
+                    },
+                )
+            )
+            await session.execute(stmt)
         await session.commit()
 
     async def get_entries_for_date(

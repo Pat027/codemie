@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -22,6 +23,8 @@ import pytest
 from codemie.core.exceptions import ExtendedHTTPException
 from codemie.core.models import Application
 from codemie.rest_api.models.user_management import UserDB, UserProject
+from codemie.service.budget.budget_enums import AllocationMode, SyncStatus
+from codemie.service.budget.budget_models import Budget, ProjectBudgetAssignment, ProjectMemberBudgetAssignment
 from codemie.service.project.project_assignment_service import ProjectAssignmentService, project_assignment_service
 
 
@@ -601,6 +604,235 @@ class TestProjectAssignmentServiceSingleRemoval:
         assert exc_info.value.code == 404
         assert "not assigned" in exc_info.value.message
         assert "Verify the user is assigned" in exc_info.value.help
+
+
+class TestGetMemberAddedAllocationAmounts:
+    """Unit tests for _get_member_added_allocation_amounts helper."""
+
+    def _make_budget(self, soft: float = 100.0, max_b: float = 200.0):
+        return Budget(
+            budget_id="bgt-1",
+            budget_type="project",
+            name="test-budget",
+            soft_budget=soft,
+            max_budget=max_b,
+            budget_duration="30d",
+            budget_category="platform",
+            created_by="admin",
+        )
+
+    def _make_member_alloc(self, soft: float, max_b: float, mode: str = "equal", deleted: bool = False):
+        alloc = ProjectMemberBudgetAssignment(
+            project_name="proj",
+            budget_category="platform",
+            project_budget_id="bgt-1",
+            user_id="other-user",
+            allocation_mode=mode,
+            allocated_soft_budget=soft,
+            allocated_max_budget=max_b,
+            assigned_by="admin",
+        )
+        if deleted:
+            alloc.deleted_at = datetime.now(timezone.utc)
+        return alloc
+
+    def test_copies_from_equal_allocation(self):
+        """Returns soft/max from first active equal-mode allocation."""
+        session = MagicMock()
+        budget = self._make_budget(soft=100.0, max_b=200.0)
+        equal_alloc = self._make_member_alloc(soft=50.0, max_b=100.0, mode="equal")
+        session.exec.return_value.first.return_value = equal_alloc
+
+        soft, max_b = ProjectAssignmentService._get_member_added_allocation_amounts(
+            session, "proj", "platform", "bgt-1", budget
+        )
+
+        assert soft == 50.0
+        assert max_b == 100.0
+
+    def test_falls_back_to_budget_when_no_equal_allocation(self):
+        """Returns budget.soft_budget / budget.max_budget when no equal allocation exists."""
+        session = MagicMock()
+        budget = self._make_budget(soft=100.0, max_b=200.0)
+        session.exec.return_value.first.return_value = None
+
+        soft, max_b = ProjectAssignmentService._get_member_added_allocation_amounts(
+            session, "proj", "platform", "bgt-1", budget
+        )
+
+        assert soft == 100.0
+        assert max_b == 200.0
+
+    def test_query_filters_equal_mode_only(self):
+        """The SQL query must filter allocation_mode == 'equal' so fixed overrides are ignored."""
+        session = MagicMock()
+        budget = self._make_budget()
+        session.exec.return_value.first.return_value = None
+
+        ProjectAssignmentService._get_member_added_allocation_amounts(session, "proj", "platform", "bgt-1", budget)
+
+        session.exec.assert_called_once()
+        stmt = session.exec.call_args[0][0]
+        compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+        assert "equal" in compiled
+
+    def test_query_filters_by_project_category_budget_id(self):
+        """Verify the query selects on project_name, budget_category, project_budget_id, allocation_mode, and deleted_at."""
+        session = MagicMock()
+        budget = self._make_budget()
+        session.exec.return_value.first.return_value = None
+
+        ProjectAssignmentService._get_member_added_allocation_amounts(session, "my-proj", "cli", "bgt-99", budget)
+
+        session.exec.assert_called_once()
+        stmt = session.exec.call_args[0][0]
+        compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+        for fragment in (
+            "project_member_budget_assignments.project_name = 'my-proj'",
+            "project_member_budget_assignments.budget_category = 'cli'",
+            "project_member_budget_assignments.project_budget_id = 'bgt-99'",
+            "project_member_budget_assignments.allocation_mode = 'equal'",
+            "project_member_budget_assignments.pmba_deleted_at IS NULL",
+        ):
+            assert fragment in compiled
+
+
+class TestSyncProjectBudgetMemberAdded:
+    """Tests for _sync_project_budget_member_added — allocation amounts behavior."""
+
+    def _make_assignment(self, budget_id: str = "bgt-1", category: str = "platform") -> ProjectBudgetAssignment:
+        return ProjectBudgetAssignment(
+            id="pba-1",
+            project_name="proj",
+            budget_category=category,
+            budget_id=budget_id,
+            allocation_mode="equal",
+            assigned_by="admin",
+        )
+
+    def _make_budget(self, soft: float = 100.0, max_b: float = 200.0, budget_id: str = "bgt-1") -> Budget:
+        return Budget(
+            budget_id=budget_id,
+            budget_type="project",
+            name="test-budget",
+            soft_budget=soft,
+            max_budget=max_b,
+            budget_duration="30d",
+            budget_category="platform",
+            created_by="admin",
+        )
+
+    def test_new_member_copies_from_equal_allocation(self):
+        """New member gets soft/max copied from existing equal allocation, not zero."""
+        session = MagicMock()
+        assignment = self._make_assignment()
+        budget = self._make_budget(soft=100.0, max_b=200.0)
+
+        # exec() is called three times:
+        # 1. ProjectBudgetAssignment list (active project budget assignments)
+        # 2. existing member allocation check -> no duplicate
+        # 3. _get_member_added_allocation_amounts: equal alloc found
+        exec_results = [
+            MagicMock(all=MagicMock(return_value=[assignment])),
+            MagicMock(first=MagicMock(return_value=None)),
+            MagicMock(
+                first=MagicMock(
+                    return_value=MagicMock(
+                        allocated_soft_budget=50.0,
+                        allocated_max_budget=90.0,
+                    )
+                )
+            ),
+        ]
+        session.exec.side_effect = exec_results
+        session.get.return_value = budget
+
+        ProjectAssignmentService._sync_project_budget_member_added(session, "proj", "new-user", "actor")
+
+        added_calls = list(session.add.call_args_list)
+        assert len(added_calls) >= 1
+        alloc = added_calls[0][0][0]
+        assert isinstance(alloc, ProjectMemberBudgetAssignment)
+        assert alloc.allocated_soft_budget == 50.0
+        assert alloc.allocated_max_budget == 90.0
+        assert alloc.allocation_mode == AllocationMode.EQUAL.value
+        assert alloc.sync_status == SyncStatus.PENDING
+        assert alloc.provider_metadata is None
+
+    def test_new_member_falls_back_to_budget_amounts(self):
+        """New member gets budget.soft_budget / budget.max_budget when no equal alloc exists."""
+        session = MagicMock()
+        assignment = self._make_assignment()
+        budget = self._make_budget(soft=100.0, max_b=200.0)
+
+        exec_results = [
+            MagicMock(all=MagicMock(return_value=[assignment])),
+            MagicMock(first=MagicMock(return_value=None)),
+            MagicMock(first=MagicMock(return_value=None)),
+        ]
+        session.exec.side_effect = exec_results
+        session.get.return_value = budget
+
+        ProjectAssignmentService._sync_project_budget_member_added(session, "proj", "new-user", "actor")
+
+        added_calls = session.add.call_args_list
+        alloc = added_calls[0][0][0]
+        assert isinstance(alloc, ProjectMemberBudgetAssignment)
+        assert alloc.allocated_soft_budget == 100.0
+        assert alloc.allocated_max_budget == 200.0
+        assert alloc.allocation_mode == AllocationMode.EQUAL.value
+        assert alloc.sync_status == SyncStatus.PENDING
+        assert alloc.provider_metadata is None
+
+    @patch("codemie.service.project.project_assignment_service.get_active_provider")
+    def test_member_add_creates_pending_allocation_without_provider_sync(self, mock_get_provider):
+        """Allocation stays pending and no provider sync runs when adding a member."""
+        session = MagicMock()
+        assignment = self._make_assignment()
+        budget = self._make_budget(soft=100.0, max_b=200.0)
+
+        session.exec.side_effect = [
+            MagicMock(all=MagicMock(return_value=[assignment])),
+            MagicMock(first=MagicMock(return_value=None)),
+            MagicMock(first=MagicMock(return_value=None)),
+        ]
+        session.get.return_value = budget
+
+        ProjectAssignmentService._sync_project_budget_member_added(session, "proj", "new-user", "actor")
+
+        allocation = next(
+            call[0][0] for call in session.add.call_args_list if isinstance(call[0][0], ProjectMemberBudgetAssignment)
+        )
+        assert allocation.sync_status == SyncStatus.PENDING
+        assert allocation.provider_metadata is None
+        mock_get_provider.assert_not_called()
+
+    def test_skips_creation_when_member_already_has_allocation(self):
+        """If user already has an active allocation for the budget, skip creation."""
+        session = MagicMock()
+        assignment = self._make_assignment()
+        budget = self._make_budget()
+        existing_alloc = ProjectMemberBudgetAssignment(
+            project_name="proj",
+            budget_category="platform",
+            project_budget_id="bgt-1",
+            user_id="existing-user",
+            allocation_mode="equal",
+            allocated_soft_budget=50.0,
+            allocated_max_budget=100.0,
+            assigned_by="admin",
+        )
+
+        exec_results = [
+            MagicMock(all=MagicMock(return_value=[assignment])),
+            MagicMock(first=MagicMock(return_value=existing_alloc)),
+        ]
+        session.exec.side_effect = exec_results
+        session.get.return_value = budget
+
+        ProjectAssignmentService._sync_project_budget_member_added(session, "proj", "existing-user", "actor")
+
+        session.add.assert_not_called()
 
 
 class TestProjectAssignmentServiceSingleton:

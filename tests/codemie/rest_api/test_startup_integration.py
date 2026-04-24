@@ -61,11 +61,7 @@ def mock_non_litellm_startup():
                     with patch("codemie.rest_api.main.create_preconfigured_workflows"):
                         with patch("codemie.rest_api.main.import_preconfigured_katas"):
                             with patch("codemie.rest_api.main._setup_memory_profiling_scheduler"):
-                                with patch(
-                                    "codemie.rest_api.main.ensure_predefined_budgets",
-                                    new_callable=AsyncMock,
-                                ):
-                                    yield
+                                yield
 
 
 class TestLiteLLMServiceInitialization:
@@ -167,16 +163,16 @@ class TestLiteLLMModelsInitialization:
 
 
 class TestLiteLLMBudgetInitialization:
-    """Test LiteLLM budget and cache cleanup initialization."""
+    """Test LiteLLM budget startup behavior."""
 
     @pytest.mark.asyncio
     async def test_budget_setup_when_enabled(self, mock_app, mock_non_litellm_startup):
-        """Test that budget and cache cleanup are set up when budget checking enabled."""
+        """Test that budget cache cleanup is set up when budget checking enabled."""
         from codemie.rest_api.main import lifespan
         from codemie.configs.config import config
 
-        mock_ensure_budget = AsyncMock()
         mock_setup_cleanup = MagicMock()
+        mock_schedule_reconciliation = MagicMock()
 
         with patch("codemie.rest_api.main.initialize_litellm_from_config", return_value=None):
             with patch(
@@ -186,12 +182,12 @@ class TestLiteLLMBudgetInitialization:
                 with patch("codemie.rest_api.main.is_litellm_enabled", return_value=True):
                     with patch("codemie.rest_api.main._initialize_litellm_models"):
                         with patch(
-                            "codemie.rest_api.main.ensure_predefined_budgets",
-                            mock_ensure_budget,
+                            "codemie.rest_api.main._setup_litellm_cache_cleanup_scheduler",
+                            mock_setup_cleanup,
                         ):
                             with patch(
-                                "codemie.rest_api.main._setup_litellm_cache_cleanup_scheduler",
-                                mock_setup_cleanup,
+                                "codemie.rest_api.main._schedule_budget_reconciliation",
+                                mock_schedule_reconciliation,
                             ):
                                 with patch.object(config, "LLM_PROXY_BUDGET_CHECK_ENABLED", True):
                                     with patch("codemie.rest_api.main.set_global_litellm_service"):
@@ -200,18 +196,17 @@ class TestLiteLLMBudgetInitialization:
                                                 "codemie.rest_api.main.close_llm_proxy_client", new_callable=AsyncMock
                                             ):
                                                 async with lifespan(mock_app):
-                                                    # Verify budget and cleanup were set up
-                                                    mock_ensure_budget.assert_awaited_once()
                                                     mock_setup_cleanup.assert_called_once()
+                                                    mock_schedule_reconciliation.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_budget_setup_skipped_when_disabled(self, mock_app, mock_non_litellm_startup):
-        """Test that budget setup is skipped when budget checking disabled."""
+        """Test that budget cache cleanup is skipped when budget checking disabled."""
         from codemie.rest_api.main import lifespan
         from codemie.configs.config import config
 
-        mock_ensure_budget = AsyncMock()
         mock_setup_cleanup = MagicMock()
+        mock_schedule_reconciliation = MagicMock()
 
         with patch("codemie.rest_api.main.initialize_litellm_from_config", return_value=None):
             with patch(
@@ -221,12 +216,12 @@ class TestLiteLLMBudgetInitialization:
                 with patch("codemie.rest_api.main.is_litellm_enabled", return_value=True):
                     with patch("codemie.rest_api.main._initialize_litellm_models"):
                         with patch(
-                            "codemie.rest_api.main.ensure_predefined_budgets",
-                            mock_ensure_budget,
+                            "codemie.rest_api.main._setup_litellm_cache_cleanup_scheduler",
+                            mock_setup_cleanup,
                         ):
                             with patch(
-                                "codemie.rest_api.main._setup_litellm_cache_cleanup_scheduler",
-                                mock_setup_cleanup,
+                                "codemie.rest_api.main._schedule_budget_reconciliation",
+                                mock_schedule_reconciliation,
                             ):
                                 with patch.object(config, "LLM_PROXY_BUDGET_CHECK_ENABLED", False):
                                     with patch("codemie.rest_api.main.set_global_litellm_service"):
@@ -235,9 +230,8 @@ class TestLiteLLMBudgetInitialization:
                                                 "codemie.rest_api.main.close_llm_proxy_client", new_callable=AsyncMock
                                             ):
                                                 async with lifespan(mock_app):
-                                                    # Verify budget and cleanup were NOT set up
-                                                    mock_ensure_budget.assert_not_awaited()
                                                     mock_setup_cleanup.assert_not_called()
+                                                    mock_schedule_reconciliation.assert_called_once()
 
 
 class TestLifespanShutdown:
