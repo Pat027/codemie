@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from enum import Enum
-from typing import List, ClassVar
+from typing import List
 from codemie.rest_api.models.settings import Settings, SettingsBase, CredentialValues
 from codemie_tools.base.models import CredentialTypes
 from codemie.service.encryption.base_encryption_service import BaseEncryptionService
@@ -45,13 +45,7 @@ class BaseSettingsService:
 
     MASKED_VALUE: str = "*" * 10
 
-    _encryption_service: ClassVar[BaseEncryptionService | None] = None
-
-    @classmethod
-    def _get_encryption_service(cls) -> BaseEncryptionService:
-        if cls._encryption_service is None:
-            cls._encryption_service = EncryptionFactory().get_current_encryption_service()
-        return cls._encryption_service
+    encryption_service: BaseEncryptionService = EncryptionFactory().get_current_encryption_service()
 
     @classmethod
     def retrieve_setting(cls, search_fields):
@@ -67,20 +61,18 @@ class BaseSettingsService:
     @classmethod
     def _encrypt_fields(cls, credential_values: List[CredentialValues], force_all: bool = False):
         """Call encryption service to encrypt sensitive data"""
-        encryption_service = cls._get_encryption_service()
         for cred in credential_values:
             if force_all or cred.key in cls.LIST_OF_SENSITIVE_FIELDS:
-                encrypted = encryption_service.encrypt(cred.value)
+                encrypted = cls.encryption_service.encrypt(cred.value)
                 cred.value = encrypted
         return credential_values
 
     @classmethod
     def _decrypt_fields(cls, credential_values: List[CredentialValues], force_all: bool = False):
         """Call encryption service to decrypt sensitive data"""
-        encryption_service = cls._get_encryption_service()
         for cred in credential_values:
             if force_all or cred.key in cls.LIST_OF_SENSITIVE_FIELDS:
-                decrypted = encryption_service.decrypt(cred.value)
+                decrypted = cls.encryption_service.decrypt(cred.value)
                 cred.value = decrypted
         return credential_values
 

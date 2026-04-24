@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import asyncio
-import time
 import uuid
 import traceback
 from contextlib import asynccontextmanager
@@ -257,17 +256,13 @@ async def _initialize_plugin_service():
 
 def _initialize_enterprise_services(app: FastAPI) -> tuple:
     """Initialize Langfuse and LiteLLM enterprise services."""
-    _t = time.perf_counter()
     langfuse_service = initialize_langfuse_from_config()
     app.state.langfuse_service = langfuse_service
     set_global_langfuse_service(langfuse_service)
-    logger.info(f"[startup]   initialize_langfuse_from_config: {time.perf_counter() - _t:.2f}s")
 
-    _t = time.perf_counter()
     litellm_service = initialize_litellm_from_config()
     app.state.litellm_service = litellm_service
     set_global_litellm_service(litellm_service)
-    logger.info(f"[startup]   initialize_litellm_from_config: {time.perf_counter() - _t:.2f}s")
 
     return langfuse_service, litellm_service
 
@@ -282,29 +277,12 @@ def _setup_litellm_features():
 
 def _initialize_database_and_defaults():
     """Run database migrations and create default data."""
-    _t = time.perf_counter()
     alembic_upgrade_postgres()
-    logger.info(f"[startup]   alembic_upgrade_postgres: {time.perf_counter() - _t:.2f}s")
-
-    _t = time.perf_counter()
     create_default_applications()
-    logger.info(f"[startup]   create_default_applications: {time.perf_counter() - _t:.2f}s")
-
-    _t = time.perf_counter()
     manage_preconfigured_assistants()
-    logger.info(f"[startup]   manage_preconfigured_assistants: {time.perf_counter() - _t:.2f}s")
-
-    _t = time.perf_counter()
     manage_preconfigured_skills()
-    logger.info(f"[startup]   manage_preconfigured_skills: {time.perf_counter() - _t:.2f}s")
-
-    _t = time.perf_counter()
     create_preconfigured_workflows()
-    logger.info(f"[startup]   create_preconfigured_workflows: {time.perf_counter() - _t:.2f}s")
-
-    _t = time.perf_counter()
     import_preconfigured_katas()
-    logger.info(f"[startup]   import_preconfigured_katas: {time.perf_counter() - _t:.2f}s")
 
 
 def _initialize_optional_features():
@@ -485,43 +463,28 @@ async def _shutdown_services(app: FastAPI, langfuse_service, litellm_service, ta
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    startup_start = time.perf_counter()
     logger.info(f"Starting CodeMie application. Config={config.to_safe_dict()}")
 
     # Initialize database and default data
-    _t = time.perf_counter()
     _initialize_database_and_defaults()
-    logger.info(f"[startup] _initialize_database_and_defaults: {time.perf_counter() - _t:.2f}s")
 
     # Register enterprise IDP providers (MUST be before first auth request)
-    _t = time.perf_counter()
     from codemie.enterprise.idp import register_enterprise_idps
 
     register_enterprise_idps()
-    logger.info(f"[startup] register_enterprise_idps: {time.perf_counter() - _t:.2f}s")
 
     # Initialize enterprise services
-    _t = time.perf_counter()
     langfuse_service, litellm_service = _initialize_enterprise_services(app)
-    logger.info(f"[startup] _initialize_enterprise_services: {time.perf_counter() - _t:.2f}s")
 
     # Setup LiteLLM features
-    _t = time.perf_counter()
     _setup_litellm_features()
-    logger.info(f"[startup] _setup_litellm_features: {time.perf_counter() - _t:.2f}s")
     if is_litellm_enabled():
         if config.LLM_PROXY_BUDGET_CHECK_ENABLED:
-            _t = time.perf_counter()
             await ensure_predefined_budgets()
-            logger.info(f"[startup] ensure_predefined_budgets: {time.perf_counter() - _t:.2f}s")
         if config.LLM_PROXY_BUDGET_SYNC_ENABLED:
-            _t = time.perf_counter()
             await sync_budgets_from_litellm()
-            logger.info(f"[startup] sync_budgets_from_litellm: {time.perf_counter() - _t:.2f}s")
         if config.LLM_PROXY_BUDGET_BACKFILL_ENABLED:
-            _t = time.perf_counter()
             await backfill_user_budget_assignments()
-            logger.info(f"[startup] backfill_user_budget_assignments: {time.perf_counter() - _t:.2f}s")
 
     # Instrument SQLAlchemy engines explicitly after they are created.
     # PostgresClient uses from-imports (sqlmodel.create_engine /
@@ -543,22 +506,12 @@ async def lifespan(app: FastAPI):
         enrich_sqlalchemy_spans(engines)
 
     # Initialize JWT keys and SuperAdmin for user management (EPMCDME-10160)
-    _t = time.perf_counter()
     _initialize_jwt_keys()
-    logger.info(f"[startup] _initialize_jwt_keys: {time.perf_counter() - _t:.2f}s")
-
-    _t = time.perf_counter()
     _bootstrap_superadmin()
-    logger.info(f"[startup] _bootstrap_superadmin: {time.perf_counter() - _t:.2f}s")
-
-    _t = time.perf_counter()
     await _run_keycloak_migration()
-    logger.info(f"[startup] _run_keycloak_migration: {time.perf_counter() - _t:.2f}s")
 
     # Initialize optional features
-    _t = time.perf_counter()
     _initialize_optional_features()
-    logger.info(f"[startup] _initialize_optional_features: {time.perf_counter() - _t:.2f}s")
 
     # Start background tasks
     tasks = []
@@ -566,9 +519,7 @@ async def lifespan(app: FastAPI):
         tasks.append(asyncio.create_task(NodeController().start()))
 
     # Initialize plugin service
-    _t = time.perf_counter()
     plugin_service = await _initialize_plugin_service()
-    logger.info(f"[startup] _initialize_plugin_service: {time.perf_counter() - _t:.2f}s")
     if plugin_service:
         app.state.plugin_service = plugin_service
         set_global_plugin_service(plugin_service)
@@ -581,7 +532,6 @@ async def lifespan(app: FastAPI):
     _setup_spend_tracking_scheduler(app)
     _setup_leaderboard_scheduler(app)
 
-    logger.info(f"[startup] TOTAL lifespan startup: {time.perf_counter() - startup_start:.2f}s")
     yield
 
     # Cleanup on shutdown

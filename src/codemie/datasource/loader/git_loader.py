@@ -20,29 +20,19 @@ import shutil
 from typing import Any, Iterator
 from urllib.parse import urlunparse, urlparse, quote
 
-import logging as _logging
-import time as _time
+from codemie.core.utils import check_file_type
+from git import Blob, Repo, Submodule
+from git.exc import GitCommandError
+from langchain_community.document_loaders import GitLoader
+from langchain_core.documents import Document
 
-_log = _logging.getLogger(__name__)
-
-from codemie.core.utils import check_file_type  # noqa: E402
-from git import Blob, Repo, Submodule  # noqa: E402
-from git.exc import GitCommandError  # noqa: E402
-
-_t = _time.perf_counter()
-from langchain_community.document_loaders import GitLoader  # noqa: E402
-
-_log.info(f"[import] langchain_community.document_loaders (git_loader.py): {_time.perf_counter() - _t:.2f}s")
-
-from langchain_core.documents import Document  # noqa: E402
-
-from codemie.configs import logger  # noqa: E402
-from codemie.core.models import GitRepo  # noqa: E402
-from codemie.datasource.datasources_config import CODE_CONFIG  # noqa: E402
-from codemie.datasource.loader.base_datasource_loader import BaseDatasourceLoader  # noqa: E402
-from codemie.datasource.loader.file_extraction_utils import extract_documents_from_bytes, is_binary_extractable  # noqa: E402
-from codemie.datasource.loader.git_auth_utils import get_github_app_token  # noqa: E402
-from codemie.rest_api.models.settings import Credentials  # noqa: E402
+from codemie.configs import logger
+from codemie.core.models import GitRepo
+from codemie.datasource.datasources_config import CODE_CONFIG
+from codemie.datasource.loader.base_datasource_loader import BaseDatasourceLoader
+from codemie.datasource.loader.file_extraction_utils import extract_documents_from_bytes, is_binary_extractable
+from codemie.datasource.loader.git_auth_utils import get_github_app_token
+from codemie.rest_api.models.settings import Credentials
 
 # List of specific MIME types to exclude
 excluded_mime_types = [

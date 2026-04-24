@@ -16,24 +16,14 @@
 
 from __future__ import annotations
 
-import logging as _logging
 import os
 import tempfile
-import time as _time
 import uuid
 
-_log = _logging.getLogger(__name__)
-
-_t = _time.perf_counter()
-from langchain_community.document_loaders import CSVLoader, UnstructuredPowerPointLoader  # noqa: E402
-from langchain_community.document_loaders.parsers import BaseImageBlobParser  # noqa: E402
-
-_log.info(f"[import] langchain_community (file_extraction_utils.py): {_time.perf_counter() - _t:.2f}s")
-
-from langchain_core.documents import Document  # noqa: E402
-
-_t = _time.perf_counter()
-from langchain_markitdown import (  # noqa: E402
+from langchain_community.document_loaders import CSVLoader, UnstructuredPowerPointLoader
+from langchain_community.document_loaders.parsers import BaseImageBlobParser
+from langchain_core.documents import Document
+from langchain_markitdown import (
     AudioLoader,
     DocxLoader,
     EpubLoader,
@@ -46,12 +36,10 @@ from langchain_markitdown import (  # noqa: E402
     ZipLoader,
 )
 
-_log.info(f"[import] langchain_markitdown (file_extraction_utils.py): {_time.perf_counter() - _t:.2f}s")
-
-from codemie.configs import logger  # noqa: E402
-from codemie.core.dependecies import get_llm_by_credentials  # noqa: E402
-from codemie.datasource.loader.pdf_plumber_loader import PDFPlumberLoader  # noqa: E402
-from codemie.rest_api.models.index import IndexKnowledgeBaseFileTypes  # noqa: E402
+from codemie.configs import logger
+from codemie.core.dependecies import get_llm_by_credentials
+from codemie.datasource.loader.pdf_plumber_loader import PDFPlumberLoader
+from codemie.rest_api.models.index import IndexKnowledgeBaseFileTypes
 
 LOADERS: dict[str, type] = {
     IndexKnowledgeBaseFileTypes.CSV.value: CSVLoader,

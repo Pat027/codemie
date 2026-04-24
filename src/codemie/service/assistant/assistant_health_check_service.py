@@ -144,12 +144,12 @@ class AssistantHealthCheckService:
         try:
             # Check context if configured
             if assistant.context:
-                from codemie.rest_api.models.index import IndexInfo
-
-                names = [item.name for item in assistant.context]
-                found = {idx.repo_name for idx in IndexInfo.get_all_by_repo_names(names)}
                 for context_item in assistant.context:
-                    if context_item.name not in found:
+                    # Validate context exists (knowledge base or code repo)
+                    from codemie.rest_api.models.index import IndexInfo
+
+                    index = IndexInfo.get_by_fields({"repo_name.keyword": context_item.name})
+                    if not index:
                         return (
                             False,
                             AssistantHealthCheckError(

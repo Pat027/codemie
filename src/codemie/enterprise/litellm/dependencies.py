@@ -14,11 +14,9 @@
 
 from __future__ import annotations
 
-import threading
 from functools import lru_cache
 from typing import TYPE_CHECKING, Optional
 
-from cachetools import TTLCache
 from codemie.configs.budget_config import budget_config
 from codemie.configs import logger
 from codemie.enterprise.loader import HAS_LITELLM
@@ -30,9 +28,6 @@ if TYPE_CHECKING:
 
 # Constants
 _LITELLM_NOT_AVAILABLE_MSG = "LiteLLM not available"
-
-_key_info_cache: TTLCache = TTLCache(maxsize=200, ttl=300)
-_key_info_cache_lock = threading.RLock()
 
 # Global service registry (initialized at startup)
 _global_litellm_service: Optional["LiteLLMService"] = None
@@ -601,23 +596,13 @@ def get_key_spending_info(key_aliases: list[str], include_details: bool = True):
     """
     from codemie.configs import logger
 
-    cache_key = (tuple(sorted(key_aliases)), include_details)
-    try:
-        with _key_info_cache_lock:
-            return _key_info_cache[cache_key]
-    except KeyError:
-        pass
-
     litellm = get_litellm_service_or_none()
     if litellm is None:
         logger.debug(_LITELLM_NOT_AVAILABLE_MSG)
         return []
 
     try:
-        result = litellm.get_key_info(key_aliases, include_details=include_details)
-        with _key_info_cache_lock:
-            _key_info_cache[cache_key] = result
-        return result
+        return litellm.get_key_info(key_aliases, include_details=include_details)
     except Exception as e:
         logger.error(f"Error getting key spending info: {e}")
         return []
