@@ -467,3 +467,45 @@ class TestResolveDirectProjectBudgetRuntime:
             user_email="user@example.com",
             model="claude-opus-4-6-20260205",
         )
+
+
+class TestLiteLLMChatOpenAI:
+    """Test LiteLLMChatOpenAI.with_structured_output behavior."""
+
+    def _make_instance(self):
+        from codemie.enterprise.litellm.llm_factory import LiteLLMChatOpenAI
+
+        mock_model_details = MagicMock()
+        mock_model_details.base_name = "gpt-4"
+
+        instance = LiteLLMChatOpenAI.__new__(LiteLLMChatOpenAI)
+        object.__setattr__(instance, "llm_model_details", mock_model_details)
+        return instance
+
+    def test_with_structured_output_forces_function_calling(self):
+        """with_structured_output always delegates to parent with method='function_calling'."""
+        from pydantic import BaseModel
+        from langchain_openai import AzureChatOpenAI
+
+        class OutputSchema(BaseModel):
+            answer: str
+
+        instance = self._make_instance()
+
+        with patch.object(AzureChatOpenAI, "with_structured_output") as mock_super:
+            instance.with_structured_output(OutputSchema)
+
+        mock_super.assert_called_once_with(OutputSchema, method="function_calling", include_raw=False, strict=None)
+
+    def test_with_structured_output_raises_on_tools_kwarg(self):
+        """with_structured_output raises ValueError when 'tools' kwarg is passed."""
+        import pytest
+        from pydantic import BaseModel
+
+        class OutputSchema(BaseModel):
+            answer: str
+
+        instance = self._make_instance()
+
+        with pytest.raises(ValueError, match="tools"):
+            instance.with_structured_output(OutputSchema, tools=["some_tool"])

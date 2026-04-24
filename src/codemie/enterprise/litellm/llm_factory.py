@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Literal, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
 from langchain_openai import AzureChatOpenAI
 from langchain_core.language_models import LanguageModelInput
@@ -49,17 +49,14 @@ def _metadata_value(metadata: dict[str, Any], key: str) -> Any:
 
 class LiteLLMChatOpenAI(AzureChatOpenAI):
     """
-    Extended AzureChatOpenAI with intelligent structured output method selection.
+    Extended AzureChatOpenAI that forces 'function_calling' for all structured output.
 
-    This class inherits from AzureChatOpenAI and overrides with_structured_output
-    to automatically select the correct method based on the model provider and type:
-    - Vertex AI Claude models: Use 'function_calling' method
-    - Azure OpenAI models: Use default 'json_schema' method
-
-    This eliminates the need for conditional logic in calling code.
+    Overrides with_structured_output to unconditionally use method='function_calling'
+    for all model providers. The LiteLLM proxy does not reliably handle the
+    json_schema response_format, causing JSONDecodeError on responses with extra data.
 
     Attributes:
-        llm_model_details: Model configuration for determining provider/type (not a Pydantic field)
+        llm_model_details: Model configuration (not a Pydantic field)
     """
 
     def __init__(self, llm_model_details: "LLMModel", **kwargs: Any):
@@ -67,7 +64,7 @@ class LiteLLMChatOpenAI(AzureChatOpenAI):
         Initialize LiteLLMChatOpenAI.
 
         Args:
-            llm_model_details: Model configuration details for determining provider/type
+            llm_model_details: Model configuration details
             **kwargs: Keyword arguments passed to AzureChatOpenAI parent class
         """
         # Initialize parent AzureChatOpenAI class first
@@ -81,44 +78,38 @@ class LiteLLMChatOpenAI(AzureChatOpenAI):
         self,
         schema: Optional[_DictOrPydanticClass] = None,
         *,
-        method: Literal["function_calling", "json_mode", "json_schema"] = "json_schema",
         include_raw: bool = False,
         strict: Optional[bool] = None,
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, _DictOrPydantic]:
         """
-        Override with_structured_output to automatically select the correct method.
+        Override with_structured_output to force function_calling for LiteLLM compatibility.
 
-        Determines the appropriate method based on model provider and type:
-        - Vertex AI Claude: Uses 'function_calling' for better compatibility
-        - Others: Uses the provided method (default 'json_schema')
+        The LiteLLM proxy does not reliably handle json_schema response_format,
+        causing JSONDecodeError on responses with extra data. Tool-calling-based
+        structured output (function_calling) works correctly with the proxy.
 
         Args:
             schema: Pydantic model or dict defining the output structure
-            method: Structured output method (overridden for Vertex Claude)
             include_raw: Whether to include raw response
             strict: Whether to use strict mode
-            **kwargs: Additional arguments
+            **kwargs: Additional arguments (note: 'tools' is not supported)
 
         Returns:
             Runnable that produces structured output
+
+        Raises:
+            ValueError: If 'tools' kwarg is passed (incompatible with function_calling)
         """
-        from codemie.configs.llm_config import LLMProvider
-
-        # Determine if we should use function_calling method
-        is_vertex_claude = self.llm_model_details.provider == LLMProvider.VERTEX_AI_ANTHROPIC
-
-        # Override method for Vertex Claude models
-        if is_vertex_claude:
-            logger.debug(
-                f"Using function_calling method for Vertex AI Claude model: {self.llm_model_details.base_name}"
+        if "tools" in kwargs:
+            raise ValueError(
+                "LiteLLMChatOpenAI.with_structured_output does not support the 'tools' parameter "
+                "because it forces method='function_calling'. Remove the 'tools' argument."
             )
-            method = "function_calling"
-        else:
-            logger.debug(f"Using {method} method for model: {self.llm_model_details.base_name}")
-
-        # Call parent's with_structured_output with the selected method
-        return super().with_structured_output(schema, method=method, include_raw=include_raw, strict=strict, **kwargs)
+        logger.debug(f"Using function_calling method for model: {self.llm_model_details.base_name}")
+        return super().with_structured_output(
+            schema, method="function_calling", include_raw=include_raw, strict=strict, **kwargs
+        )
 
 
 def create_litellm_chat_model(
@@ -198,7 +189,7 @@ def create_litellm_chat_model(
     # Filter parameters based on model features
     filtered_args = _filter_litellm_params(base_args, llm_model_details)
 
-    # Return LiteLLMChatOpenAI instance with intelligent structured output method selection
+    # Return LiteLLMChatOpenAI instance (forces function_calling for all structured output)
     return LiteLLMChatOpenAI(llm_model_details=llm_model_details, **filtered_args)
 
 
@@ -328,9 +319,10 @@ def _get_direct_request_category_budget_id(user_id: str, category: str) -> str |
     """Return the user's currently assigned budget id for a direct request category."""
     from sqlmodel import Session, select
 
+    from codemie.clients.postgres import PostgresClient
     from codemie.service.budget.budget_models import UserBudgetAssignment
 
-    with Session(UserBudgetAssignment.get_engine()) as session:
+    with Session(PostgresClient.get_engine()) as session:
         return session.exec(
             select(UserBudgetAssignment.budget_id).where(
                 UserBudgetAssignment.user_id == user_id,
