@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -22,8 +22,8 @@ from codemie.rest_api.security.user import User
 @pytest.mark.asyncio
 async def test_budget_usage_falls_back_to_username_when_email_missing():
     """Personal budget rows should still have a stable label when email is blank."""
+    from codemie.enterprise.litellm.models import UserKeysSpending
     from codemie.rest_api.routers.analytics import get_user_budget_usage
-    from codemie.service.analytics.handlers.budget_usage_service import _get_key_spending_columns
 
     mock_user = User(
         id="test-user-id",
@@ -33,47 +33,38 @@ async def test_budget_usage_falls_back_to_username_when_email_missing():
         admin_project_names=[],
     )
 
-    # subject_label = email or username or id; email is blank so username is used
-    label = mock_user.username
-    mock_rows = [
-        {
-            "project_name": label,
-            "current_spending": 15.5,
-            "budget_reset_at": "2026-04-01T00:00:00Z",
-            "time_until_reset": None,
-            "budget_limit": 100.0,
-            "total": 15.5,
-        },
-        {
-            "project_name": f"{label} (premium)",
-            "current_spending": 1.25,
-            "budget_reset_at": "2026-04-02T00:00:00Z",
-            "time_until_reset": None,
-            "budget_limit": 5.0,
-            "total": 25.0,
-        },
-        {
-            "project_name": f"{label} (cli)",
-            "current_spending": 3.75,
-            "budget_reset_at": "2026-04-03T00:00:00Z",
-            "time_until_reset": None,
-            "budget_limit": 20.0,
-            "total": 18.75,
-        },
-    ]
+    mock_personal_spending = {
+        "total_spend": 15.5,
+        "max_budget": 100.0,
+        "budget_reset_at": "2026-04-01T00:00:00Z",
+    }
+    mock_premium_spending = {
+        "total_spend": 1.25,
+        "max_budget": 5.0,
+        "budget_reset_at": "2026-04-02T00:00:00Z",
+    }
+    mock_cli_spending = {
+        "total_spend": 3.75,
+        "max_budget": 20.0,
+        "budget_reset_at": "2026-04-03T00:00:00Z",
+    }
+    mock_keys_spending = UserKeysSpending(user_keys=[], project_keys=[])
 
-    mock_session = AsyncMock()
-    mock_ctx = MagicMock()
-    mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_ctx.__aexit__ = AsyncMock(return_value=False)
-
-    with patch("codemie.clients.postgres.get_async_session", return_value=mock_ctx):
+    with patch("codemie.enterprise.litellm.dependencies.get_customer_spending", return_value=mock_personal_spending):
         with patch(
-            "codemie.service.analytics.handlers.budget_usage_service.BudgetUsageService.get_budget_usage",
-            new_callable=AsyncMock,
-            return_value=(_get_key_spending_columns(), mock_rows),
+            "codemie.enterprise.litellm.dependencies.get_proxy_customer_spending",
+            return_value=mock_cli_spending,
         ):
-            response = await get_user_budget_usage(user=mock_user, user_id=None)
+            with patch(
+                "codemie.enterprise.litellm.dependencies.get_premium_customer_spending",
+                return_value=mock_premium_spending,
+            ):
+                with patch("codemie.enterprise.litellm.dependencies.is_premium_models_enabled", return_value=True):
+                    with patch(
+                        "codemie.enterprise.litellm.dependencies.get_user_keys_spending",
+                        return_value=mock_keys_spending,
+                    ):
+                        response = await get_user_budget_usage(user=mock_user)
 
     rows = response["data"]["rows"]
     assert rows[0]["project_name"] == mock_user.username
