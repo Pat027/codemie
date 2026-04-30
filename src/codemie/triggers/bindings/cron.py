@@ -375,9 +375,22 @@ class Cron:
             logger.info("Removed job: %s", job_id)
 
     @staticmethod
+    def __normalize_day_of_week(day_of_week: str) -> str:
+        """Normalize day_of_week field for APScheduler compatibility.
+
+        Standard cron and croniter accept 7 as Sunday, but APScheduler's
+        CronTrigger only accepts 0-6. Replace standalone 7 with 0 (both
+        represent Sunday) so validation does not raise a ValueError.
+        """
+        import re
+
+        return re.sub(r"\b7\b", "0", day_of_week)
+
+    @staticmethod
     def __create_cron_trigger(cron_expression):
         """Create cron trigger from expression"""
         minute, hour, day_of_month, month, day_of_week = cron_expression.split()
+        day_of_week = Cron.__normalize_day_of_week(day_of_week)
         return CronTrigger(
             minute=minute,
             hour=hour,

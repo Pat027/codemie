@@ -18,6 +18,7 @@ from typing import Dict, List
 from datetime import datetime, timezone
 
 from croniter import croniter
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import status
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -29,6 +30,9 @@ from codemie_tools.base.models import CredentialTypes
 
 # Constants for scheduler resource types
 RESOURCE_TYPE_DATASOURCE = "datasource"
+
+# Shared error message for invalid cron expressions
+INVALID_CRON_EXPRESSION_MESSAGE = "Invalid cron expression"
 
 # Alias prefix for datasource schedulers created by index router
 DATASOURCE_SCHEDULE_ALIAS_PREFIX = "Schedule_"
@@ -392,7 +396,20 @@ def validate_cron_expression(cron_expr: str | None) -> None:
     except (ValueError, KeyError) as e:
         raise ExtendedHTTPException(
             code=status.HTTP_400_BAD_REQUEST,
-            message=f"Invalid cron expression: {cron_expr}",
+            message=f"{INVALID_CRON_EXPRESSION_MESSAGE}: {cron_expr}",
+            details=str(e),
+            help="Use standard cron format: 'minute hour day month day_of_week' (e.g., '0 2 * * *' for 2 AM daily)",
+        ) from e
+
+    # Validate against APScheduler's CronTrigger — catches constraints croniter
+    # does not enforce (e.g. day_of_week > 6)
+    try:
+        minute, hour, day_of_month, month, day_of_week = cron_expr.split()
+        CronTrigger(minute=minute, hour=hour, day=day_of_month, month=month, day_of_week=day_of_week)
+    except ValueError as e:
+        raise ExtendedHTTPException(
+            code=status.HTTP_400_BAD_REQUEST,
+            message=f"{INVALID_CRON_EXPRESSION_MESSAGE}: {cron_expr}",
             details=str(e),
             help="Use standard cron format: 'minute hour day month day_of_week' (e.g., '0 2 * * *' for 2 AM daily)",
         ) from e

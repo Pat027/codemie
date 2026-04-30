@@ -20,7 +20,11 @@ from fastapi import status
 
 from codemie.core.exceptions import ExtendedHTTPException
 from codemie.rest_api.models.settings import SettingRequest
-from codemie.service.settings.scheduler_settings_service import _validate_minimum_hourly_frequency
+from codemie.service.settings.scheduler_settings_service import (
+    _validate_minimum_hourly_frequency,
+    INVALID_CRON_EXPRESSION_MESSAGE,
+)
+from apscheduler.triggers.cron import CronTrigger
 from croniter import croniter
 
 if TYPE_CHECKING:
@@ -460,7 +464,7 @@ def validate_cron_expression(request: SettingRequest) -> None:
             if not cron_expression:
                 raise ExtendedHTTPException(
                     code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    message="Invalid cron expression",
+                    message=INVALID_CRON_EXPRESSION_MESSAGE,
                     details="Cron expression cannot be empty.",
                     help=CRON_EXPRESSION_HELP_MESSAGE,
                 )
@@ -471,7 +475,20 @@ def validate_cron_expression(request: SettingRequest) -> None:
             except (ValueError, KeyError) as e:
                 raise ExtendedHTTPException(
                     code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    message="Invalid cron expression",
+                    message=INVALID_CRON_EXPRESSION_MESSAGE,
+                    details=f"The cron expression '{schedule}' is not valid: {str(e)}",
+                    help=CRON_EXPRESSION_HELP_MESSAGE,
+                ) from e
+
+            # Validate against APScheduler's CronTrigger — catches constraints croniter
+            # does not enforce (e.g. day_of_week > 6)
+            try:
+                minute, hour, day_of_month, month, day_of_week = cron_expression.split()
+                CronTrigger(minute=minute, hour=hour, day=day_of_month, month=month, day_of_week=day_of_week)
+            except ValueError as e:
+                raise ExtendedHTTPException(
+                    code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    message=INVALID_CRON_EXPRESSION_MESSAGE,
                     details=f"The cron expression '{schedule}' is not valid: {str(e)}",
                     help=CRON_EXPRESSION_HELP_MESSAGE,
                 ) from e

@@ -46,10 +46,6 @@ class TestScheduleCredentialValidation:
             "30 14 * * 1-5",  # 2:30 PM on weekdays
             "0 2 * * SUN",  # 2 AM every Sunday
             "0 */2 * * *",  # Every 2 hours
-            "@daily",  # Special expressions
-            "@weekly",
-            "@monthly",
-            "@yearly",
         ]
 
         for expression in valid_expressions:
@@ -66,6 +62,10 @@ class TestScheduleCredentialValidation:
             "invalid",  # Completely invalid
             "* * * *",  # Missing field
             "0 9 * * MON-INVALID",  # Invalid day name
+            "@daily",  # Special expressions not supported by apscheduler
+            "@weekly",
+            "@monthly",
+            "@yearly",
         ]
 
         for expression in invalid_expressions:
@@ -211,10 +211,11 @@ class TestScheduleCredentialParametrized:
             ("0 2 * * SUN", True),
             ("0 */2 * * *", True),
             ("5 4 * * sun", True),
-            ("@daily", True),
-            ("@weekly", True),
-            ("@monthly", True),
-            ("@yearly", True),
+            # Not supported expressions by apscheduler
+            ("@daily", False),
+            ("@weekly", False),
+            ("@monthly", False),
+            ("@yearly", False),
             # Invalid expressions
             (None, True),  # None is allowed
             ("*/15 * * * *", False),  # Too frequent (every 15 minutes)
