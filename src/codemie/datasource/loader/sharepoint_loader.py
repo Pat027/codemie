@@ -32,7 +32,7 @@ import requests
 from langchain_core.document_loaders import BaseLoader
 from langchain_core.documents import Document
 
-from codemie.configs import logger
+from codemie.configs import config, logger
 from codemie.core.utils import _create_pathspec_from_filter
 from codemie.datasource.datasources_config import SHAREPOINT_CONFIG
 from codemie.datasource.exceptions import (
@@ -41,6 +41,7 @@ from codemie.datasource.exceptions import (
 )
 from codemie.datasource.loader.base_datasource_loader import BaseDatasourceLoader
 from codemie.datasource.loader.file_extraction_utils import extract_documents_from_bytes
+from codemie.datasource.loader.file_processor_pool import file_process_pool
 
 _MAX_RETRY_AFTER_SECONDS = 60
 
@@ -1014,6 +1015,29 @@ class SharePointLoader(BaseLoader, BaseDatasourceLoader):
 
             url = data.get(self.ODATA_NEXT_LINK)
 
+    def _iter_processable_file_items(self, drive_id: str, folder_path: str = "root") -> Iterator[tuple[str, str, dict]]:
+        """Traverse drive tree and yield (site_id, drive_id, item) for non-skipped files without downloading."""
+        site_id = self._get_site_id()
+        url = self._build_folder_url(site_id, drive_id, folder_path)
+
+        while url:
+            data = self._make_graph_request(url)
+            if not data:
+                break
+
+            for item in data.get("value", []):
+                if "folder" in item:
+                    yield from self._iter_processable_file_items(drive_id, item["id"])
+                elif "file" in item:
+                    self._total_files_found += 1
+                    should_skip, _ = self._should_skip_file(item)
+                    if should_skip:
+                        self._total_files_skipped += 1
+                    else:
+                        yield site_id, drive_id, item
+
+            url = data.get(self.ODATA_NEXT_LINK)
+
     def _download_and_extract_file(self, site_id: str, drive_id: str, item_id: str, file_name: str) -> list[Document]:
         """
         Download file from SharePoint and extract documents using appropriate loader.
@@ -1039,11 +1063,25 @@ class SharePointLoader(BaseLoader, BaseDatasourceLoader):
             file_bytes = response.content
 
             # Extract documents using file loaders
-            return self._extract_documents_from_bytes(file_bytes, file_name)
+            if config.ENABLE_FILE_MULTIPROCESSING:
+                return self._extract_documents_from_bytes_multiprocess(file_bytes, file_name)
+            else:
+                return self._extract_documents_from_bytes(file_bytes, file_name)
 
         except Exception as e:
             logger.error(f"Failed to download/extract file {file_name}: {e}")
             return []
+
+    def _extract_documents_from_bytes_multiprocess(self, file_bytes: bytes, file_name: str):
+        executor = file_process_pool.get_executor()
+
+        return executor.submit(
+            extract_documents_from_bytes,
+            file_bytes,
+            file_name,
+            self.request_uuid,
+            ",",
+        ).result()
 
     def _extract_documents_from_bytes(self, file_bytes: bytes, file_name: str) -> list[Document]:
         """

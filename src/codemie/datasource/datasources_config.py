@@ -79,6 +79,9 @@ class ConfluenceConfig(BaseModel):
 class FileConfig(BaseModel):
     chunk_size: int
     chunk_overlap: int
+    enable_multiprocessing: bool = False
+    max_subprocesses: int = 1
+    processing_timeout: int = -1
 
 
 class AzureDevOpsWikiConfig(BaseModel):

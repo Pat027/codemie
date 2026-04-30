@@ -653,6 +653,10 @@ class Config(BaseSettings):
     # HHTP requests configuration
     HTTPS_VERIFY_SSL: bool = True  # verify SSL context of request, for development and testing configure to `False`
 
+    # File Datasource multiprocessing
+    ENABLE_FILE_MULTIPROCESSING: bool = False
+    FILE_DATASOURCE_MULTIPROCESSING_MAX_WORKERS: int = 2
+
     @property
     def verbose(self) -> bool:
         """Verbose setting used for LLM logging"""

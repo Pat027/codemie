@@ -677,9 +677,7 @@ class BaseDatasourceProcessor(ABC):
                     )
                 except TimeoutError:
                     logger.error(
-                        f"IndexDatasource. TimeoutProcessingDocument. "
-                        f"Datasource={self.datasource_name}. "
-                        f"Timeout=300s"
+                        f"IndexDatasource. TimeoutProcessingDocument. Datasource={self.datasource_name}. Timeout=300s"
                     )
                 except Exception as e:
                     logger.error(

@@ -15,6 +15,7 @@
 """File with FileDatasourceLoader logic."""
 
 import collections
+import logging
 from typing import Any, Union, List, Optional
 
 from codemie_tools.base.file_object import FileObject
@@ -23,6 +24,10 @@ from langchain_core.documents import Document
 from codemie.datasource.loader.base_datasource_loader import BaseDatasourceLoader
 from codemie.datasource.loader.file_extraction_utils import extract_documents_from_bytes
 from codemie.repository.repository_factory import FileRepositoryFactory
+from codemie.configs import config
+from codemie.datasource.loader.file_processor_pool import file_process_pool
+
+logger = logging.getLogger(__name__)
 
 
 class FilesDatasourceLoader(BaseDatasourceLoader):
@@ -92,9 +97,32 @@ class FilesDatasourceLoader(BaseDatasourceLoader):
         Yields:
             Union[Document, List[Document]]: Yields documents loaded from the files.
         """
+        if config.ENABLE_FILE_MULTIPROCESSING:
+            yield from self._load_docs_parallel()
+        else:
+            for file_data in self.files_paths:
+                file = self.file_repo.read_file(file_data.name, file_data.owner)
+                yield self._lazy_load_documents(file)
+
+    def _load_docs_parallel(self):
+        futures: dict = {}
+        processor = file_process_pool.get_executor()
         for file_data in self.files_paths:
             file = self.file_repo.read_file(file_data.name, file_data.owner)
-            yield self._lazy_load_documents(file)
+            future = processor.submit(
+                extract_documents_from_bytes,
+                file.bytes_content(),
+                file.name,
+                self.request_uuid,
+                self._csv_separator,
+                self._include_email_attachments,
+            )
+            futures[future] = file_data.name
+        for future, name in futures.items():
+            try:
+                yield future.result()
+            except Exception as e:
+                logger.error(f"Failed to extract documents from file {name}: {e}")
 
     def _lazy_load_documents(self, file: FileObject) -> List[Document]:
         """

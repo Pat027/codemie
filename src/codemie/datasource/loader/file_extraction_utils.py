@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import gc
 import os
 import tempfile
 import uuid
@@ -188,5 +189,6 @@ def extract_documents_from_bytes(
                 os.unlink(temp_path)
             except Exception as e:
                 logger.warning(f"Failed to delete temp file {temp_path}: {e}")
+    gc.collect()
 
     return documents
