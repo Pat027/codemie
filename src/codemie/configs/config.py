@@ -14,10 +14,10 @@
 
 import logging
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
 from dotenv import find_dotenv, load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from pydantic_settings import SettingsConfigDict, BaseSettings
 
 
@@ -311,6 +311,7 @@ class Config(BaseSettings):
     AZURE_STORAGE_ACCOUNT_NAME: str = ""  # Azure StorageAccount name
 
     AWS_KMS_KEY_ID: str = ""
+    AWS_DEFAULT_REGION: str = ""  # Standard AWS region; fallback for AWS_S3_REGION and AWS_KMS_REGION when not set
     AWS_S3_REGION: str = ""
     AWS_S3_BUCKET_NAME: str = ""
     AWS_BEDROCK_MAX_RETRIES: int = 5
@@ -656,6 +657,14 @@ class Config(BaseSettings):
     # File Datasource multiprocessing
     ENABLE_FILE_MULTIPROCESSING: bool = False
     FILE_DATASOURCE_MULTIPROCESSING_MAX_WORKERS: int = 2
+
+    @model_validator(mode="after")
+    def resolve_aws_regions(self) -> Self:
+        if not self.AWS_S3_REGION and self.AWS_DEFAULT_REGION:
+            self.AWS_S3_REGION = self.AWS_DEFAULT_REGION
+        if not self.AWS_KMS_REGION and self.AWS_DEFAULT_REGION:
+            self.AWS_KMS_REGION = self.AWS_DEFAULT_REGION
+        return self
 
     @property
     def verbose(self) -> bool:
