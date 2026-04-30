@@ -1832,176 +1832,169 @@ class TestGetUserSpending:
 
 
 class TestGetUserKeySpending:
-    """Tests for GET /analytics/key_spending endpoint."""
+    """Tests for GET /analytics/budget_usage endpoint."""
+
+    def _mock_session_ctx(self):
+        """Return a mock async context manager yielding a session."""
+        mock_session = AsyncMock()
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+        return ctx
 
     @pytest.mark.asyncio
     async def test_returns_grouped_key_spending_success(self, mock_user):
-        """Test endpoint returns tabular spending with personal budget row and user key rows."""
+        """Test endpoint returns tabular spending with personal budget rows and member allocation rows."""
         from codemie.rest_api.routers.analytics import get_user_budget_usage
-        from codemie.enterprise.litellm.models import UserKeysSpending
+        from codemie.service.analytics.handlers.budget_usage_service import _get_key_spending_columns
 
-        mock_personal_spending = {
-            "total_spend": 15.5,
-            "max_budget": 100.0,
-            "budget_reset_at": "2026-04-01T00:00:00Z",
-        }
-        mock_keys_spending = UserKeysSpending(
-            user_keys=[
-                {
-                    "key_alias": "user-key-1",
-                    "total_spend": 25.0,
-                    "max_budget": 50.0,
-                    "budget_reset_at": "2026-04-01T00:00:00Z",
-                    "project_name": "demo",
-                },
-            ],
-            project_keys=[
-                {
-                    "key_alias": "project-key-1",
-                    "total_spend": 50.0,
-                    "max_budget": 200.0,
-                    "budget_reset_at": "2026-04-15T00:00:00Z",
-                    "project_name": "demo-project",
-                }
-            ],
-        )
-        mock_premium_spending = {
-            "total_spend": 1.25,
-            "max_budget": 5.0,
-            "budget_reset_at": "2026-04-02T00:00:00Z",
-        }
-        mock_cli_spending = {
-            "total_spend": 3.75,
-            "max_budget": 20.0,
-            "budget_reset_at": "2026-04-03T00:00:00Z",
-        }
+        mock_rows = [
+            {
+                "project_name": mock_user.email,
+                "current_spending": 15.5,
+                "budget_reset_at": "2026-04-01T00:00:00Z",
+                "time_until_reset": None,
+                "budget_limit": 100.0,
+                "total": 15.5,
+            },
+            {
+                "project_name": f"{mock_user.email} (premium)",
+                "current_spending": 1.25,
+                "budget_reset_at": "2026-04-02T00:00:00Z",
+                "time_until_reset": None,
+                "budget_limit": 5.0,
+                "total": 25.0,
+            },
+            {
+                "project_name": f"{mock_user.email} (cli)",
+                "current_spending": 3.75,
+                "budget_reset_at": "2026-04-03T00:00:00Z",
+                "time_until_reset": None,
+                "budget_limit": 20.0,
+                "total": 18.75,
+            },
+            {
+                "project_name": "demo",
+                "current_spending": 25.0,
+                "budget_reset_at": "2026-04-01T00:00:00Z",
+                "time_until_reset": None,
+                "budget_limit": 50.0,
+                "total": 50.0,
+            },
+        ]
 
-        with patch(
-            "codemie.enterprise.litellm.dependencies.get_customer_spending", return_value=mock_personal_spending
-        ):
+        with patch("codemie.clients.postgres.get_async_session", return_value=self._mock_session_ctx()):
             with patch(
-                "codemie.enterprise.litellm.dependencies.get_proxy_customer_spending",
-                return_value=mock_cli_spending,
+                "codemie.service.analytics.handlers.budget_usage_service.BudgetUsageService.get_budget_usage",
+                new_callable=AsyncMock,
+                return_value=(_get_key_spending_columns(), mock_rows),
             ):
-                with patch(
-                    "codemie.enterprise.litellm.dependencies.get_premium_customer_spending",
-                    return_value=mock_premium_spending,
-                ):
-                    with patch("codemie.enterprise.litellm.dependencies.is_premium_models_enabled", return_value=True):
-                        with patch(
-                            "codemie.enterprise.litellm.dependencies.get_user_keys_spending",
-                            return_value=mock_keys_spending,
-                        ):
-                            response = await get_user_budget_usage(user=mock_user)
+                response = await get_user_budget_usage(user=mock_user, user_id=None)
 
-                            assert "data" in response
-                            assert "columns" in response["data"]
-                            assert "rows" in response["data"]
-                            assert "metadata" in response
+                assert "data" in response
+                assert "columns" in response["data"]
+                assert "rows" in response["data"]
+                assert "metadata" in response
 
-                            rows = response["data"]["rows"]
-                            assert rows[0]["project_name"] == mock_user.email
-                            assert rows[0]["current_spending"] == 15.5
-                            assert rows[1]["project_name"] == f"{mock_user.email} (premium)"
-                            assert rows[1]["current_spending"] == 1.25
-                            assert rows[2]["project_name"] == f"{mock_user.email} (cli)"
-                            assert rows[2]["current_spending"] == 3.75
-                            assert rows[3]["project_name"] == "demo"
-                            assert rows[3]["current_spending"] == 25.0
-                            assert len(rows) == 4
+                rows = response["data"]["rows"]
+                assert rows[0]["project_name"] == mock_user.email
+                assert rows[0]["current_spending"] == 15.5
+                assert rows[1]["project_name"] == f"{mock_user.email} (premium)"
+                assert rows[1]["current_spending"] == 1.25
+                assert rows[2]["project_name"] == f"{mock_user.email} (cli)"
+                assert rows[2]["current_spending"] == 3.75
+                assert rows[3]["project_name"] == "demo"
+                assert rows[3]["current_spending"] == 25.0
+                assert len(rows) == 4
 
     @pytest.mark.asyncio
-    async def test_skips_premium_budget_when_feature_disabled(self, mock_user):
+    async def test_returns_single_budget_row(self, mock_user):
+        """Test endpoint returns a single platform budget row when service returns one row."""
         from codemie.rest_api.routers.analytics import get_user_budget_usage
-        from codemie.enterprise.litellm.models import UserKeysSpending
+        from codemie.service.analytics.handlers.budget_usage_service import _get_key_spending_columns
 
-        mock_personal_spending = {
-            "total_spend": 15.5,
-            "max_budget": 100.0,
-            "budget_reset_at": "2026-04-01T00:00:00Z",
-        }
-        mock_keys_spending = UserKeysSpending(user_keys=[], project_keys=[])
+        mock_rows = [
+            {
+                "project_name": mock_user.email,
+                "current_spending": 15.5,
+                "budget_reset_at": "2026-04-01T00:00:00Z",
+                "time_until_reset": None,
+                "budget_limit": 100.0,
+                "total": 15.5,
+            },
+        ]
 
-        with patch(
-            "codemie.enterprise.litellm.dependencies.get_customer_spending", return_value=mock_personal_spending
-        ):
+        with patch("codemie.clients.postgres.get_async_session", return_value=self._mock_session_ctx()):
             with patch(
-                "codemie.enterprise.litellm.dependencies.get_proxy_customer_spending",
-                return_value=None,
-            ) as mock_get_proxy_spending:
-                with patch(
-                    "codemie.enterprise.litellm.dependencies.get_premium_customer_spending"
-                ) as mock_get_premium_spending:
-                    with patch("codemie.enterprise.litellm.dependencies.is_premium_models_enabled", return_value=False):
-                        with patch(
-                            "codemie.enterprise.litellm.dependencies.get_user_keys_spending",
-                            return_value=mock_keys_spending,
-                        ):
-                            response = await get_user_budget_usage(user=mock_user)
+                "codemie.service.analytics.handlers.budget_usage_service.BudgetUsageService.get_budget_usage",
+                new_callable=AsyncMock,
+                return_value=(_get_key_spending_columns(), mock_rows),
+            ):
+                response = await get_user_budget_usage(user=mock_user, user_id=None)
 
-                            rows = response["data"]["rows"]
-                            assert len(rows) == 1
-                            assert rows[0]["project_name"] == mock_user.email
-                            mock_get_proxy_spending.assert_called_once()
-                            mock_get_premium_spending.assert_not_called()
+                rows = response["data"]["rows"]
+                assert len(rows) == 1
+                assert rows[0]["project_name"] == mock_user.email
 
     @pytest.mark.asyncio
-    async def test_handles_empty_keys_spending(self, mock_user):
-        """Test endpoint returns empty rows when no personal budget and no user keys."""
+    async def test_handles_empty_budget_usage(self, mock_user):
+        """Test endpoint returns empty rows when service returns no rows."""
         from codemie.rest_api.routers.analytics import get_user_budget_usage
-        from codemie.enterprise.litellm.models import UserKeysSpending
+        from codemie.service.analytics.handlers.budget_usage_service import _get_key_spending_columns
 
-        mock_keys_spending = UserKeysSpending(user_keys=[], project_keys=[])
-
-        with patch("codemie.enterprise.litellm.dependencies.get_customer_spending", return_value=None):
+        with patch("codemie.clients.postgres.get_async_session", return_value=self._mock_session_ctx()):
             with patch(
-                "codemie.enterprise.litellm.dependencies.get_user_keys_spending", return_value=mock_keys_spending
+                "codemie.service.analytics.handlers.budget_usage_service.BudgetUsageService.get_budget_usage",
+                new_callable=AsyncMock,
+                return_value=(_get_key_spending_columns(), []),
             ):
-                response = await get_user_budget_usage(user=mock_user)
+                response = await get_user_budget_usage(user=mock_user, user_id=None)
 
                 assert response["data"]["rows"] == []
                 assert "columns" in response["data"]
 
     @pytest.mark.asyncio
     async def test_raises_500_on_backend_error(self, mock_user):
-        """Test endpoint returns 500 error when backend fails."""
+        """Test endpoint returns 500 error when the service raises an unexpected exception."""
         from codemie.rest_api.routers.analytics import get_user_budget_usage
 
-        with patch("codemie.enterprise.litellm.dependencies.get_user_keys_spending") as mock_get_spending:
-            mock_get_spending.side_effect = Exception("Backend service unavailable")
+        with patch("codemie.clients.postgres.get_async_session", return_value=self._mock_session_ctx()):
+            with patch(
+                "codemie.service.analytics.handlers.budget_usage_service.BudgetUsageService.get_budget_usage",
+                new_callable=AsyncMock,
+                side_effect=Exception("Backend service unavailable"),
+            ):
+                with pytest.raises(ExtendedHTTPException) as exc_info:
+                    await get_user_budget_usage(user=mock_user, user_id=None)
 
-            with pytest.raises(ExtendedHTTPException) as exc_info:
-                await get_user_budget_usage(user=mock_user)
-
-            # Verify error details
-            exception = exc_info.value
-            assert exception.code == status.HTTP_500_INTERNAL_SERVER_ERROR
-            assert "Unable to retrieve spending information" in exception.message
+                exception = exc_info.value
+                assert exception.code == status.HTTP_500_INTERNAL_SERVER_ERROR
+                assert "Unable to retrieve spending information" in exception.message
 
     @pytest.mark.asyncio
     async def test_handles_none_budget_reset_at(self, mock_user):
-        """Test endpoint handles None budget_reset_at as None in the row (not 'N/A')."""
+        """Test endpoint passes through None budget_reset_at and time_until_reset from service."""
         from codemie.rest_api.routers.analytics import get_user_budget_usage
-        from codemie.enterprise.litellm.models import UserKeysSpending
+        from codemie.service.analytics.handlers.budget_usage_service import _get_key_spending_columns
 
-        mock_keys_spending = UserKeysSpending(
-            user_keys=[
-                {
-                    "key_alias": "user-key-1",
-                    "total_spend": 10.0,
-                    "max_budget": 100.0,
-                    "budget_reset_at": None,
-                    "project_name": "demo",
-                }
-            ],
-            project_keys=[],
-        )
+        mock_rows = [
+            {
+                "project_name": "demo",
+                "current_spending": 10.0,
+                "budget_reset_at": None,
+                "time_until_reset": None,
+                "budget_limit": 100.0,
+                "total": 10.0,
+            },
+        ]
 
-        with patch("codemie.enterprise.litellm.dependencies.get_customer_spending", return_value=None):
+        with patch("codemie.clients.postgres.get_async_session", return_value=self._mock_session_ctx()):
             with patch(
-                "codemie.enterprise.litellm.dependencies.get_user_keys_spending", return_value=mock_keys_spending
+                "codemie.service.analytics.handlers.budget_usage_service.BudgetUsageService.get_budget_usage",
+                new_callable=AsyncMock,
+                return_value=(_get_key_spending_columns(), mock_rows),
             ):
-                response = await get_user_budget_usage(user=mock_user)
+                response = await get_user_budget_usage(user=mock_user, user_id=None)
 
                 rows = response["data"]["rows"]
                 assert len(rows) == 1
@@ -2012,15 +2005,15 @@ class TestGetUserKeySpending:
     async def test_response_metadata_contains_required_fields(self, mock_user):
         """Test that response metadata contains all required fields."""
         from codemie.rest_api.routers.analytics import get_user_budget_usage
-        from codemie.enterprise.litellm.models import UserKeysSpending
+        from codemie.service.analytics.handlers.budget_usage_service import _get_key_spending_columns
 
-        mock_keys_spending = UserKeysSpending(user_keys=[], project_keys=[])
-
-        with patch("codemie.enterprise.litellm.dependencies.get_customer_spending", return_value=None):
+        with patch("codemie.clients.postgres.get_async_session", return_value=self._mock_session_ctx()):
             with patch(
-                "codemie.enterprise.litellm.dependencies.get_user_keys_spending", return_value=mock_keys_spending
+                "codemie.service.analytics.handlers.budget_usage_service.BudgetUsageService.get_budget_usage",
+                new_callable=AsyncMock,
+                return_value=(_get_key_spending_columns(), []),
             ):
-                response = await get_user_budget_usage(user=mock_user)
+                response = await get_user_budget_usage(user=mock_user, user_id=None)
 
                 metadata = response["metadata"]
                 assert "timestamp" in metadata

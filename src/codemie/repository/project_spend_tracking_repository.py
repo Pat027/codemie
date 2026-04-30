@@ -483,6 +483,56 @@ class ProjectSpendTrackingRepository:
             await session.execute(stmt)
         await session.commit()
 
+    async def get_latest_by_budget_ids(
+        self,
+        session: AsyncSession,
+        budget_ids: list[str],
+    ) -> dict[str, "ProjectSpendTracking"]:
+        """Return the most recent budget-type row per budget_id.
+
+        Used by the /budget_usage endpoint to retrieve the current-period spend
+        for a user's personal budget categories (platform / cli / premium_models).
+
+        Args:
+            session: Async database session
+            budget_ids: Budget IDs to look up
+
+        Returns:
+            Dict mapping budget_id to the most recent ProjectSpendTracking row
+            (spend_subject_type='budget'). Missing IDs are absent from the result.
+        """
+        if not budget_ids:
+            return {}
+
+        # Subquery: find the most recent spend_date per budget_id.
+        # MAX(created_at) is added as a tiebreaker: if two rows share the same
+        # spend_date (e.g. concurrent refresh calls), the one inserted last wins.
+        latest_subq = (
+            select(
+                ProjectSpendTracking.budget_id,
+                func.max(ProjectSpendTracking.spend_date).label("max_spend_date"),
+                func.max(ProjectSpendTracking.created_at).label("max_created_at"),
+            )
+            .where(ProjectSpendTracking.budget_id.in_(budget_ids))
+            .where(ProjectSpendTracking.spend_subject_type == "budget")
+            .group_by(ProjectSpendTracking.budget_id)
+            .subquery()
+        )
+
+        stmt = (
+            select(ProjectSpendTracking)
+            .join(
+                latest_subq,
+                (ProjectSpendTracking.budget_id == latest_subq.c.budget_id)
+                & (ProjectSpendTracking.spend_date == latest_subq.c.max_spend_date)
+                & (ProjectSpendTracking.created_at == latest_subq.c.max_created_at),
+            )
+            .where(ProjectSpendTracking.spend_subject_type == "budget")
+        )
+
+        result = await session.execute(stmt)
+        return {row.budget_id: row for row in result.scalars().all()}
+
     async def get_entries_for_date(
         self,
         session: AsyncSession,

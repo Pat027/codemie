@@ -585,6 +585,23 @@ def _build_key_spending_tabular_data(
     return _get_key_spending_columns(), rows
 
 
+def _authorize_admin_budget_view(
+    caller: User,
+    target_project_names: set[str],
+) -> None:
+    """Raise HTTP 403 if caller is not authorized to view the target user's budget."""
+    if caller.is_admin:
+        return
+    caller_admin_projects = set(caller.admin_project_names or [])
+    if caller_admin_projects & target_project_names:
+        return
+    raise ExtendedHTTPException(
+        code=status.HTTP_403_FORBIDDEN,
+        message=ERROR_MSG_ACCESS_DENIED,
+        help=ERROR_MSG_ADMIN_HELP,
+    )
+
+
 def _create_response(data: dict, model_class) -> JSONResponse:
     """Helper to create JSON response with cache headers."""
     validated = model_class(**data)
@@ -2891,77 +2908,87 @@ async def get_user_spending(
     response_model=TabularResponse,
     response_model_by_alias=True,
     summary="Get user budget usage",
-    description="Retrieve budget usage for the authenticated user: personal budget and individual LiteLLM keys",
+    description=(
+        "Retrieve budget usage for a user: personal budget categories (platform, CLI, premium) "
+        "and per-project member allocations. "
+        "When user_id is omitted, returns data for the authenticated caller. "
+        "When user_id is provided, requires the caller to be a global admin, maintainer, "
+        "or project admin sharing at least one project with the target user."
+    ),
 )
 @handle_analytics_errors("budget usage analytics")
 async def get_user_budget_usage(
     user: User = Depends(authenticate),
+    user_id: str | None = Query(
+        default=None,
+        min_length=1,
+        description=(
+            "Optional target user ID. When provided, returns budget usage for that user. "
+            "Requires the caller to be a global admin, maintainer, or project admin "
+            "for at least one project the target user belongs to. "
+            "Only valid when ENABLE_USER_MANAGEMENT=True."
+        ),
+    ),
 ) -> TabularResponse:
-    """Get budget usage for the authenticated user.
-
-    Returns tabular data with:
-    - First row: User's overall personal budget (identified by email)
-    - Subsequent rows: Individual LiteLLM keys with their own budget limits (if any configured)
-
-    Only USER-scoped keys are included; PROJECT-scoped keys are excluded.
-    """
     from datetime import timezone
-    from codemie.enterprise.litellm.dependencies import (
-        get_customer_spending,
-        get_proxy_customer_spending,
-        get_premium_customer_spending,
-        get_user_keys_spending,
-        is_premium_models_enabled,
-    )
+
+    from codemie.clients.postgres import get_async_session
+    from codemie.service.analytics.handlers.budget_usage_service import budget_usage_service
     from codemie.service.analytics.response_formatter import ResponseFormatter
 
     start_time = datetime.now(timezone.utc)
-    logger.info(f"User {user.id} requesting budget usage analytics")
 
-    # Get all projects for virtual keys query
-    all_projects = _get_user_all_projects(user)
+    # --- Resolve subject (target user or caller) ---
+    if user_id is not None:
+        if not config.ENABLE_USER_MANAGEMENT:
+            raise ExtendedHTTPException(
+                code=status.HTTP_400_BAD_REQUEST,
+                message="user_id parameter requires ENABLE_USER_MANAGEMENT to be enabled.",
+                help="Remove the user_id parameter or enable user management.",
+            )
+        from codemie.clients.postgres import get_session
+        from codemie.repository.user_project_repository import user_project_repository
+        from codemie.service.user.user_management_service import UserManagementService
 
-    premium_enabled = is_premium_models_enabled()
+        def _lookup_target_user():
+            with get_session() as session:
+                db_user = UserManagementService.get_user_by_id(session, user_id)
+                project_names = (
+                    user_project_repository.get_project_names_for_user(session, user_id) if db_user is not None else []
+                )
+            return db_user, project_names
 
-    # Get user's personal budget spending and keys spending in parallel
+        target_user_db, target_project_names = await asyncio.to_thread(_lookup_target_user)
+        if target_user_db is None:
+            raise ExtendedHTTPException(
+                code=status.HTTP_404_NOT_FOUND,
+                message=f"User {user_id} not found.",
+                help="Verify the user_id and try again.",
+            )
+
+        _authorize_admin_budget_view(user, target_project_names)
+
+        subject_user_id = target_user_db.id
+        subject_label = target_user_db.email or target_user_db.username or target_user_db.id
+        logger.info(f"Admin budget view: caller={user.id} viewing target={user_id}")
+    else:
+        subject_user_id = user.id
+        subject_label = user.email or user.username or user.id
+        logger.info(f"User {user.id} requesting budget usage analytics")
+
     try:
-        gathered_results = await asyncio.gather(
-            asyncio.to_thread(get_customer_spending, user.username, True),
-            asyncio.to_thread(get_proxy_customer_spending, user.username, True),
-            asyncio.to_thread(get_premium_customer_spending, user.username, True)
-            if premium_enabled
-            else asyncio.sleep(0, result=None),
-            asyncio.to_thread(get_user_keys_spending, user.id, all_projects, True),
-        )
-        user_spending_data, proxy_spending_data, premium_spending_data, keys_spending_data = gathered_results
+        async with get_async_session() as session:
+            columns, rows = await budget_usage_service.get_budget_usage(session, subject_user_id, subject_label)
+    except ExtendedHTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Backend error fetching spending data for user {user.id}: {e}")
+        logger.error(f"DB error fetching budget data for subject={subject_user_id} requested_by={user.id}: {e}")
         raise ExtendedHTTPException(
             code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             message="Unable to retrieve spending information at this time.",
-            help="A temporary issue occurred. Please try again later",
+            help="A temporary issue occurred. Please try again later.",
         ) from e
 
-    # user_spending_data is a dict with: total_spend, max_budget, budget_reset_at
-    user_personal_spending = user_spending_data
-    user_proxy_spending = proxy_spending_data
-    user_premium_spending = premium_spending_data
-
-    # Extract only USER-scoped keys (filter out project keys)
-    # Each key now has project_name already enriched by get_user_keys_spending()
-    user_keys_spending = keys_spending_data.user_keys if keys_spending_data else []
-    user_budget_label = user.email or user.username or user.id
-
-    # Build tabular response structure
-    columns, rows = _build_key_spending_tabular_data(
-        user_budget_label,
-        user_personal_spending,
-        user_proxy_spending,
-        user_premium_spending,
-        user_keys_spending,
-    )
-
-    # Format using ResponseFormatter for consistency
     execution_time_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
 
     return ResponseFormatter.format_tabular_response(
