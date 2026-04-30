@@ -14,16 +14,27 @@
 
 import mimetypes
 import os
+from pathlib import Path
 from typing import Any
 
 from codemie_tools.base.file_object import MimeType
 
 from codemie.configs import logger, config
+from codemie.core.exceptions import ValidationException
 from .base_file_repository import FileRepository, FileObject, DirectoryObject
 
 mimetypes.add_type('application/x-yaml', '.yaml')
 mimetypes.add_type('application/x-yaml', '.yml')
 mimetypes.add_type('text/xml', '.xml')
+
+
+def _resolve_safe_path(base_dir: str, *parts: str) -> str:
+    """Resolve path and raise ValidationException if it escapes base_dir."""
+    base = Path(base_dir).resolve()
+    resolved = base.joinpath(*parts).resolve()
+    if not resolved.is_relative_to(base):
+        raise ValidationException("Invalid file path: access outside storage directory is not allowed")
+    return str(resolved)
 
 
 class FileSystemRepository(FileRepository):
@@ -32,12 +43,12 @@ class FileSystemRepository(FileRepository):
     """
 
     def write_file(self, name: str, mime_type: str, owner: str, content: Any = None) -> FileObject:
+        file_path = _resolve_safe_path(config.FILES_STORAGE_DIR, owner, name)
         directory = self.create_directory(owner=owner, name=name)
-        file_path = f"{directory.get_path()}/{name}"
         try:
             logger.debug(f"Writing file to {directory.get_path()}. FileName: {name}, MimeType: {mime_type}")
             mode = 'wb' if isinstance(content, bytes) else 'w'
-            with open(f"{file_path}", mode) as file:
+            with open(file_path, mode) as file:
                 file.write(content)
         except Exception as e:
             logger.error(f"Error writing file to {file_path}: {e}")
@@ -56,7 +67,7 @@ class FileSystemRepository(FileRepository):
         Returns:
             FileObject: An object with details of the read file.
         """
-        file_path = f"{config.FILES_STORAGE_DIR}/{owner}/{file_name}"
+        file_path = _resolve_safe_path(config.FILES_STORAGE_DIR, owner, file_name)
         logger.debug(f"Reading file from {file_path}. MimeType: {mime_type}")
         try:
             if not mime_type:

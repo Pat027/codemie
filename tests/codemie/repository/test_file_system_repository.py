@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import uuid
+from pathlib import Path
 from typing import Generator
 import pytest
 from unittest.mock import patch, mock_open, MagicMock
+from codemie.configs import config
 from codemie.repository.file_system_repository import FileSystemRepository
 
 
@@ -42,7 +43,8 @@ def test_read_file(mock_dirname: patch, mock_file: patch, setup_repository: Gene
     assert result.content == file_content.decode('utf-8')
     assert result.path == file_path
     assert result.name == file_name
-    mock_dirname.assert_called_once_with(f'./codemie-storage/{owner}/{file_name}')
+    expected_path = str(Path(config.FILES_STORAGE_DIR).resolve() / owner / file_name)
+    mock_dirname.assert_called_once_with(expected_path)
 
 
 @patch("builtins.open", new_callable=mock_open, read_data=b"%PDF-1.4...")
@@ -80,11 +82,10 @@ def test_write_file(mock_file: patch, setup_repository: Generator) -> None:
     repo, file_name, mime_type, owner, file_path, file_content = setup_repository
 
     result = repo.write_file(file_name, mime_type, owner, file_content)
-    expected_path = os.path.normpath(f'./codemie-storage/{owner}/{file_name}')
-    actual_path = os.path.normpath(result.path)
+    expected_path = str(Path(config.FILES_STORAGE_DIR).resolve() / owner / file_name)
 
     assert result.content == file_content
-    assert actual_path == expected_path
+    assert result.path == expected_path
     assert result.name == file_name
 
 
@@ -96,12 +97,11 @@ def test_write_csv_file(mock_file: patch, setup_repository: Generator) -> None:
     file_content = b"name,age\nAlice,30"
 
     result = repo.write_file(csv_file_name, mime_type, owner, file_content)
-    expected_path = os.path.normpath(f'./codemie-storage/{owner}/{csv_file_name}')
-    actual_path = os.path.normpath(result.path)
+    expected_path = str(Path(config.FILES_STORAGE_DIR).resolve() / owner / csv_file_name)
 
     assert result.content == file_content
     assert result.mime_type == "text/csv"
-    assert actual_path == expected_path
+    assert result.path == expected_path
     assert result.name == csv_file_name
 
 
@@ -113,10 +113,9 @@ def test_write_pdf_file(mock_file: patch, setup_repository: Generator) -> None:
     file_content = b"%PDF-1.4..."
 
     result = repo.write_file(pdf_file_name, mime_type, owner, file_content)
-    expected_path = os.path.normpath(f'./codemie-storage/{owner}/{pdf_file_name}')
-    actual_path = os.path.normpath(result.path)
+    expected_path = str(Path(config.FILES_STORAGE_DIR).resolve() / owner / pdf_file_name)
 
     assert result.content == file_content
     assert result.mime_type == "application/pdf"
-    assert actual_path == expected_path
+    assert result.path == expected_path
     assert result.name == pdf_file_name
