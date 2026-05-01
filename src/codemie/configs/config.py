@@ -591,6 +591,11 @@ class Config(BaseSettings):
         "*/10 * * * *"  # Cron schedule (UTC) for the reset-window tracker — every 10 minutes
     )
     LITELLM_BUDGET_RESET_WINDOW_MINUTES: int = 15  # Look-ahead window for soon-resetting project budgets
+    LITELLM_BUDGET_RESET_RECONCILIATION_ENABLED: bool = False  # Enables the daily reset reconciliation job
+    LITELLM_BUDGET_RESET_RECONCILIATION_SCHEDULE: str = (
+        "10 0 * * *"  # Cron schedule (UTC) for reset reconciliation — daily at 12:10 AM
+    )
+    LITELLM_BUDGET_RESET_RECONCILIATION_WINDOW_MINUTES: int = 10  # Allowed midnight UTC execution window
 
     model_config = SettingsConfigDict(env_file=find_dotenv(".env", raise_error_if_not_found=False), extra="ignore")
 
@@ -658,12 +663,46 @@ class Config(BaseSettings):
     ENABLE_FILE_MULTIPROCESSING: bool = False
     FILE_DATASOURCE_MULTIPROCESSING_MAX_WORKERS: int = 2
 
+    @staticmethod
+    def _parse_daily_utc_cron(cron_expression: str) -> tuple[int, int] | None:
+        parts = cron_expression.split()
+        if len(parts) != 5:
+            return None
+
+        minute, hour, day, month, day_of_week = parts
+        if day != "*" or month != "*" or day_of_week != "*":
+            return None
+        if not minute.isdigit() or not hour.isdigit():
+            return None
+
+        minute_value = int(minute)
+        hour_value = int(hour)
+        if not (0 <= minute_value <= 59 and 0 <= hour_value <= 23):
+            return None
+        return minute_value, hour_value
+
     @model_validator(mode="after")
-    def resolve_aws_regions(self) -> Self:
+    def finalize_settings(self) -> Self:
         if not self.AWS_S3_REGION and self.AWS_DEFAULT_REGION:
             self.AWS_S3_REGION = self.AWS_DEFAULT_REGION
         if not self.AWS_KMS_REGION and self.AWS_DEFAULT_REGION:
             self.AWS_KMS_REGION = self.AWS_DEFAULT_REGION
+
+        if self.LITELLM_BUDGET_RESET_RECONCILIATION_ENABLED:
+            parsed = self._parse_daily_utc_cron(self.LITELLM_BUDGET_RESET_RECONCILIATION_SCHEDULE)
+            if parsed is None:
+                raise ValueError(
+                    "LITELLM_BUDGET_RESET_RECONCILIATION_SCHEDULE must be a daily UTC cron "
+                    "with fixed hour and minute, for example '10 0 * * *'"
+                )
+
+            minute_value, hour_value = parsed
+            scheduled_minutes = hour_value * 60 + minute_value
+            if scheduled_minutes > self.LITELLM_BUDGET_RESET_RECONCILIATION_WINDOW_MINUTES:
+                raise ValueError(
+                    "LITELLM_BUDGET_RESET_RECONCILIATION_SCHEDULE must run between 00:00 UTC "
+                    "and 00:00 + LITELLM_BUDGET_RESET_RECONCILIATION_WINDOW_MINUTES"
+                )
         return self
 
     @property

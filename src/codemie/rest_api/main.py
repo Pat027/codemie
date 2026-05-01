@@ -358,7 +358,11 @@ def _setup_conversation_analysis_scheduler(app: FastAPI):
 
 def _setup_spend_tracking_scheduler(app: FastAPI):
     """Setup spend tracking collector scheduler if enabled."""
-    if not (config.LITELLM_SPEND_COLLECTOR_ENABLED or config.LITELLM_BUDGET_RESET_TRACKER_ENABLED):
+    if not (
+        config.LITELLM_SPEND_COLLECTOR_ENABLED
+        or config.LITELLM_BUDGET_RESET_TRACKER_ENABLED
+        or config.LITELLM_BUDGET_RESET_RECONCILIATION_ENABLED
+    ):
         return
 
     if not config.LLM_PROXY_ENABLED:

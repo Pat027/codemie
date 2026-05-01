@@ -160,6 +160,33 @@ class BudgetRepository:
         result = await session.execute(select(Budget))
         return {b.budget_id: b for b in result.scalars().all()}
 
+    async def list_overdue_reset_budgets(self, session: AsyncSession, now: datetime) -> list[Budget]:
+        """Return active budgets whose stored reset timestamp is overdue."""
+        stmt = (
+            select(Budget)
+            .where(Budget.deleted_at.is_(None))
+            .where(Budget.budget_reset_at.is_not(None))
+            .where(text("CAST(budget_reset_at AS timestamptz) < :now"))
+        )
+        result = await session.execute(stmt, {"now": now})
+        return list(result.scalars().all())
+
+    async def update_budget_reset_at(
+        self,
+        session: AsyncSession,
+        budget_id: str,
+        budget_reset_at: str,
+    ) -> Budget | None:
+        """Update only the stored provider reset timestamp for one budget."""
+        budget = await self.get_by_id(session, budget_id)
+        if budget is None:
+            return None
+        budget.budget_reset_at = budget_reset_at
+        session.add(budget)
+        await session.flush()
+        await session.refresh(budget)
+        return budget
+
     async def upsert_from_provider(
         self,
         session: AsyncSession,

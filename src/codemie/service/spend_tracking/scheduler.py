@@ -26,6 +26,7 @@ from codemie.service.conversation_analysis.leader_lock import LeaderLockContext
 # LeaderLockContext.ADVISORY_LOCK_ID (987654321) used by ConversationAnalysisService.
 _SPEND_TRACKING_LOCK_ID = 987654322
 _SPEND_TRACKING_RESET_WINDOW_LOCK_ID = 987654323
+_SPEND_TRACKING_RESET_RECONCILIATION_LOCK_ID = 987654324
 
 
 def _build_cron_trigger(cron_expression: str) -> CronTrigger | None:
@@ -73,6 +74,8 @@ class SpendTrackingScheduler:
             self._register_spend_collector_job()
         if config.LITELLM_BUDGET_RESET_TRACKER_ENABLED:
             self._register_budget_reset_tracker_job()
+        if config.LITELLM_BUDGET_RESET_RECONCILIATION_ENABLED:
+            self._register_budget_reset_reconciliation_job()
 
         if not self.scheduler.running:
             self.scheduler.start()
@@ -121,6 +124,28 @@ class SpendTrackingScheduler:
             f"{config.LITELLM_BUDGET_RESET_TRACKER_SCHEDULE!r} (UTC)"
         )
 
+    def _register_budget_reset_reconciliation_job(self) -> None:
+        """Register the daily budget reset reconciliation cron job."""
+        trigger = _build_cron_trigger(config.LITELLM_BUDGET_RESET_RECONCILIATION_SCHEDULE)
+        if trigger is None:
+            logger.error(
+                "Invalid LITELLM_BUDGET_RESET_RECONCILIATION_SCHEDULE cron expression: "
+                f"{config.LITELLM_BUDGET_RESET_RECONCILIATION_SCHEDULE!r}; skipping job registration"
+            )
+            return
+
+        self.scheduler.add_job(
+            self._run_budget_reset_reconciliation,
+            trigger=trigger,
+            id="litellm_budget_reset_reconciliation",
+            replace_existing=True,
+            name="LiteLLM Budget Reset Reconciliation",
+        )
+        logger.info(
+            "Registered LiteLLM budget reset reconciliation job with schedule: "
+            f"{config.LITELLM_BUDGET_RESET_RECONCILIATION_SCHEDULE!r} (UTC)"
+        )
+
     async def _run_spend_collector(self) -> None:
         """Wrapper for the spend collector job.
 
@@ -151,6 +176,27 @@ class SpendTrackingScheduler:
                 logger.info(f"LiteLLM budget reset tracker completed: {count} rows inserted")
             except Exception as e:
                 logger.error(f"LiteLLM budget reset tracker failed: {e}", exc_info=True)
+
+    async def _run_budget_reset_reconciliation(self) -> None:
+        """Wrapper for the daily budget reset reconciliation job."""
+        from codemie.service.budget.daily_reset_reconciliation_service import (
+            daily_budget_reset_reconciliation_service,
+        )
+
+        with LeaderLockContext(lock_id=_SPEND_TRACKING_RESET_RECONCILIATION_LOCK_ID) as lock:
+            if not lock.acquired:
+                logger.info("LiteLLM budget reset reconciliation: not the leader, skipping")
+                return
+
+            try:
+                summary = await daily_budget_reset_reconciliation_service.run()
+                logger.info(
+                    "LiteLLM budget reset reconciliation completed: "
+                    f"updated={summary.updated}, failed={summary.failed}, "
+                    f"mismatch_warnings={summary.mismatch_warnings}"
+                )
+            except Exception as e:
+                logger.error(f"LiteLLM budget reset reconciliation failed: {e}", exc_info=True)
 
     def stop(self) -> None:
         """Stop the scheduler gracefully."""

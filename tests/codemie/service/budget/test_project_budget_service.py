@@ -213,7 +213,7 @@ async def test_reset_project_budget_persists_provider_budget_id_for_each_member(
     assignment = SimpleNamespace(project_name="proj-a", budget_category="cli")
     allocation = SimpleNamespace(id="alloc-1", user_id="user-1")
     provider = SimpleNamespace(
-        update_project_budget=AsyncMock(
+        reset_project_budget_spend=AsyncMock(
             return_value=SimpleNamespace(
                 provider="litellm",
                 provider_budget_ref="key-alias-1",
@@ -249,5 +249,6 @@ async def test_reset_project_budget_persists_provider_budget_id_for_each_member(
     ):
         await service.reset_project_budget(session=session, budget_id="proj-budget-1", actor_id="actor-1")
 
+    provider.reset_project_budget_spend.assert_awaited_once()
     update_call = mock_update_metadata.await_args.kwargs
     assert update_call["provider_metadata"]["raw"]["provider_budget_id"] == "member-budget-1"

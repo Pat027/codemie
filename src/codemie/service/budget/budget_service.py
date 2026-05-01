@@ -35,7 +35,7 @@ from codemie.service.budget.budget_models import Budget
 from codemie.service.budget.provider_registry import get_active_provider
 
 if TYPE_CHECKING:
-    from codemie.service.budget.provider import BudgetEnforcementProvider, BudgetProviderState
+    from codemie.service.budget.provider import BudgetEnforcementProvider, BudgetProviderState, GlobalBudgetState
     from codemie.service.budget.provider import PersonalBudgetEntry
     from codemie.rest_api.routers.budget_router import (
         BudgetAssignmentBackfillResult,
@@ -94,6 +94,26 @@ class BudgetService:
         metadata = budget.provider_metadata or {}
         provider_ref = metadata.get("provider_budget_ref")
         return provider_ref if provider_ref else budget.budget_id
+
+    @staticmethod
+    def _predefined_budget_needs_update(
+        configured: PredefinedBudgetConfig,
+        provider_state: "GlobalBudgetState",
+    ) -> bool:
+        return any(
+            (
+                provider_state.soft_budget != configured.soft_budget,
+                provider_state.max_budget != configured.max_budget,
+                provider_state.budget_duration != configured.budget_duration,
+            )
+        )
+
+    @staticmethod
+    def _predefined_budget_duration_changed(
+        configured: PredefinedBudgetConfig,
+        provider_state: "GlobalBudgetState",
+    ) -> bool:
+        return provider_state.budget_duration != configured.budget_duration
 
     # ==================== Validation ====================
 
@@ -477,35 +497,50 @@ class BudgetService:
         self,
         provider: "BudgetEnforcementProvider",
         bc: PredefinedBudgetConfig,
-        provider_budget_ids: set[str],
-    ) -> "BudgetProviderState":
-        should_update = bc.budget_id in provider_budget_ids
-        logger.debug(
-            f"budget_event=predefined_budget_provider_decision component=budget_service "
-            f"budget_id={bc.budget_id!r} budget_category={bc.budget_category!r} "
-            f"action={'update' if should_update else 'create'}"
-        )
-        if should_update:
-            return await provider.update_global_budget(
+        provider_state: "GlobalBudgetState | None",
+    ) -> "BudgetProviderState | None":
+        if provider_state is None:
+            logger.debug(
+                f"budget_event=predefined_budget_provider_decision component=budget_service "
+                f"budget_id={bc.budget_id!r} budget_category={bc.budget_category!r} action=create"
+            )
+            return await provider.ensure_global_budget(
                 budget_id=bc.budget_id,
+                budget_category=BudgetCategory(bc.budget_category),
                 max_budget=bc.max_budget,
                 soft_budget=bc.soft_budget,
                 budget_duration=bc.budget_duration,
             )
-        return await provider.ensure_global_budget(
+
+        if not self._predefined_budget_needs_update(bc, provider_state):
+            logger.debug(
+                f"budget_event=predefined_budget_provider_decision component=budget_service "
+                f"budget_id={bc.budget_id!r} budget_category={bc.budget_category!r} action=skip"
+            )
+            return None
+
+        duration_changed = self._predefined_budget_duration_changed(bc, provider_state)
+        logger.debug(
+            f"budget_event=predefined_budget_provider_decision component=budget_service "
+            f"budget_id={bc.budget_id!r} budget_category={bc.budget_category!r} "
+            f"action=update duration_changed={duration_changed!r}"
+        )
+        return await provider.update_global_budget(
             budget_id=bc.budget_id,
-            budget_category=BudgetCategory(bc.budget_category),
             max_budget=bc.max_budget,
             soft_budget=bc.soft_budget,
             budget_duration=bc.budget_duration,
+            budget_reset_at=None if duration_changed else provider_state.budget_reset_at,
         )
 
     async def _persist_predefined_budget_provider_state(
         self,
         session: AsyncSession,
         bc: PredefinedBudgetConfig,
-        state: "BudgetProviderState",
+        state: "BudgetProviderState | None",
     ) -> None:
+        if state is None:
+            return
         if state.sync_status == "failed":
             logger.error(
                 f"budget_event=predefined_budget_sync_failed component=budget_service "
@@ -516,7 +551,10 @@ class BudgetService:
         await budget_repository.update(
             session,
             bc.budget_id,
-            {"provider_metadata": self._provider_metadata(state.provider_budget_ref or bc.budget_id)},
+            {
+                "provider_metadata": self._provider_metadata(state.provider_budget_ref or bc.budget_id),
+                "budget_reset_at": state.budget_reset_at,
+            },
         )
 
     async def ensure_predefined_budgets(self, session: AsyncSession) -> None:
@@ -540,23 +578,23 @@ class BudgetService:
 
         provider = get_active_provider()
         existing_states = await provider.list_global_budget_states()
-        provider_budget_ids: set[str] = {s.budget_id for s in (existing_states or [])}
+        provider_budget_states = {state.budget_id: state for state in (existing_states or [])}
         logger.debug(
             f"budget_event=provider_global_budget_list_completed component=budget_service "
-            f"provider={provider.provider_name!r} provider_budget_ids={sorted(provider_budget_ids)!r} "
-            f"provider_budget_count={len(provider_budget_ids)}"
+            f"provider={provider.provider_name!r} provider_budget_ids={sorted(provider_budget_states)!r} "
+            f"provider_budget_count={len(provider_budget_states)}"
         )
 
         for bc in budget_config.predefined_budgets:
             await self._upsert_predefined_budget_db(session, bc)
-            state = await self._sync_predefined_budget_provider(provider, bc, provider_budget_ids)
+            state = await self._sync_predefined_budget_provider(provider, bc, provider_budget_states.get(bc.budget_id))
             await self._persist_predefined_budget_provider_state(session, bc, state)
             await session.commit()
             logger.info(
                 f"budget_event=predefined_budget_synced component=budget_service budget_id={bc.budget_id!r} "
                 f"budget_category={bc.budget_category!r} max_budget={bc.max_budget!r} "
                 f"soft_budget={bc.soft_budget!r} budget_duration={bc.budget_duration!r} "
-                f"sync_status={state.sync_status!r}"
+                f"sync_status={(state.sync_status if state is not None else 'skipped')!r}"
             )
 
         logger.info(

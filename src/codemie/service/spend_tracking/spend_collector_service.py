@@ -139,15 +139,22 @@ class LiteLLMSpendCollectorService:
                     snapshot_at=target_snapshot_at,
                     budget=budget,
                 )
+                effective_cumulative = self._quantize_spend(
+                    snapshot.cumulative_spend if snapshot.cumulative_spend is not None else cumulative_spend
+                )
+                if daily_spend == Decimal("0"):
+                    logger.debug(
+                        f"Member '{snapshot.user_id}' project '{snapshot.project_name}' "
+                        f"budget_id={snapshot.budget_id!r} has zero delta; skipping snapshot"
+                    )
+                    continue
                 rows_to_insert.append(
                     ProjectSpendTracking(
                         id=uuid4(),
                         project_name=snapshot.project_name,
                         spend_date=target_snapshot_at,
                         daily_spend=daily_spend,
-                        cumulative_spend=(
-                            snapshot.cumulative_spend if snapshot.cumulative_spend is not None else cumulative_spend
-                        ),
+                        cumulative_spend=effective_cumulative,
                         budget_period_spend=self._quantize_spend(snapshot.spend),
                         budget_id=snapshot.budget_id,
                         budget_category=snapshot.budget_category.value,
@@ -188,15 +195,22 @@ class LiteLLMSpendCollectorService:
                     snapshot_at=target_snapshot_at,
                     budget=budget,
                 )
+                effective_cumulative = self._quantize_spend(
+                    snapshot.cumulative_spend if snapshot.cumulative_spend is not None else cumulative_spend
+                )
+                if daily_spend == Decimal("0"):
+                    logger.debug(
+                        f"Project '{snapshot.project_name}' budget_id={snapshot.budget_id!r} "
+                        f"has zero delta; skipping snapshot"
+                    )
+                    continue
                 project_rows.append(
                     ProjectSpendTracking(
                         id=uuid4(),
                         project_name=snapshot.project_name,
                         spend_date=target_snapshot_at,
                         daily_spend=daily_spend,
-                        cumulative_spend=(
-                            snapshot.cumulative_spend if snapshot.cumulative_spend is not None else cumulative_spend
-                        ),
+                        cumulative_spend=effective_cumulative,
                         budget_period_spend=self._quantize_spend(snapshot.spend),
                         budget_id=snapshot.budget_id,
                         budget_category=snapshot.budget_category.value,
@@ -221,15 +235,22 @@ class LiteLLMSpendCollectorService:
                     snapshot_at=target_snapshot_at,
                     budget=budget,
                 )
+                effective_cumulative = self._quantize_spend(
+                    snapshot.cumulative_spend if snapshot.cumulative_spend is not None else cumulative_spend
+                )
+                if daily_spend == Decimal("0"):
+                    logger.debug(
+                        f"Member '{snapshot.user_id}' project '{snapshot.project_name}' "
+                        f"budget_id={snapshot.budget_id!r} has zero delta; skipping snapshot"
+                    )
+                    continue
                 member_rows.append(
                     ProjectSpendTracking(
                         id=uuid4(),
                         project_name=snapshot.project_name,
                         spend_date=target_snapshot_at,
                         daily_spend=daily_spend,
-                        cumulative_spend=(
-                            snapshot.cumulative_spend if snapshot.cumulative_spend is not None else cumulative_spend
-                        ),
+                        cumulative_spend=effective_cumulative,
                         budget_period_spend=self._quantize_spend(snapshot.spend),
                         budget_id=snapshot.budget_id,
                         budget_category=snapshot.budget_category.value,

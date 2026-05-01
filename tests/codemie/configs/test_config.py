@@ -1,4 +1,4 @@
-# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
+# Copyright 2026 EPAM Systems, Inc. ("EPAM")
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,6 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+import pytest
+from pydantic import ValidationError
 
 from codemie.configs.config import Config
 
@@ -25,3 +28,20 @@ def test_is_local_prod():
     config = Config()
     config.ENV = "prod"
     assert config.is_local is False
+
+
+def test_budget_reset_reconciliation_schedule_validation_is_skipped_when_job_disabled():
+    config = Config(
+        LITELLM_BUDGET_RESET_RECONCILIATION_ENABLED=False,
+        LITELLM_BUDGET_RESET_RECONCILIATION_SCHEDULE="not a valid cron",
+    )
+
+    assert config.LITELLM_BUDGET_RESET_RECONCILIATION_SCHEDULE == "not a valid cron"
+
+
+def test_budget_reset_reconciliation_schedule_validation_runs_when_job_enabled():
+    with pytest.raises(ValidationError):
+        Config(
+            LITELLM_BUDGET_RESET_RECONCILIATION_ENABLED=True,
+            LITELLM_BUDGET_RESET_RECONCILIATION_SCHEDULE="not a valid cron",
+        )

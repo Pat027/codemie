@@ -27,7 +27,7 @@ from codemie.service.budget.provider import BudgetProviderMemberState, BudgetPro
 
 
 @pytest.mark.asyncio
-async def test_reset_project_budget_uses_ensure_when_provider_budget_ref_missing():
+async def test_reset_project_budget_uses_provider_reset_when_provider_budget_ref_missing():
     service = ProjectBudgetService()
     session = AsyncMock()
     budget = SimpleNamespace(
@@ -44,7 +44,7 @@ async def test_reset_project_budget_uses_ensure_when_provider_budget_ref_missing
     assignment = SimpleNamespace(project_name="proj-a", budget_category="cli")
     allocation = SimpleNamespace(id="alloc-1", user_id="user-1")
     provider = SimpleNamespace(
-        ensure_project_budget=AsyncMock(
+        reset_project_budget_spend=AsyncMock(
             return_value=BudgetProviderState(
                 provider="litellm",
                 provider_budget_ref="provider-budget-1",
@@ -53,7 +53,6 @@ async def test_reset_project_budget_uses_ensure_when_provider_budget_ref_missing
                 metadata={"models": ["gpt-4.1"]},
             )
         ),
-        update_project_budget=AsyncMock(),
         sync_member_allocation=AsyncMock(
             return_value=BudgetProviderMemberState(
                 provider="litellm",
@@ -81,9 +80,11 @@ async def test_reset_project_budget_uses_ensure_when_provider_budget_ref_missing
     ):
         await service.reset_project_budget(session=session, budget_id="proj-budget-1", actor_id="actor-1")
 
-    provider.ensure_project_budget.assert_awaited_once()
-    provider.update_project_budget.assert_not_awaited()
-    assert provider.ensure_project_budget.await_args.kwargs["models"] == ["gpt-4.1"]
+    provider.reset_project_budget_spend.assert_awaited_once()
+    reset_kwargs = provider.reset_project_budget_spend.await_args.kwargs
+    assert reset_kwargs["budget_state"].provider_budget_ref is None
+    assert reset_kwargs["models"] == ["gpt-4.1"]
+    assert reset_kwargs["changed_by"] == "actor-1"
     assert mock_update_metadata.await_args.kwargs["provider_metadata"]["raw"]["provider_budget_id"] == "member-budget-1"
 
 

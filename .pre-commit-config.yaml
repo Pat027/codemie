@@ -3,7 +3,7 @@ repos:
     hooks:
       - id: codemie-pre-commit
         name: Codemie pre-commit (ruff fast fix + tests + sonar)
-        entry: bash -lc 'set -o pipefail; bash scripts/git-hooks/pre_commit.sh 2>&1 | tee /dev/tty'
+        entry: bash -lc 'bash scripts/git-hooks/pre_commit.sh 2>&1 | tee /dev/tty 2>/dev/null; exit ${PIPESTATUS[0]}'
         language: system
         pass_filenames: false
         stages: [commit]

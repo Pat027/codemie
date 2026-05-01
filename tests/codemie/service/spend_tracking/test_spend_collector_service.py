@@ -30,7 +30,7 @@ from codemie.repository.application_repository import ApplicationRepository
 from codemie.repository.project_budget_repository import ResetWindowMemberAllocationRow
 from codemie.repository.project_spend_tracking_repository import ProjectSpendTrackingRepository
 from codemie.service.budget.budget_enums import BudgetCategory
-from codemie.service.budget.provider import MemberBudgetSpendSnapshot, PersonalSpendEntry
+from codemie.service.budget.provider import MemberBudgetSpendSnapshot, PersonalSpendEntry, ProjectBudgetSpendSnapshot
 from codemie.service.spend_tracking.spend_collector_service import (
     InvalidSpendSnapshotError,
     LiteLLMSpendCollectorService,
@@ -318,6 +318,27 @@ def _make_personal_entry(
         budget_id=budget_id,
         budget_category=budget_category,
         spend=spend,
+    )
+
+
+def _make_budget_prev_row(
+    project_name: str,
+    budget_id: str,
+    spend: Decimal,
+    spend_subject_type: str,
+    user_id: str | None = None,
+) -> ProjectSpendTracking:
+    """Build a ProjectSpendTracking prev-row for budget/member_budget zero-delta tests."""
+    return ProjectSpendTracking(
+        id=uuid4(),
+        project_name=project_name,
+        budget_id=budget_id,
+        user_id=user_id,
+        spend_subject_type=spend_subject_type,
+        spend_date=datetime(2026, 4, 22, 10, 0, tzinfo=timezone.utc),
+        daily_spend=spend,
+        cumulative_spend=spend,
+        budget_period_spend=spend,
     )
 
 
@@ -699,6 +720,162 @@ class TestCollectMemberBudgetResetWindow:
         assert rows[0].project_name == "proj-a"
         assert rows[0].user_id == "user-1"
 
+    @pytest.mark.asyncio
+    async def test_zero_delta_reset_window_member_row_not_persisted(
+        self,
+        mock_session,
+        async_session_ctx,
+    ):
+        """Zero daily_spend in reset-window path produces no row."""
+        service = _make_service()
+        allocation = ResetWindowMemberAllocationRow(
+            allocation_id="alloc-1",
+            project_name="proj-a",
+            budget_id="budget-1",
+            budget_category="cli",
+            user_id="user-1",
+            provider_metadata={"provider_member_ref": "member-ref-1"},
+            budget_reset_at="2026-04-23T10:10:00Z",
+        )
+        prev = _make_budget_prev_row("proj-a", "budget-1", Decimal("2.50"), "member_budget", user_id="user-1")
+        snapshot = MemberBudgetSpendSnapshot(
+            project_name="proj-a",
+            budget_category=BudgetCategory.CLI,
+            budget_id="budget-1",
+            user_id="user-1",
+            spend=Decimal("2.50"),  # same as prev → delta == 0
+            provider_subject_id="member-ref-1",
+        )
+
+        service._tracking_repository.get_latest_before_by_member_budget_ids = AsyncMock(
+            return_value={("proj-a", "budget-1", "user-1"): prev}
+        )
+        service._tracking_repository.insert_member_budget_entries = AsyncMock()
+
+        with (
+            patch(
+                "codemie.service.spend_tracking.spend_collector_service.get_async_session",
+                side_effect=lambda: async_session_ctx(),
+            ),
+            patch("codemie.service.spend_tracking.spend_collector_service.budget_repository") as mock_budget_repo,
+            patch(
+                "codemie.service.spend_tracking.spend_collector_service.project_member_budget_assignment_repository"
+            ) as mock_alloc_repo,
+            patch("codemie.service.spend_tracking.spend_collector_service.get_active_provider") as mock_provider,
+        ):
+            mock_alloc_repo.get_allocations_resetting_within_window = AsyncMock(return_value=[allocation])
+            mock_budget_repo.get_all_keyed_by_id = AsyncMock(return_value={"budget-1": _make_budget("budget-1", "cli")})
+            mock_provider.return_value.collect_member_budget_spend_for_refs = AsyncMock(return_value=[snapshot])
+
+            count = await service.collect_member_budget_reset_window(
+                snapshot_at=datetime(2026, 4, 23, 10, 0, tzinfo=timezone.utc)
+            )
+
+        assert count == 0
+        service._tracking_repository.insert_member_budget_entries.assert_called_once_with(mock_session, [])
+
+
+# ---------------------------------------------------------------------------
+# TestCollectProviderProjectBudgets
+# ---------------------------------------------------------------------------
+
+
+class TestCollectProviderProjectBudgets:
+    """Tests for _collect_provider_project_budgets: project_budget and member_budget paths."""
+
+    @pytest.fixture(autouse=True)
+    def mock_budget_repo(self):
+        with patch("codemie.service.spend_tracking.spend_collector_service.budget_repository") as mock_repo:
+            mock_repo.get_all_keyed_by_id = AsyncMock(return_value={})
+            yield mock_repo
+
+    @pytest.fixture(autouse=True)
+    def mock_provider(self):
+        with patch("codemie.service.spend_tracking.spend_collector_service.get_active_provider") as mock:
+            mock.return_value.collect_project_budget_spend = AsyncMock(return_value=[])
+            mock.return_value.collect_member_budget_spend = AsyncMock(return_value=[])
+            yield mock
+
+    @pytest.mark.asyncio
+    async def test_zero_delta_project_budget_row_not_persisted(
+        self,
+        mock_session,
+        async_session_ctx,
+        mock_budget_repo,
+        mock_provider,
+    ):
+        """Zero daily_spend in project_budget path produces no row."""
+        prev = _make_budget_prev_row("proj-x", "budget-1", Decimal("5.00"), "project_budget")
+        snapshot = ProjectBudgetSpendSnapshot(
+            project_name="proj-x",
+            budget_category=BudgetCategory.CLI,
+            budget_id="budget-1",
+            spend=Decimal("5.00"),  # same as prev → delta == 0
+        )
+
+        service = _make_service()
+        service._tracking_repository.get_latest_before_by_project_budget_ids = AsyncMock(
+            return_value={("proj-x", "budget-1"): prev}
+        )
+        service._tracking_repository.get_latest_before_by_member_budget_ids = AsyncMock(return_value={})
+        service._tracking_repository.insert_project_budget_entries = AsyncMock()
+        service._tracking_repository.insert_member_budget_entries = AsyncMock()
+
+        mock_budget_repo.get_all_keyed_by_id = AsyncMock(return_value={"budget-1": _make_budget("budget-1", "cli")})
+        mock_provider.return_value.collect_project_budget_spend = AsyncMock(return_value=[snapshot])
+
+        with patch(
+            "codemie.service.spend_tracking.spend_collector_service.get_async_session",
+            side_effect=lambda: async_session_ctx(),
+        ):
+            count = await service._collect_provider_project_budgets(
+                target_snapshot_at=datetime(2026, 4, 23, 10, 0, tzinfo=timezone.utc)
+            )
+
+        assert count == 0
+        service._tracking_repository.insert_project_budget_entries.assert_called_once_with(mock_session, [])
+
+    @pytest.mark.asyncio
+    async def test_zero_delta_member_budget_row_not_persisted(
+        self,
+        mock_session,
+        async_session_ctx,
+        mock_budget_repo,
+        mock_provider,
+    ):
+        """Zero daily_spend in member_budget path produces no row."""
+        prev = _make_budget_prev_row("proj-y", "budget-2", Decimal("3.00"), "member_budget", user_id="user-42")
+        snapshot = MemberBudgetSpendSnapshot(
+            project_name="proj-y",
+            budget_category=BudgetCategory.CLI,
+            budget_id="budget-2",
+            user_id="user-42",
+            spend=Decimal("3.00"),  # same as prev → delta == 0
+            provider_subject_id="subj-42",
+        )
+
+        service = _make_service()
+        service._tracking_repository.get_latest_before_by_project_budget_ids = AsyncMock(return_value={})
+        service._tracking_repository.get_latest_before_by_member_budget_ids = AsyncMock(
+            return_value={("proj-y", "budget-2", "user-42"): prev}
+        )
+        service._tracking_repository.insert_project_budget_entries = AsyncMock()
+        service._tracking_repository.insert_member_budget_entries = AsyncMock()
+
+        mock_budget_repo.get_all_keyed_by_id = AsyncMock(return_value={"budget-2": _make_budget("budget-2", "cli")})
+        mock_provider.return_value.collect_member_budget_spend = AsyncMock(return_value=[snapshot])
+
+        with patch(
+            "codemie.service.spend_tracking.spend_collector_service.get_async_session",
+            side_effect=lambda: async_session_ctx(),
+        ):
+            count = await service._collect_provider_project_budgets(
+                target_snapshot_at=datetime(2026, 4, 23, 10, 0, tzinfo=timezone.utc)
+            )
+
+        assert count == 0
+        service._tracking_repository.insert_member_budget_entries.assert_called_once_with(mock_session, [])
+
 
 # ---------------------------------------------------------------------------
 # TestSchedulerJobRegistration
@@ -718,6 +895,8 @@ class TestSchedulerJobRegistration:
         with patch("codemie.service.spend_tracking.scheduler.config") as mock_config:
             mock_config.LITELLM_SPEND_COLLECTOR_ENABLED = False
             mock_config.LITELLM_SPEND_COLLECTOR_SCHEDULE = "30 0 * * *"
+            mock_config.LITELLM_BUDGET_RESET_RECONCILIATION_ENABLED = False
+            mock_config.LITELLM_BUDGET_RESET_RECONCILIATION_SCHEDULE = "10 0 * * *"
 
             scheduler = SpendTrackingScheduler(scheduler=mock_scheduler)
             scheduler.start()
@@ -739,6 +918,8 @@ class TestSchedulerJobRegistration:
         ):
             mock_config.LITELLM_SPEND_COLLECTOR_ENABLED = True
             mock_config.LITELLM_SPEND_COLLECTOR_SCHEDULE = "30 0 * * *"
+            mock_config.LITELLM_BUDGET_RESET_RECONCILIATION_ENABLED = False
+            mock_config.LITELLM_BUDGET_RESET_RECONCILIATION_SCHEDULE = "10 0 * * *"
 
             scheduler = SpendTrackingScheduler(scheduler=mock_scheduler)
             scheduler.start()
@@ -765,6 +946,8 @@ class TestSchedulerJobRegistration:
             mock_config.LITELLM_SPEND_COLLECTOR_ENABLED = True
             mock_config.LITELLM_SPEND_COLLECTOR_SCHEDULE = "not a valid cron"
             mock_config.LITELLM_BUDGET_RESET_TRACKER_ENABLED = False
+            mock_config.LITELLM_BUDGET_RESET_RECONCILIATION_ENABLED = False
+            mock_config.LITELLM_BUDGET_RESET_RECONCILIATION_SCHEDULE = "10 0 * * *"
 
             scheduler = SpendTrackingScheduler(scheduler=mock_scheduler)
             scheduler.start()
@@ -789,6 +972,8 @@ class TestSchedulerJobRegistration:
             mock_config.LITELLM_SPEND_COLLECTOR_SCHEDULE = "0 23 * * *"
             mock_config.LITELLM_BUDGET_RESET_TRACKER_ENABLED = True
             mock_config.LITELLM_BUDGET_RESET_TRACKER_SCHEDULE = "*/10 * * * *"
+            mock_config.LITELLM_BUDGET_RESET_RECONCILIATION_ENABLED = False
+            mock_config.LITELLM_BUDGET_RESET_RECONCILIATION_SCHEDULE = "10 0 * * *"
 
             scheduler = SpendTrackingScheduler(scheduler=mock_scheduler)
             scheduler.start()
@@ -815,6 +1000,8 @@ class TestSchedulerJobRegistration:
             mock_config.LITELLM_SPEND_COLLECTOR_SCHEDULE = "0 23 * * *"
             mock_config.LITELLM_BUDGET_RESET_TRACKER_ENABLED = True
             mock_config.LITELLM_BUDGET_RESET_TRACKER_SCHEDULE = "bad cron"
+            mock_config.LITELLM_BUDGET_RESET_RECONCILIATION_ENABLED = False
+            mock_config.LITELLM_BUDGET_RESET_RECONCILIATION_SCHEDULE = "10 0 * * *"
 
             scheduler = SpendTrackingScheduler(scheduler=mock_scheduler)
             scheduler.start()

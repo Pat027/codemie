@@ -17,7 +17,7 @@ set -euo pipefail
 
 # Pre-commit hook for Codemie:
 # 1) Ruff fast formatting/fixes; if any changes applied -> show files and exit 1
-# 2) If no changes applied -> run ruff check + pytest
+# 2) If no changes applied -> run ruff check + license check + pytest
 # 3) If tests pass -> run the shared local SonarQube check
 
 # Friendly failure message for any unexpected error
@@ -57,8 +57,8 @@ if [[ -n "$changed_files" ]]; then
   exit 1
 fi
 
-# --- 2. Full verification (Ruff + Pytest) ---
-echo "[pre-commit] No formatting changes detected. Running ruff checks and tests..."
+# --- 2. Full verification (Ruff + license headers + Pytest) ---
+echo "[pre-commit] No formatting changes detected. Running ruff checks, license checks, and tests..."
 
 # 2.a Ruff check (non-mutating)
 if ! poetry run ruff check; then
@@ -66,7 +66,15 @@ if ! poetry run ruff check; then
   exit 1
 fi
 
-# 2.b Pytest with compact summary, print it clearly
+# 2.b Apache 2.0 license header check
+echo "[pre-commit] Checking Apache 2.0 license headers..."
+if ! poetry run python scripts/license_headers/check_license_headers.py --check --quiet; then
+  echo "[pre-commit] License header check failed."
+  echo "[pre-commit] Tip: run 'make verify' to fix or validate license headers locally."
+  exit 1
+fi
+
+# 2.c Pytest with compact summary, print it clearly
 pytest_log=$(mktemp)
 # Ensure temporary pytest log is cleaned up on script exit
 trap 'rm -f "$pytest_log"' EXIT

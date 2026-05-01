@@ -86,8 +86,32 @@ def test_update_budget_in_litellm_logs_error_when_provider_returns_none():
         max_budget=25.0,
         soft_budget=20.0,
         budget_duration="30d",
+        budget_reset_at=None,
     )
     mock_logger.error.assert_called_once()
+
+
+def test_update_budget_in_litellm_passes_budget_reset_at_when_provided():
+    service = MagicMock()
+    service.update_managed_budget.return_value = SimpleNamespace(budget_id="budget-1")
+
+    with patch("codemie.enterprise.litellm.budget_helpers.get_litellm_service_or_none", return_value=service):
+        result = budget_helpers.update_budget_in_litellm(
+            budget_id="budget-1",
+            max_budget=25.0,
+            soft_budget=20.0,
+            budget_duration="30d",
+            budget_reset_at="2026-05-01T00:00:00Z",
+        )
+
+    assert result is not None
+    service.update_managed_budget.assert_called_once_with(
+        budget_id="budget-1",
+        max_budget=25.0,
+        soft_budget=20.0,
+        budget_duration="30d",
+        budget_reset_at="2026-05-01T00:00:00Z",
+    )
 
 
 def test_get_budget_reset_at_returns_matching_budget_reset_at():

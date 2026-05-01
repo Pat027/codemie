@@ -67,6 +67,7 @@ def update_budget_in_litellm(
     max_budget: float,
     soft_budget: float,
     budget_duration: str,
+    budget_reset_at: str | None = None,
 ) -> BudgetTable | None:
     """Update a proxy budget via LiteLLM POST /budget/update.
 
@@ -75,7 +76,8 @@ def update_budget_in_litellm(
     logger.debug(
         f"budget_event=provider_global_budget_update_started component=litellm_budget_helpers "
         f"provider=litellm budget_id={budget_id!r} max_budget={max_budget!r} "
-        f"soft_budget={soft_budget!r} budget_duration={budget_duration!r}"
+        f"soft_budget={soft_budget!r} budget_duration={budget_duration!r} "
+        f"budget_reset_at={budget_reset_at!r}"
     )
     service = get_litellm_service_or_none()
     if service is None:
@@ -90,6 +92,7 @@ def update_budget_in_litellm(
         max_budget=max_budget,
         soft_budget=soft_budget,
         budget_duration=budget_duration,
+        budget_reset_at=budget_reset_at,
     )
     if result is None:
         logger.error(

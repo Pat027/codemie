@@ -27,6 +27,9 @@ from typing import TYPE_CHECKING, Any
 from codemie.service.budget.budget_enums import BudgetCategory, SyncStatus
 from codemie.service.budget.provider import (
     BudgetEnforcementProvider,
+    BudgetResetReconciliationItem,
+    BudgetResetReconciliationResult,
+    BudgetResetReconciliationTarget,
     BudgetProviderMemberState,
     BudgetProviderState,
     BudgetRuntimeContext,
@@ -105,8 +108,9 @@ class _NoopBudgetEnforcementProvider:
         soft_budget: float,
         max_budget: float,
         budget_duration: str,
+        budget_reset_at: str | None = None,
     ) -> BudgetProviderState:
-        _ = (budget_id, soft_budget, max_budget, budget_duration)
+        _ = (budget_id, soft_budget, max_budget, budget_duration, budget_reset_at)
         return BudgetProviderState(provider=_NOOP_PROVIDER_NAME, sync_status=SyncStatus.NOOP)
 
     async def delete_global_budget(self, *, budget_id: str) -> None:
@@ -202,6 +206,19 @@ class _NoopBudgetEnforcementProvider:
     ) -> None:
         return self._noop_result(budget_state, project_name)
 
+    async def reset_project_budget_spend(
+        self,
+        *,
+        budget_state: BudgetProviderState,
+        project_name: str,
+        budget_category: BudgetCategory,
+        budget_id: str,
+        changed_by: str | None = None,
+        models: list[str] | None = None,
+    ) -> BudgetProviderState:
+        _ = (budget_state, project_name, budget_category, budget_id, changed_by, models)
+        return BudgetProviderState(provider=_NOOP_PROVIDER_NAME, sync_status=SyncStatus.NOOP)
+
     async def sync_member_allocation(
         self,
         *,
@@ -244,6 +261,24 @@ class _NoopBudgetEnforcementProvider:
     ) -> list[MemberBudgetSpendSnapshot]:
         _ = provider_member_refs
         return []
+
+    async def reconcile_budget_reset_timestamps(
+        self,
+        *,
+        targets: list[BudgetResetReconciliationTarget],
+    ) -> BudgetResetReconciliationResult:
+        return BudgetResetReconciliationResult(
+            items=[
+                BudgetResetReconciliationItem(
+                    entity_type=target.entity_type,
+                    budget_id=target.budget_id,
+                    provider_budget_ref=target.provider_budget_ref,
+                    provider_member_ref=target.provider_member_ref,
+                    error="budget enforcement provider unavailable",
+                )
+                for target in targets
+            ]
+        )
 
     async def collect_personal_spend(self) -> list[PersonalSpendEntry]:
         return []

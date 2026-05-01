@@ -1144,32 +1144,16 @@ class ProjectBudgetService:
             budget_reset_at=budget.budget_reset_at,
             sync_status=provider_meta.get("sync_status", SyncStatus.OK),
         )
-        # Preserve the models allow-list stored in provider_metadata.raw on reset.
         existing_raw = self._metadata_value(provider_meta, "raw")
         existing_models = existing_raw.get("models") if isinstance(existing_raw, dict) else None
-        # If no provider_budget_ref exists (budget was never synced or was seeded directly),
-        # fall back to ensure_project_budget which creates the LiteLLM key from scratch.
-        if budget_state.provider_budget_ref is None:
-            state = await provider.ensure_project_budget(
-                project_name=assignment.project_name,
-                budget_category=BudgetCategory(budget.budget_category),
-                budget_id=budget_id,
-                soft_budget=Decimal(str(budget.soft_budget)),
-                max_budget=Decimal(str(budget.max_budget)),
-                budget_duration=budget.budget_duration,
-                models=existing_models or None,
-            )
-        else:
-            state = await provider.update_project_budget(
-                budget_state=budget_state,
-                project_name=assignment.project_name,
-                budget_category=BudgetCategory(budget.budget_category),
-                budget_id=budget_id,
-                soft_budget=Decimal(str(budget.soft_budget)),
-                max_budget=Decimal(str(budget.max_budget)),
-                budget_duration=budget.budget_duration,
-                models=existing_models or None,
-            )
+        state = await provider.reset_project_budget_spend(
+            budget_state=budget_state,
+            project_name=assignment.project_name,
+            budget_category=BudgetCategory(budget.budget_category),
+            budget_id=budget_id,
+            changed_by=actor_id,
+            models=existing_models or None,
+        )
         budget = await budget_repository.update(
             session,
             budget_id,

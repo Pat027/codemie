@@ -69,6 +69,16 @@ class ResetWindowMemberAllocationRow:
     budget_reset_at: str
 
 
+@dataclass
+class ParentMemberResetPairRow:
+    """Parent/member reset timestamp pair used for drift detection."""
+
+    allocation_id: str
+    budget_id: str
+    parent_budget_reset_at: str | None
+    member_budget_reset_at: str | None
+
+
 class ProjectBudgetAssignmentRepository:
     """Async repository for project_budget_assignments."""
 
@@ -426,6 +436,55 @@ class ProjectMemberBudgetAssignmentRepository:
         result = await session.execute(stmt)
         return list(result.scalars().all())
 
+    async def list_overdue_reset_member_allocations(
+        self,
+        session: AsyncSession,
+        now: datetime,
+    ) -> list[ProjectMemberBudgetAssignment]:
+        """Return active member allocations whose own reset timestamp is overdue."""
+        stmt = (
+            select(ProjectMemberBudgetAssignment)
+            .where(ProjectMemberBudgetAssignment.deleted_at.is_(None))
+            .where(ProjectMemberBudgetAssignment.budget_reset_at.is_not(None))
+            .where(text("CAST(project_member_budget_assignments.budget_reset_at AS timestamptz) < :now"))
+        )
+        result = await session.execute(stmt, {"now": now})
+        return list(result.scalars().all())
+
+    async def list_parent_member_reset_pairs(
+        self,
+        session: AsyncSession,
+        budget_ids: list[str],
+    ) -> list[ParentMemberResetPairRow]:
+        """Return active parent/member reset timestamp pairs for the given project budgets."""
+        if not budget_ids:
+            return []
+
+        stmt = text(
+            """
+            SELECT pmba.id AS allocation_id,
+                   pmba.project_budget_id AS budget_id,
+                   b.budget_reset_at AS parent_budget_reset_at,
+                   pmba.budget_reset_at AS member_budget_reset_at
+            FROM project_member_budget_assignments pmba
+            JOIN budgets b
+              ON b.budget_id = pmba.project_budget_id
+            WHERE pmba.pmba_deleted_at IS NULL
+              AND b.deleted_at IS NULL
+              AND pmba.project_budget_id = ANY(:budget_ids)
+            """
+        )
+        result = await session.execute(stmt, {"budget_ids": budget_ids})
+        return [
+            ParentMemberResetPairRow(
+                allocation_id=row["allocation_id"],
+                budget_id=row["budget_id"],
+                parent_budget_reset_at=row["parent_budget_reset_at"],
+                member_budget_reset_at=row["member_budget_reset_at"],
+            )
+            for row in result.mappings().all()
+        ]
+
     async def get_allocations_resetting_within_window(
         self,
         session: AsyncSession,
@@ -488,6 +547,24 @@ class ProjectMemberBudgetAssignmentRepository:
                 row.budget_reset_at = budget_reset_at
             session.add(row)
             await session.flush()
+
+    async def update_budget_reset_at(
+        self,
+        session: AsyncSession,
+        allocation_id: str,
+        budget_reset_at: str,
+    ) -> ProjectMemberBudgetAssignment | None:
+        """Update only the stored provider reset timestamp for one member allocation."""
+        stmt = select(ProjectMemberBudgetAssignment).where(ProjectMemberBudgetAssignment.id == allocation_id)
+        result = await session.execute(stmt)
+        row = result.scalars().first()
+        if row is None:
+            return None
+        row.budget_reset_at = budget_reset_at
+        session.add(row)
+        await session.flush()
+        await session.refresh(row)
+        return row
 
     async def update_allocation(
         self,

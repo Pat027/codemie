@@ -34,6 +34,9 @@ from codemie.service.budget.budget_models import build_override_project_budget_i
 from codemie.service.budget.provider import (
     BudgetProviderMemberState,
     BudgetProviderState,
+    BudgetResetReconciliationItem,
+    BudgetResetReconciliationResult,
+    BudgetResetReconciliationTarget,
     BudgetRuntimeContext,
     BudgetRuntimeProviderResult,
     GlobalBudgetState,
@@ -115,6 +118,15 @@ def _effective_project_member_budget_id(allocation: "ProjectMemberBudgetAssignme
     if getattr(allocation, "allocation_mode", None) == "fixed":
         return build_override_project_budget_id(allocation.project_budget_id, allocation.user_id)
     return build_shared_project_budget_id(allocation.project_budget_id)
+
+
+def _is_project_virtual_key_target(target: BudgetResetReconciliationTarget) -> bool:
+    provider_ref = target.provider_budget_ref or ""
+    if provider_ref.startswith(_PROJECT_KEY_ALIAS_PREFIX):
+        return True
+
+    raw_metadata = target.metadata.get("raw") if isinstance(target.metadata, dict) else None
+    return isinstance(raw_metadata, dict) and isinstance(raw_metadata.get("key_alias"), str)
 
 
 class LiteLLMBudgetEnforcementProvider:
@@ -531,6 +543,7 @@ class LiteLLMBudgetEnforcementProvider:
         soft_budget: float,
         max_budget: float,
         budget_duration: str,
+        budget_reset_at: str | None = None,
     ) -> BudgetProviderState:
         """Update an existing LiteLLM budget."""
         from codemie.enterprise.litellm.budget_helpers import update_budget_in_litellm
@@ -538,9 +551,17 @@ class LiteLLMBudgetEnforcementProvider:
         logger.debug(
             f"budget_event=provider_global_budget_sync_started component=litellm_budget_provider "
             f"provider={_PROVIDER_NAME!r} operation=update budget_id={budget_id!r} "
-            f"max_budget={max_budget!r} soft_budget={soft_budget!r} budget_duration={budget_duration!r}"
+            f"max_budget={max_budget!r} soft_budget={soft_budget!r} budget_duration={budget_duration!r} "
+            f"budget_reset_at={budget_reset_at!r}"
         )
-        result = await asyncio.to_thread(update_budget_in_litellm, budget_id, max_budget, soft_budget, budget_duration)
+        result = await asyncio.to_thread(
+            update_budget_in_litellm,
+            budget_id,
+            max_budget,
+            soft_budget,
+            budget_duration,
+            budget_reset_at,
+        )
         if result is None:
             logger.debug(
                 f"budget_event=provider_global_budget_sync_completed component=litellm_budget_provider "
@@ -729,6 +750,89 @@ class LiteLLMBudgetEnforcementProvider:
             entries.append(self._build_personal_budget_entry(entry, category))
         return entries
 
+    async def reconcile_budget_reset_timestamps(
+        self,
+        *,
+        targets: list[BudgetResetReconciliationTarget],
+    ) -> BudgetResetReconciliationResult:
+        service = self._get_service()
+        if service is None:
+            return BudgetResetReconciliationResult(
+                items=[
+                    BudgetResetReconciliationItem(
+                        entity_type=target.entity_type,
+                        budget_id=target.budget_id,
+                        provider_budget_ref=target.provider_budget_ref,
+                        provider_member_ref=target.provider_member_ref,
+                        error="litellm service unavailable",
+                    )
+                    for target in targets
+                ]
+            )
+
+        budget_targets = [target for target in targets if not _is_project_virtual_key_target(target)]
+        key_targets = [target for target in targets if _is_project_virtual_key_target(target)]
+
+        budget_map: dict[str, Any] = {}
+        budget_ids = [target.provider_budget_ref for target in budget_targets if target.provider_budget_ref]
+        if budget_ids:
+            budget_map = await asyncio.to_thread(service.get_budget_info_map, budget_ids)
+
+        key_map: dict[str, Any] = {}
+        if key_targets:
+            keys = await asyncio.to_thread(service.get_all_keys_spending)
+            key_map = {key.key_alias: key for key in keys if key.key_alias}
+
+        items: list[BudgetResetReconciliationItem] = []
+        for target in targets:
+            provider_ref = target.provider_budget_ref
+            provider_member_ref = target.provider_member_ref
+
+            if _is_project_virtual_key_target(target):
+                provider_state = key_map.get(provider_ref) if provider_ref else None
+            else:
+                provider_state = budget_map.get(provider_ref) if provider_ref else None
+
+            if provider_state is None:
+                items.append(
+                    BudgetResetReconciliationItem(
+                        entity_type=target.entity_type,
+                        budget_id=target.budget_id,
+                        provider_budget_ref=provider_ref,
+                        provider_member_ref=provider_member_ref,
+                        error="provider entity missing during reset reconciliation",
+                    )
+                )
+                continue
+
+            refreshed_budget_reset_at = _normalize_budget_reset_at(
+                getattr(provider_state, "budget_reset_at", None),
+                target.budget_reset_at,
+            )
+            if not refreshed_budget_reset_at:
+                items.append(
+                    BudgetResetReconciliationItem(
+                        entity_type=target.entity_type,
+                        budget_id=target.budget_id,
+                        provider_budget_ref=provider_ref,
+                        provider_member_ref=provider_member_ref,
+                        error="provider entity returned empty budget_reset_at",
+                    )
+                )
+                continue
+
+            items.append(
+                BudgetResetReconciliationItem(
+                    entity_type=target.entity_type,
+                    budget_id=target.budget_id,
+                    provider_budget_ref=provider_ref,
+                    provider_member_ref=provider_member_ref,
+                    refreshed_budget_reset_at=refreshed_budget_reset_at,
+                )
+            )
+
+        return BudgetResetReconciliationResult(items=items)
+
     async def provision_global_user(self, *, user_id: str, user_email: str) -> None:
         """Ensure a LiteLLM customer record exists for a new Codemie user.
 
@@ -910,6 +1014,80 @@ class LiteLLMBudgetEnforcementProvider:
             f"budget_id={budget_id!r} budget_category={budget_category.value!r} "
             f"provider_budget_ref={state.provider_budget_ref!r} sync_status={state.sync_status!r} "
             f"budget_reset_at={state.budget_reset_at!r}"
+        )
+        return state
+
+    async def reset_project_budget_spend(
+        self,
+        *,
+        budget_state: BudgetProviderState,
+        project_name: str,
+        budget_category: BudgetCategory,
+        budget_id: str,
+        changed_by: str | None = None,
+        models: list[str] | None = None,
+    ) -> BudgetProviderState:
+        logger.debug(
+            f"budget_event=provider_project_budget_reset_started component=litellm_budget_provider "
+            f"provider={_PROVIDER_NAME!r} project_name={project_name!r} budget_id={budget_id!r} "
+            f"budget_category={budget_category.value!r} provider_budget_ref={budget_state.provider_budget_ref!r} "
+            f"changed_by={changed_by!r}"
+        )
+        service = self._get_service()
+        provider_budget_ref = budget_state.provider_budget_ref
+        if service is None or provider_budget_ref is None:
+            logger.debug(
+                f"budget_event=provider_project_budget_reset_failed component=litellm_budget_provider "
+                f"provider={_PROVIDER_NAME!r} project_name={project_name!r} budget_id={budget_id!r} "
+                f"budget_category={budget_category.value!r} "
+                f"reason={'provider_unavailable' if service is None else 'missing_provider_budget_ref'}"
+            )
+            return BudgetProviderState(provider=_PROVIDER_NAME, sync_status=SyncStatus.FAILED)
+
+        from codemie.service.settings.settings import SettingsService
+
+        credentials = await asyncio.to_thread(
+            SettingsService.get_project_litellm_creds_by_alias,
+            project_name,
+            provider_budget_ref,
+        )
+        if credentials is None or not credentials.api_key:
+            logger.warning(
+                f"budget_event=provider_project_budget_reset_failed component=litellm_budget_provider "
+                f"provider={_PROVIDER_NAME!r} project_name={project_name!r} budget_id={budget_id!r} "
+                f"budget_category={budget_category.value!r} provider_budget_ref={provider_budget_ref!r} "
+                f"reason=missing_project_credentials"
+            )
+            return BudgetProviderState(provider=_PROVIDER_NAME, sync_status=SyncStatus.FAILED)
+
+        result = await asyncio.to_thread(
+            service.reset_project_budget_spend,
+            provider_budget_ref=provider_budget_ref,
+            api_key=credentials.api_key,
+            changed_by=changed_by,
+            models=models,
+        )
+        if result is None:
+            logger.warning(
+                f"budget_event=provider_project_budget_reset_failed component=litellm_budget_provider "
+                f"provider={_PROVIDER_NAME!r} project_name={project_name!r} budget_id={budget_id!r} "
+                f"budget_category={budget_category.value!r} provider_budget_ref={provider_budget_ref!r} "
+                f"reason=provider_reset_failed"
+            )
+            return BudgetProviderState(provider=_PROVIDER_NAME, sync_status=SyncStatus.FAILED)
+
+        state = BudgetProviderState(
+            provider=_PROVIDER_NAME,
+            provider_budget_ref=result.provider_budget_ref,
+            budget_reset_at=result.budget_reset_at,
+            sync_status=SyncStatus.OK,
+            metadata=_sanitized_project_metadata(result.metadata),
+        )
+        logger.debug(
+            f"budget_event=provider_project_budget_reset_completed component=litellm_budget_provider "
+            f"provider={_PROVIDER_NAME!r} project_name={project_name!r} budget_id={budget_id!r} "
+            f"budget_category={budget_category.value!r} provider_budget_ref={state.provider_budget_ref!r} "
+            f"sync_status={state.sync_status!r} budget_reset_at={state.budget_reset_at!r}"
         )
         return state
 

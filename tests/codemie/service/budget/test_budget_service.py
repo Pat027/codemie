@@ -270,6 +270,186 @@ class TestCreateBudgetLiteLLMRollback:
         assert exc_info.value.code == 409
 
 
+class TestPredefinedBudgetStartupSync:
+    @pytest.mark.asyncio
+    async def test_skips_provider_update_when_provider_budget_matches_config(self):
+        service = _make_service()
+        mock_session = AsyncMock()
+        mock_provider = MagicMock()
+        mock_provider.provider_name = "litellm"
+        mock_provider.list_global_budget_states = AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    budget_id="default",
+                    soft_budget=50.0,
+                    max_budget=100.0,
+                    budget_duration="30d",
+                    budget_reset_at="2026-05-01T00:00:00Z",
+                )
+            ]
+        )
+        mock_provider.ensure_global_budget = AsyncMock()
+        mock_provider.update_global_budget = AsyncMock()
+
+        with (
+            patch(
+                "codemie.service.budget.budget_service.budget_config.predefined_budgets",
+                [
+                    SimpleNamespace(
+                        budget_id="default",
+                        name="Default Budget",
+                        description="Default platform budget for new LiteLLM customers.",
+                        soft_budget=50.0,
+                        max_budget=100.0,
+                        budget_duration="30d",
+                        budget_category="platform",
+                    )
+                ],
+            ),
+            patch("codemie.service.budget.budget_service.get_active_provider", return_value=mock_provider),
+            patch(
+                "codemie.service.budget.budget_service.budget_repository.get_by_id",
+                new=AsyncMock(return_value=_make_budget(budget_id="default")),
+            ),
+            patch(
+                "codemie.service.budget.budget_service.budget_repository.update",
+                new=AsyncMock(return_value=_make_budget(budget_id="default")),
+            ),
+        ):
+            await service.ensure_predefined_budgets(mock_session)
+
+        mock_provider.ensure_global_budget.assert_not_awaited()
+        mock_provider.update_global_budget.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_preserves_provider_reset_when_only_limits_change(self):
+        service = _make_service()
+        mock_session = AsyncMock()
+        mock_provider = MagicMock()
+        mock_provider.provider_name = "litellm"
+        mock_provider.list_global_budget_states = AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    budget_id="default",
+                    soft_budget=50.0,
+                    max_budget=100.0,
+                    budget_duration="30d",
+                    budget_reset_at="2026-05-01T00:00:00Z",
+                )
+            ]
+        )
+        mock_provider.update_global_budget = AsyncMock(
+            return_value=SimpleNamespace(
+                provider="litellm",
+                provider_budget_ref="default",
+                budget_reset_at="2026-05-01T00:00:00Z",
+                sync_status="ok",
+            )
+        )
+
+        with (
+            patch(
+                "codemie.service.budget.budget_service.budget_config.predefined_budgets",
+                [
+                    SimpleNamespace(
+                        budget_id="default",
+                        name="Default Budget",
+                        description="Default platform budget for new LiteLLM customers.",
+                        soft_budget=60.0,
+                        max_budget=110.0,
+                        budget_duration="30d",
+                        budget_category="platform",
+                    )
+                ],
+            ),
+            patch("codemie.service.budget.budget_service.get_active_provider", return_value=mock_provider),
+            patch(
+                "codemie.service.budget.budget_service.budget_repository.get_by_id",
+                new=AsyncMock(return_value=_make_budget(budget_id="default")),
+            ),
+            patch(
+                "codemie.service.budget.budget_service.budget_repository.update",
+                new=AsyncMock(return_value=_make_budget(budget_id="default")),
+            ),
+        ):
+            await service.ensure_predefined_budgets(mock_session)
+
+        mock_provider.update_global_budget.assert_awaited_once_with(
+            budget_id="default",
+            soft_budget=60.0,
+            max_budget=110.0,
+            budget_duration="30d",
+            budget_reset_at="2026-05-01T00:00:00Z",
+        )
+
+    @pytest.mark.asyncio
+    async def test_recomputes_reset_when_duration_changes(self):
+        service = _make_service()
+        mock_session = AsyncMock()
+        mock_provider = MagicMock()
+        mock_provider.provider_name = "litellm"
+        mock_provider.list_global_budget_states = AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    budget_id="default",
+                    soft_budget=50.0,
+                    max_budget=100.0,
+                    budget_duration="30d",
+                    budget_reset_at="2026-05-01T00:00:00Z",
+                )
+            ]
+        )
+        mock_provider.update_global_budget = AsyncMock(
+            return_value=SimpleNamespace(
+                provider="litellm",
+                provider_budget_ref="default",
+                budget_reset_at="2026-05-08T00:00:00Z",
+                sync_status="ok",
+            )
+        )
+        budget_rows: list[dict] = []
+
+        async def _capture_update(_session, _budget_id, fields):
+            budget_rows.append(fields)
+            return _make_budget(budget_id="default", budget_reset_at=fields.get("budget_reset_at"))
+
+        with (
+            patch(
+                "codemie.service.budget.budget_service.budget_config.predefined_budgets",
+                [
+                    SimpleNamespace(
+                        budget_id="default",
+                        name="Default Budget",
+                        description="Default platform budget for new LiteLLM customers.",
+                        soft_budget=50.0,
+                        max_budget=100.0,
+                        budget_duration="7d",
+                        budget_category="platform",
+                    )
+                ],
+            ),
+            patch("codemie.service.budget.budget_service.get_active_provider", return_value=mock_provider),
+            patch(
+                "codemie.service.budget.budget_service.budget_repository.get_by_id",
+                new=AsyncMock(return_value=_make_budget(budget_id="default")),
+            ),
+            patch(
+                "codemie.service.budget.budget_service.budget_repository.update",
+                new=AsyncMock(side_effect=_capture_update),
+            ),
+        ):
+            await service.ensure_predefined_budgets(mock_session)
+
+        mock_provider.update_global_budget.assert_awaited_once_with(
+            budget_id="default",
+            soft_budget=50.0,
+            max_budget=100.0,
+            budget_duration="7d",
+            budget_reset_at=None,
+        )
+        assert any(fields.get("budget_reset_at") == "2026-05-08T00:00:00Z" for fields in budget_rows)
+
+
 # ---------------------------------------------------------------------------
 # TestBackfillUserBudgetAssignments
 # ---------------------------------------------------------------------------

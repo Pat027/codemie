@@ -142,6 +142,35 @@ class ProjectBudgetState(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class BudgetResetReconciliationTarget(BaseModel):
+    """Provider-neutral reconciliation target for one reset timestamp entity."""
+
+    entity_type: str  # "budget" | "member_allocation"
+    budget_id: str
+    provider_budget_ref: str | None = None
+    provider_member_ref: str | None = None
+    project_budget_id: str | None = None
+    budget_reset_at: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class BudgetResetReconciliationItem(BaseModel):
+    """One reconciliation outcome returned by the provider."""
+
+    entity_type: str
+    budget_id: str
+    refreshed_budget_reset_at: str | None = None
+    provider_budget_ref: str | None = None
+    provider_member_ref: str | None = None
+    error: str | None = None
+
+
+class BudgetResetReconciliationResult(BaseModel):
+    """Bulk reconciliation response returned by the provider."""
+
+    items: list[BudgetResetReconciliationItem] = Field(default_factory=list)
+
+
 class PersonalBudgetEntry(BaseModel):
     """A user's personal (non-project-scoped) budget assignment as reported by the provider.
 
@@ -207,6 +236,7 @@ class BudgetEnforcementProvider(Protocol):
         soft_budget: float,
         max_budget: float,
         budget_duration: str,
+        budget_reset_at: str | None = None,
     ) -> "BudgetProviderState": ...
 
     async def delete_global_budget(
@@ -285,6 +315,17 @@ class BudgetEnforcementProvider(Protocol):
         project_name: str | None = None,
     ) -> None: ...
 
+    async def reset_project_budget_spend(
+        self,
+        *,
+        budget_state: BudgetProviderState,
+        project_name: str,
+        budget_category: BudgetCategory,
+        budget_id: str,
+        changed_by: str | None = None,
+        models: list[str] | None = None,
+    ) -> BudgetProviderState: ...
+
     async def get_project_budget_state_by_ref(
         self,
         *,
@@ -327,5 +368,11 @@ class BudgetEnforcementProvider(Protocol):
         self,
         provider_member_refs: set[str],
     ) -> list[MemberBudgetSpendSnapshot]: ...
+
+    async def reconcile_budget_reset_timestamps(
+        self,
+        *,
+        targets: list[BudgetResetReconciliationTarget],
+    ) -> BudgetResetReconciliationResult: ...
 
     async def collect_personal_spend(self) -> "list[PersonalSpendEntry] | None": ...
