@@ -33,6 +33,7 @@ from codemie.repository.user_repository import user_repository
 from codemie.rest_api.models.user_management import UserProject
 from codemie.rest_api.security.user import User
 from codemie.service.budget.budget_enums import AllocationMode, SyncStatus
+from codemie.service.budget.budget_resolution_service import _resolution_cache
 from codemie.service.budget.budget_models import (
     Budget,
     ProjectBudgetAssignment,
@@ -185,6 +186,7 @@ class ProjectAssignmentService:
                 )
             allocation.deleted_at = now
             session.add(allocation)
+            _resolution_cache.pop((project_name, allocation.budget_category, user_id), None)
             changed = True
         if changed:
             session.flush()
