@@ -366,6 +366,15 @@ class Config(BaseSettings):
     SHAREPOINT_OAUTH_CLIENT_ID: str = ""
     SHAREPOINT_OAUTH_SCOPES: str = "Sites.Read.All Files.Read.All offline_access User.Read"
 
+    MCP_AUTH_ENABLED: bool = False
+    MCP_AUTH_HMAC_SECRET: str = ""
+    MCP_AUTH_REDIS_HOST: str = "localhost"
+    MCP_AUTH_REDIS_PORT: int = 6379
+    MCP_AUTH_REDIS_DB: int = 0
+    MCP_AUTH_REDIS_PASSWORD: str = ""
+    MCP_AUTH_REDIS_SSL: bool = False
+    MCP_AUTH_REDIS_CONNECT_TIMEOUT_SECONDS: float = 5.0
+    MCP_AUTH_REDIS_TIMEOUT_SECONDS: float = 5.0
     MCP_CONNECT_ENABLED: bool = True
     MCP_CONNECT_URL: str = "http://localhost:3000"
     MCP_CONNECT_BUCKETS_COUNT: int = 10

@@ -15,6 +15,7 @@
 from typing import Tuple
 
 from codemie.configs import logger
+from codemie.core.exceptions import MCPAuthenticationRequiredException
 from codemie.rest_api.models.assistant import MCPServerDetails, MCPServerCheckRequest
 from codemie.rest_api.security.user import User
 from codemie.service.mcp.toolkit_service import MCPToolkitService
@@ -39,6 +40,8 @@ class MCPServerTester:
             logger.info(f"Testing passed for MCP tools from {self.mcp_server.name} server. Tools count={len(tools)}")
             return True, 'Success'
         except BrokerAuthRequiredException:
+            raise
+        except MCPAuthenticationRequiredException:
             raise
         except Exception as e:
             # Log error but continue with other MCP servers if this one fails

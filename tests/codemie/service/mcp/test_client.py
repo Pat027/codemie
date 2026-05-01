@@ -266,6 +266,105 @@ class TestMCPConnectClientListTools:
             )
 
     @pytest.mark.asyncio
+    async def test_list_tools_merges_request_scoped_auth_headers_without_mutating_server_config(
+        self,
+        sample_tools_response,
+    ):
+        client = MCPConnectClient()
+        server_config = MCPServerConfig(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-github"],
+            env={"GITHUB_PERSONAL_ACCESS_TOKEN": "test-token"},
+            headers={"Authorization": "Bearer stale", "X-Static": "static-value"},
+        )
+        execution_context = MCPExecutionContext(
+            user_id="user-123",
+            auth_headers={"Authorization": "Bearer fresh", "X-Request-Auth": "request-value"},
+        )
+        original_headers = server_config.headers.copy()
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = sample_tools_response
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("codemie.service.mcp.client.httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+
+            await client.list_tools(server_config, execution_context)
+
+            from codemie.service.mcp.client import _get_bucket_no
+
+            bucket_no = _get_bucket_no(server_config)
+
+            mock_client.return_value.__aenter__.return_value.post.assert_called_once_with(
+                client.bridge_endpoint,
+                json={
+                    "method": "tools/list",
+                    "serverPath": server_config.command,
+                    "args": server_config.args,
+                    "params": {},
+                    "env": server_config.env,
+                    "mcp_headers": {
+                        "Authorization": "Bearer fresh",
+                        "X-Static": "static-value",
+                        "X-Request-Auth": "request-value",
+                    },
+                    "single_usage": False,
+                    "user_id": "user-123",
+                },
+                headers={"Content-Type": "application/json", "X-MCP-Connect-Bucket": str(bucket_no)},
+            )
+
+        assert server_config.headers == original_headers
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("auth_headers", [None, {}])
+    async def test_list_tools_keeps_static_headers_when_auth_headers_missing_or_empty(
+        self,
+        sample_tools_response,
+        auth_headers,
+    ):
+        client = MCPConnectClient()
+        server_config = MCPServerConfig(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-github"],
+            env={"GITHUB_PERSONAL_ACCESS_TOKEN": "test-token"},
+            headers={"Authorization": "Bearer static", "X-Static": "static-value"},
+        )
+        execution_context = MCPExecutionContext(user_id="user-123", auth_headers=auth_headers)
+        original_headers = server_config.headers.copy()
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = sample_tools_response
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("codemie.service.mcp.client.httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+
+            await client.list_tools(server_config, execution_context)
+
+            from codemie.service.mcp.client import _get_bucket_no
+
+            bucket_no = _get_bucket_no(server_config)
+
+            mock_client.return_value.__aenter__.return_value.post.assert_called_once_with(
+                client.bridge_endpoint,
+                json={
+                    "method": "tools/list",
+                    "serverPath": server_config.command,
+                    "args": server_config.args,
+                    "params": {},
+                    "env": server_config.env,
+                    "mcp_headers": original_headers,
+                    "single_usage": False,
+                    "user_id": "user-123",
+                },
+                headers={"Content-Type": "application/json", "X-MCP-Connect-Bucket": str(bucket_no)},
+            )
+
+        assert server_config.headers == original_headers
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_with_execution_context(self, server_config, sample_tool_invocation_response):
         """Test tool invocation with execution context."""
         client = MCPConnectClient()
@@ -315,6 +414,112 @@ class TestMCPConnectClientListTools:
             assert len(response.content) == 1
             assert response.content[0].text == "Tool execution successful"
             assert response.isError is False
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_merges_request_scoped_auth_headers_without_mutating_server_config(
+        self,
+        sample_tool_invocation_response,
+    ):
+        client = MCPConnectClient()
+        server_config = MCPServerConfig(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-github"],
+            env={"GITHUB_PERSONAL_ACCESS_TOKEN": "test-token"},
+            headers={"Authorization": "Bearer stale", "X-Static": "static-value"},
+        )
+        execution_context = MCPExecutionContext(
+            user_id="user-123",
+            workflow_execution_id="workflow-789",
+            auth_headers={"Authorization": "Bearer fresh", "X-Request-Auth": "request-value"},
+        )
+        original_headers = server_config.headers.copy()
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = sample_tool_invocation_response
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("codemie.service.mcp.client.httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+
+            await client.invoke_tool(server_config, "test_tool", {"param1": "value1"}, execution_context)
+
+            from codemie.service.mcp.client import _get_bucket_no
+
+            bucket_no = _get_bucket_no(server_config)
+
+            mock_client.return_value.__aenter__.return_value.post.assert_called_once_with(
+                client.bridge_endpoint,
+                json={
+                    "method": "tools/call",
+                    "serverPath": server_config.command,
+                    "args": server_config.args,
+                    "params": {"name": "test_tool", "arguments": {"param1": "value1"}},
+                    "env": server_config.env,
+                    "mcp_headers": {
+                        "Authorization": "Bearer fresh",
+                        "X-Static": "static-value",
+                        "X-Request-Auth": "request-value",
+                    },
+                    "single_usage": False,
+                    "user_id": "user-123",
+                    "workflow_execution_id": "workflow-789",
+                },
+                headers={"Content-Type": "application/json", "X-MCP-Connect-Bucket": str(bucket_no)},
+            )
+
+        assert server_config.headers == original_headers
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("auth_headers", [None, {}])
+    async def test_invoke_tool_keeps_static_headers_when_auth_headers_missing_or_empty(
+        self,
+        sample_tool_invocation_response,
+        auth_headers,
+    ):
+        client = MCPConnectClient()
+        server_config = MCPServerConfig(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-github"],
+            env={"GITHUB_PERSONAL_ACCESS_TOKEN": "test-token"},
+            headers={"Authorization": "Bearer static", "X-Static": "static-value"},
+        )
+        execution_context = MCPExecutionContext(
+            user_id="user-123",
+            workflow_execution_id="workflow-789",
+            auth_headers=auth_headers,
+        )
+        original_headers = server_config.headers.copy()
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = sample_tool_invocation_response
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("codemie.service.mcp.client.httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+
+            await client.invoke_tool(server_config, "test_tool", {"param1": "value1"}, execution_context)
+
+            from codemie.service.mcp.client import _get_bucket_no
+
+            bucket_no = _get_bucket_no(server_config)
+
+            mock_client.return_value.__aenter__.return_value.post.assert_called_once_with(
+                client.bridge_endpoint,
+                json={
+                    "method": "tools/call",
+                    "serverPath": server_config.command,
+                    "args": server_config.args,
+                    "params": {"name": "test_tool", "arguments": {"param1": "value1"}},
+                    "env": server_config.env,
+                    "mcp_headers": original_headers,
+                    "single_usage": False,
+                    "user_id": "user-123",
+                    "workflow_execution_id": "workflow-789",
+                },
+                headers={"Content-Type": "application/json", "X-MCP-Connect-Bucket": str(bucket_no)},
+            )
+
+        assert server_config.headers == original_headers
 
     @pytest.mark.asyncio
     async def test_invoke_tool_with_partial_execution_context(self, server_config, sample_tool_invocation_response):

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import pytest
+import json
 from unittest.mock import MagicMock, patch
 
 from codemie.core.workflow_models import WorkflowConfig, WorkflowState, WorkflowExecutionStatusEnum
@@ -219,3 +220,62 @@ class TestInterruptGuard:
         service.interrupt("")
 
         mock_get_states.assert_not_called()
+
+
+class TestAuthenticationRequired:
+    def test_mark_authentication_required_preserves_serialized_payload(self, service):
+        service.workflow_execution = MagicMock()
+        output = json.dumps(
+            {
+                "auth_config_id": "auth-1",
+                "mcp_config_id": "mcp-1",
+                "mcp_server_name": "server-1",
+                "status": "config_error",
+                "auth_type": "saml",
+                "error_context": "SAML is not supported for HTTP transport.",
+            }
+        )
+
+        with patch.object(service, "_refresh_workflow_execution"):
+            service.mark_authentication_required(output)
+
+        assert service.workflow_execution.overall_status == WorkflowExecutionStatusEnum.AUTHENTICATION_REQUIRED
+        assert service.workflow_execution.output == output
+        service.workflow_execution.update.assert_called_with(refresh=True)
+
+    def test_mark_authentication_required_aggregate_servers_payload(self, service):
+        service.workflow_execution = MagicMock()
+        output = json.dumps(
+            {
+                "error": "authentication_required",
+                "servers": [
+                    {
+                        "auth_config_id": "auth-1",
+                        "mcp_config_id": "mcp-1",
+                        "mcp_config_name": "server-1",
+                        "mcp_server_name": "server-1",
+                        "status": "authentication_required",
+                        "auth_type": "oauth2",
+                        "as_hostname": "login.example.com",
+                        "error_context": None,
+                    },
+                    {
+                        "auth_config_id": "auth-2",
+                        "mcp_config_id": "mcp-2",
+                        "mcp_config_name": "server-2",
+                        "mcp_server_name": "server-2",
+                        "status": "session_expired",
+                        "auth_type": "saml",
+                        "as_hostname": "idp.example.com",
+                        "error_context": "SAML session expired",
+                    },
+                ],
+            }
+        )
+
+        with patch.object(service, "_refresh_workflow_execution"):
+            service.mark_authentication_required(output)
+
+        assert service.workflow_execution.overall_status == WorkflowExecutionStatusEnum.AUTHENTICATION_REQUIRED
+        assert service.workflow_execution.output == output
+        service.workflow_execution.update.assert_called_with(refresh=True)

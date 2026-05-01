@@ -47,6 +47,14 @@ class MCPExecutionContext(BaseModel):
     request_headers: dict[str, str] | None = Field(
         None, description="Custom HTTP headers from the original request to propagate to MCP servers"
     )
+    auth_headers: dict[str, str] | None = Field(
+        None,
+        exclude=True,
+        description="Per-user auth headers to inject into MCP server requests. "
+        "Excluded from ALL model serialization (model_dump / model_dump_json) via "
+        "Field(exclude=True) to prevent credential leakage. "
+        "Merged into mcp_headers at request build time by MCPConnectClient (Story 3.4).",
+    )
 
     def to_request_fields(self) -> dict[str, Any]:
         """
@@ -56,7 +64,7 @@ class MCPExecutionContext(BaseModel):
             Dictionary with context fields ready to be unpacked into
             MCPToolInvocationRequest constructor
         """
-        return self.model_dump()
+        return self.model_dump(exclude={"auth_headers"})
 
 
 class MCPServerConfig(BaseModel):
@@ -114,6 +122,11 @@ class MCPServerConfig(BaseModel):
         description="OAuth2 audience for OIDC token exchange (RFC 8693). When set, the user's IdP token "
         "will be exchanged for a service-specific token scoped to this audience before being "
         "injected into {{user.token}} header placeholders.",
+    )
+    auth_config: dict[str, Any] | None = Field(
+        None,
+        description="Authentication configuration for this MCP server. Stored as raw dict; "
+        "typed models (OAuth2AuthConfig / SAMLAuthConfig) live in enterprise only.",
     )
 
     @model_validator(mode="after")

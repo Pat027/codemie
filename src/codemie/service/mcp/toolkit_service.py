@@ -39,11 +39,14 @@ from cachetools import TTLCache
 
 from codemie.configs import config
 from codemie.configs.logger import logger
+from codemie.core.exceptions import MCPAuthenticationRequiredException
+from codemie.enterprise.mcp_auth.dependencies import derive_as_hostname, derive_initiate_url
 from codemie.core.models import ToolConfig
 from codemie.rest_api.models.assistant import MCPServerDetails
 from codemie.rest_api.models.settings import SettingsBase
 from codemie.rest_api.security.user_context import get_current_user
 from codemie.service.mcp.client import MCPConnectClient, BUCKET_KEY
+from codemie.service.mcp.auth_protocol import AuthResolverProtocol
 from codemie.service.security.token_exchange_service import token_exchange_service
 from codemie.service.security.token_providers.base_provider import BrokerAuthRequiredException
 from codemie.service.mcp.models import MCPServerConfig, MCPToolLoadException, MCPExecutionContext
@@ -60,6 +63,40 @@ CACHE_MISS_MSG = "Cache miss for MCP toolkit service instance with base URL: {}"
 # Toolkit cache messages
 TOOLKIT_CACHE_HIT_MSG = "Cache hit for MCP toolkit with server config: {}"
 TOOLKIT_CACHE_MISS_MSG = "Cache miss for MCP toolkit with server config: {}"
+NORMALIZED_LEGACY_TOKEN_PLACEHOLDER = "{{user.token}}"
+LEGACY_TOKEN_PLACEHOLDER_PATTERNS = (NORMALIZED_LEGACY_TOKEN_PLACEHOLDER, "[user.token]", "$user.token")
+LEGACY_TOKEN_PLACEHOLDER_SENTINEL = "__CODEMIE_LEGACY_USER_TOKEN__"
+
+
+class LegacyTokenResolver:
+    """Core fallback resolver for legacy ``{{user.token}}`` header placeholders."""
+
+    def can_handle(self, server_config: MCPServerConfig) -> bool:
+        return (
+            server_config.auth_config is None
+            and bool(server_config.headers)
+            and MCPToolkitService._has_token_placeholder(server_config.headers)
+        )
+
+    def resolve(
+        self,
+        server_config: MCPServerConfig,
+        user_id: str | None,
+        execution_context: MCPExecutionContext | None = None,
+    ) -> None:
+        del user_id, execution_context
+
+        if not server_config.headers:
+            return
+
+        env_vars_with_user = MCPToolkitService._build_env_with_user_context(server_config)
+        MCPToolkitService._add_user_token_if_needed(server_config.headers, env_vars_with_user, server_config.audience)
+        server_config.headers = MCPToolkitService._process_headers_dict(
+            server_config.headers,
+            env_vars_with_user,
+            None,
+        )
+        logger.debug(f"Resolved legacy token placeholders via resolver chain: {server_config.headers}")
 
 
 class MCPToolkitService:
@@ -82,6 +119,15 @@ class MCPToolkitService:
     _instances_cache: ClassVar[TTLCache] = TTLCache(
         maxsize=config.MCP_TOOLKIT_SERVICE_CACHE_SIZE, ttl=config.MCP_TOOLKIT_SERVICE_CACHE_TTL
     )
+    _auth_resolvers: ClassVar[list[AuthResolverProtocol]] = []
+    _legacy_token_resolver: ClassVar[LegacyTokenResolver] = LegacyTokenResolver()
+
+    @classmethod
+    def register_auth_resolver(cls, resolver: AuthResolverProtocol) -> None:
+        """Register an enterprise auth resolver for MCP server authentication."""
+        if not isinstance(resolver, AuthResolverProtocol):
+            raise ValueError(f"Expected AuthResolverProtocol implementation, got {type(resolver).__name__}")
+        cls._auth_resolvers.append(resolver)
 
     @classmethod
     def get_mcp_server_tools(
@@ -120,6 +166,7 @@ class MCPToolkitService:
             List of MCP tools from all successfully processed servers
         """
         tools = []
+        auth_failures: list[dict[str, Any]] = []
         if not mcp_servers:
             return tools
 
@@ -139,20 +186,63 @@ class MCPToolkitService:
                 logger.debug(f"Skipping disabled MCP server: {mcp_server.name}")
                 continue
 
-            server_tools = cls._process_single_mcp_server(
-                mcp_server=mcp_server,
-                default_toolkit_service=default_mcp_toolkit_service,
-                user_id=user_id,
-                project_name=project_name,
-                conversation_id=conversation_id,
-                tools_config=tools_config,
-                mcp_server_args_preprocessor=mcp_server_args_preprocessor,
-                mcp_server_single_usage=mcp_server_single_usage,
-                execution_context=execution_context,  # Pass context to tool processing
-            )
+            try:
+                server_tools = cls._process_single_mcp_server(
+                    mcp_server=mcp_server,
+                    default_toolkit_service=default_mcp_toolkit_service,
+                    user_id=user_id,
+                    project_name=project_name,
+                    conversation_id=conversation_id,
+                    tools_config=tools_config,
+                    mcp_server_args_preprocessor=mcp_server_args_preprocessor,
+                    mcp_server_single_usage=mcp_server_single_usage,
+                    execution_context=execution_context,  # Pass context to tool processing
+                )
+            except MCPAuthenticationRequiredException as exc:
+                auth_failures.append(
+                    cls._build_auth_required_server_payload(
+                        caught_payload=exc.payload,
+                        mcp_server=mcp_server,
+                        execution_context=execution_context,
+                    )
+                )
+                continue
+
             tools.extend(server_tools)
 
+        if auth_failures:
+            raise MCPAuthenticationRequiredException({"error": "authentication_required", "servers": auth_failures})
+
         return tools
+
+    @classmethod
+    def _build_auth_required_server_payload(
+        cls,
+        caught_payload: dict[str, Any],
+        mcp_server: MCPServerDetails,
+        execution_context: MCPExecutionContext | None,
+    ) -> dict[str, Any]:
+        auth_config = mcp_server.config.auth_config if mcp_server.config and mcp_server.config.auth_config else None
+        auth_type = caught_payload.get("auth_type") or (auth_config or {}).get("auth_type")
+        mcp_config_name = (
+            caught_payload.get("mcp_config_name") or caught_payload.get("mcp_server_name") or mcp_server.name
+        )
+
+        payload = {
+            "auth_config_id": caught_payload.get("auth_config_id") or (auth_config or {}).get("id"),
+            "mcp_config_id": caught_payload.get("mcp_config_id") or mcp_server.mcp_config_id,
+            "mcp_config_name": mcp_config_name,
+            "mcp_server_name": mcp_config_name,
+            "auth_type": auth_type,
+            "as_hostname": derive_as_hostname(auth_type, auth_config),
+            "status": caught_payload.get("status", "authentication_required"),
+            "error_context": caught_payload.get("error_context"),
+        }
+
+        if execution_context is None or execution_context.workflow_execution_id is None:
+            payload["initiate_url"] = derive_initiate_url(auth_type)
+
+        return payload
 
     @classmethod
     def _process_single_mcp_server(
@@ -180,10 +270,17 @@ class MCPToolkitService:
             project_name: Optional project name for credential resolution
             conversation_id: Optional conversation ID for tool context
             tools_config: Optional tool configurations to apply
+            mcp_server_args_preprocessor: Optional preprocessor for server command arguments
             mcp_server_single_usage: Whether MCP servers should be single-use (True) or persistent (False)
+            execution_context: Optional execution context for request-scoped auth and workflow/assistant handling
 
         Returns:
-            List of tools from the server, empty list if processing fails
+            List of tools from the server after filtering and optional context wrapping
+
+        Raises:
+            MCPAuthenticationRequiredException: When the server requires end-user authentication
+            BrokerAuthRequiredException: When broker authentication is required
+            MCPToolLoadException: When any other tool-loading failure occurs
         """
         try:
             toolkit_service = cls._get_toolkit_service_for_server(mcp_server, default_toolkit_service)
@@ -195,6 +292,7 @@ class MCPToolkitService:
                 tools_config=tools_config,
                 mcp_server_args_preprocessor=mcp_server_args_preprocessor,
                 mcp_server_single_usage=mcp_server_single_usage,
+                execution_context=execution_context,
             )
 
             toolkit = toolkit_service.get_toolkit(
@@ -214,6 +312,8 @@ class MCPToolkitService:
 
             return tools
 
+        except MCPAuthenticationRequiredException:
+            raise
         except BrokerAuthRequiredException:
             raise
         except Exception as e:
@@ -300,6 +400,7 @@ class MCPToolkitService:
         tools_config: list[ToolConfig] | None = None,
         mcp_server_args_preprocessor: callable | None = None,
         mcp_server_single_usage: bool | None = False,
+        execution_context: MCPExecutionContext | None = None,
     ) -> MCPServerConfig:
         """
         Prepare the complete server configuration for an MCP server.
@@ -315,6 +416,7 @@ class MCPToolkitService:
             tools_config: Optional tool configurations to apply
             mcp_server_args_preprocessor: Optional preprocessor function for server arguments
             mcp_server_single_usage: Whether MCP servers should be single-use (True) or persistent (False)
+            execution_context: Optional execution context for request-scoped auth delivery
 
         Returns:
             Complete MCP server configuration
@@ -331,8 +433,28 @@ class MCPToolkitService:
         cls._apply_server_tools_config(server_config, mcp_server, tools_config, user_id)
         cls._process_server_args(server_config, mcp_server_args_preprocessor)
         cls._process_server_url_and_command(server_config, mcp_server_args_preprocessor)
+        cls._resolve_server_auth(server_config, user_id, execution_context)
 
         return server_config
+
+    @classmethod
+    def _resolve_server_auth(
+        cls,
+        server_config: MCPServerConfig,
+        user_id: str | None,
+        execution_context: MCPExecutionContext | None = None,
+    ) -> None:
+        """Run registered enterprise resolvers first, then the inline LegacyTokenResolver fallback."""
+        if server_config.auth_config:
+            cls._strip_legacy_token_placeholder_headers(server_config)
+
+        for resolver in cls._auth_resolvers:
+            if resolver.can_handle(server_config):
+                resolver.resolve(server_config, user_id, execution_context)
+                return
+
+        if cls._legacy_token_resolver.can_handle(server_config):
+            cls._legacy_token_resolver.resolve(server_config, user_id, execution_context)
 
     @classmethod
     def _apply_server_tools_config(
@@ -934,9 +1056,9 @@ class MCPToolkitService:
         """
         Process placeholders in headers dictionary.
 
-        Supports user context placeholders ({{user.name}}, {{user.username}}, {{user.token}})
-        by retrieving the current user from ContextVar and adding user fields
-        to the environment variables used for placeholder resolution.
+        Resolves generic placeholders such as ``{{user.name}}`` and ``{{user.username}}``
+        during the first preprocessing pass. Legacy ``{{user.token}}`` placeholders are
+        left intact here and deferred to resolver-chain handling.
 
         Args:
             server_config: The server configuration containing headers to modify
@@ -948,12 +1070,12 @@ class MCPToolkitService:
         # Build environment variables with user context
         env_vars_with_user = cls._build_env_with_user_context(server_config)
 
-        # Add user token if needed (exchanged for server audience when configured)
-        cls._add_user_token_if_needed(server_config.headers, env_vars_with_user, server_config.audience)
-
         # Process all headers with placeholder resolution
         server_config.headers = cls._process_headers_dict(
-            server_config.headers, env_vars_with_user, mcp_server_args_preprocessor
+            server_config.headers,
+            env_vars_with_user,
+            mcp_server_args_preprocessor,
+            preserve_legacy_token_placeholder=True,
         )
         logger.debug(f"Processed headers with placeholders: {server_config.headers}")
 
@@ -995,8 +1117,25 @@ class MCPToolkitService:
         Returns:
             True if any header contains a token placeholder
         """
-        token_patterns = ('{{user.token}}', '[user.token]', '$user.token')
-        return any(any(pattern in str(value) for pattern in token_patterns) for value in headers.values())
+        return any(
+            any(pattern in str(value) for pattern in LEGACY_TOKEN_PLACEHOLDER_PATTERNS) for value in headers.values()
+        )
+
+    @classmethod
+    def _contains_normalized_legacy_token_placeholder(cls, value: str) -> bool:
+        return NORMALIZED_LEGACY_TOKEN_PLACEHOLDER in str(value)
+
+    @classmethod
+    def _strip_legacy_token_placeholder_headers(cls, server_config: MCPServerConfig) -> None:
+        if not server_config.headers:
+            return
+
+        server_config.headers = {
+            key: value
+            for key, value in server_config.headers.items()
+            if not cls._contains_normalized_legacy_token_placeholder(key)
+            and not cls._contains_normalized_legacy_token_placeholder(value)
+        }
 
     @classmethod
     def _add_user_token_if_needed(
@@ -1055,6 +1194,7 @@ class MCPToolkitService:
         headers: dict[str, str],
         env_vars_with_user: dict[str, Any],
         mcp_server_args_preprocessor: callable | None,
+        preserve_legacy_token_placeholder: bool = False,
     ) -> dict[str, str]:
         """
         Process all headers by resolving placeholders in both keys and values.
@@ -1063,15 +1203,24 @@ class MCPToolkitService:
             headers: Original headers dictionary
             env_vars_with_user: Environment variables for placeholder resolution
             mcp_server_args_preprocessor: Optional preprocessor function
+            preserve_legacy_token_placeholder: Whether to keep ``{{user.token}}`` intact
 
         Returns:
             New dictionary with processed headers
         """
         processed_headers = {}
         for key, value in headers.items():
-            processed_key = cls._process_string_with_placeholders(key, env_vars_with_user, mcp_server_args_preprocessor)
+            processed_key = cls._process_string_with_placeholders(
+                key,
+                env_vars_with_user,
+                mcp_server_args_preprocessor,
+                preserve_legacy_token_placeholder=preserve_legacy_token_placeholder,
+            )
             processed_value = cls._process_string_with_placeholders(
-                value, env_vars_with_user, mcp_server_args_preprocessor
+                value,
+                env_vars_with_user,
+                mcp_server_args_preprocessor,
+                preserve_legacy_token_placeholder=preserve_legacy_token_placeholder,
             )
             processed_headers[processed_key] = processed_value
 
@@ -1083,6 +1232,7 @@ class MCPToolkitService:
         source_string: str,
         env_vars: dict[str, Any],
         mcp_server_args_preprocessor: callable | None,
+        preserve_legacy_token_placeholder: bool = False,
     ) -> str:
         """
         Process a string by normalizing placeholders and applying transformations.
@@ -1091,12 +1241,18 @@ class MCPToolkitService:
             source_string: The string to process
             env_vars: Environment variables for placeholder resolution
             mcp_server_args_preprocessor: Optional preprocessor function
+            preserve_legacy_token_placeholder: Whether to keep ``{{user.token}}`` unresolved
 
         Returns:
             Processed string with placeholders resolved
         """
 
         normalized_string, found = cls._normalize_placeholders(source_string)
+        if preserve_legacy_token_placeholder:
+            normalized_string = normalized_string.replace(
+                NORMALIZED_LEGACY_TOKEN_PLACEHOLDER,
+                LEGACY_TOKEN_PLACEHOLDER_SENTINEL,
+            )
         if found:
             if mcp_server_args_preprocessor:
                 normalized_string = mcp_server_args_preprocessor(normalized_string, env_vars)
@@ -1110,6 +1266,11 @@ class MCPToolkitService:
                     initial_dynamic_vals=env_vars,
                     enable_recursive_resolution=None,
                 )
+        if preserve_legacy_token_placeholder:
+            normalized_string = normalized_string.replace(
+                LEGACY_TOKEN_PLACEHOLDER_SENTINEL,
+                NORMALIZED_LEGACY_TOKEN_PLACEHOLDER,
+            )
         return normalized_string
 
     @classmethod

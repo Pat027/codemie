@@ -32,6 +32,7 @@ from sqlmodel import Session
 from codemie.configs import config
 from codemie.configs.logger import logger
 from codemie.core.exceptions import ExtendedHTTPException
+from codemie.enterprise.mcp_auth.dependencies import enqueue_mcp_auth_cleanup
 from codemie.repository.user_repository import user_repository
 from codemie.rest_api.security.permissions import is_admin_or_maintainer
 from codemie.service.user.authentication_service import invalidate_user_from_cache
@@ -963,6 +964,8 @@ class UserManagementService:
         UserManagementService.deactivate_user(session, user_id, actor_user_id)
         session.commit()
 
+        UserManagementService._schedule_mcp_auth_cleanup_after_commit(user_id)
+
         # Story 10: Get actor's admin status for visibility filtering
         actor = user_repository.get_by_id(session, actor_user_id)
         actor_is_admin = actor.is_admin if actor else False
@@ -1114,8 +1117,17 @@ class UserManagementService:
         with get_session() as session:
             UserManagementService.deactivate_user(session, user_id, actor_user_id)
             session.commit()
+            UserManagementService._schedule_mcp_auth_cleanup_after_commit(user_id)
 
             return {"message": "User deactivated successfully"}
+
+    @staticmethod
+    def _schedule_mcp_auth_cleanup_after_commit(user_id: str) -> None:
+        # Story 1.8 approved deviation from architecture.md#Credential Lifecycle Trigger Architecture
+        # (NFR29, NFR30, FR53): that design assumed an existing reusable user-lifecycle hook
+        # registry, but current code inspection found no such shared hook in this codebase, so
+        # MCP auth cleanup is scheduled directly from the committed deactivation paths here.
+        enqueue_mcp_auth_cleanup(user_id)
 
 
 # Singleton instance

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from typing import Optional
+from codemie.core.exceptions import MCPAuthenticationRequiredException
 from codemie.rest_api.models.assistant import MCPServerDetails
 from codemie.rest_api.security.user import User
 from codemie.configs import logger
@@ -91,6 +92,8 @@ class MCPToolsInfoService:
         except MCPToolsInfoServiceError:
             raise
         except BrokerAuthRequiredException:
+            raise
+        except MCPAuthenticationRequiredException:
             raise
         except Exception as e:
             error_msg = str(e)

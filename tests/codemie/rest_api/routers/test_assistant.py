@@ -16,7 +16,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from codemie.core.exceptions import ExtendedHTTPException
+from codemie.core.exceptions import ExtendedHTTPException, MCPAuthenticationRequiredException
 from codemie.core.models import AssistantChatRequest
 from codemie.rest_api.models.assistant import Assistant
 from codemie.rest_api.models.guardrail import GuardrailEntity, GuardrailSource
@@ -256,6 +256,51 @@ class TestAskAssistantWithGuardrails:
         details_str = exc_info.value.details
         assert details_str.count("HATE") == 1  # Should appear only once despite duplicate
         assert "POLITICS" in details_str
+
+    @patch("codemie.rest_api.routers.assistant._save_error")
+    @patch("codemie.rest_api.routers.assistant.request_summary_manager.create_request_summary")
+    @patch("codemie.rest_api.routers.assistant.assistant_user_interaction_service.record_usage")
+    @patch("codemie.rest_api.routers.assistant.get_request_handler")
+    def test_reraises_mcp_authentication_required_without_wrapping(
+        self,
+        mock_get_handler,
+        mock_record_usage,
+        mock_request_summary,
+        mock_save_error,
+        mock_user,
+        mock_assistant,
+    ):
+        auth_payload = {
+            "error": "authentication_required",
+            "servers": [
+                {
+                    "mcp_config_id": "mcp-1",
+                    "mcp_config_name": "GitHub",
+                    "mcp_server_name": "GitHub",
+                    "auth_config_id": "auth-1",
+                    "auth_type": "oauth2",
+                    "as_hostname": "login.example.com",
+                    "status": "authentication_required",
+                    "error_context": None,
+                    "initiate_url": "/v1/mcp-auth/oauth2/initiate",
+                }
+            ],
+        }
+        auth_error = MCPAuthenticationRequiredException(auth_payload)
+        mock_handler = MagicMock()
+        mock_handler.process_request.side_effect = auth_error
+        mock_get_handler.return_value = mock_handler
+
+        request = AssistantChatRequest(text=None)
+        raw_request = MagicMock()
+        raw_request.state.uuid = "test-uuid"
+        background_tasks = MagicMock()
+
+        with pytest.raises(MCPAuthenticationRequiredException) as exc_info:
+            _ask_assistant(mock_assistant, raw_request, request, mock_user, background_tasks)
+
+        assert exc_info.value.payload == auth_payload
+        mock_save_error.assert_not_called()
 
 
 class TestPrepareAssistantForExecutionWithSkills:

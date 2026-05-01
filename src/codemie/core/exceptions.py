@@ -66,6 +66,23 @@ class InterruptedException(Exception):
         super().__init__(message)
 
 
+class MCPAuthenticationRequiredException(Exception):
+    """Raised when an MCP server requires user authentication before tools can be used.
+
+    Defined here as infrastructure for core to catch. Bridge-layer code
+    translates enterprise resolver exceptions into this type before raising
+    into the core workflow path.
+
+    Attributes:
+        payload: Structured auth context. BaseNode enriches this with
+            `node_name` and serializes it into workflow execution output.
+    """
+
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+        super().__init__(str(payload))
+
+
 class LiteLLMException(Exception):
     """
     Base exception for LiteLLM service errors.

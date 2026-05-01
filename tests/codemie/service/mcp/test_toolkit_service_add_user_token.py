@@ -19,11 +19,14 @@ Covers the conditional OIDC token exchange logic introduced alongside the
 audience field on MCPServerConfig.
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
 
-from codemie.service.mcp.toolkit_service import MCPToolkitService
+import pytest
+
+from codemie.rest_api.models.assistant import MCPServerDetails
 from codemie.rest_api.security.user import User
+from codemie.service.mcp.models import MCPExecutionContext, MCPServerConfig
+from codemie.service.mcp.toolkit_service import MCPToolkitService
 
 _AUDIENCE = "oauth-client.epm-srdr.staffing-radar"
 _TOKEN_EXCHANGE_URL = "https://access.epam.com/auth/realms/plusx/protocol/openid-connect/token"
@@ -33,6 +36,7 @@ _TOKEN_EXCHANGE_URL = "https://access.epam.com/auth/realms/plusx/protocol/openid
 def mock_user():
     user = MagicMock(spec=User)
     user.id = "user-123"
+    user.name = "Test User"
     user.username = "test.user"
     return user
 
@@ -137,3 +141,59 @@ def test_exception_during_fetch_continues(mock_get_user, mock_user):
         _call(headers, env_vars, audience=None)
 
     assert "token" not in env_vars["user"]
+
+
+def _build_mcp_server(*, audience=None):
+    return MCPServerDetails(
+        name="legacy-server",
+        enabled=True,
+        config=MCPServerConfig(
+            command="uvx",
+            args=["example-server"],
+            env={},
+            headers={"Authorization": "Bearer [user.token]", "X-User": "{{user.username}}"},
+            audience=audience,
+        ),
+    )
+
+
+@patch("codemie.service.mcp.toolkit_service.get_current_user")
+def test_legacy_resolver_seam_uses_factory_token(mock_get_user, mock_user):
+    mock_get_user.return_value = mock_user
+
+    with patch("codemie.service.mcp.toolkit_service.token_exchange_service") as mock_factory:
+        mock_factory.get_token_for_current_user.return_value = "factory-token"
+
+        server_config = MCPToolkitService._prepare_server_config(
+            mcp_server=_build_mcp_server(),
+            user_id="user-123",
+            execution_context=MCPExecutionContext(user_id="user-123"),
+        )
+
+    mock_factory.get_token_for_current_user.assert_called_once()
+    assert server_config.headers == {
+        "Authorization": "Bearer factory-token",
+        "X-User": "test.user",
+    }
+
+
+@patch("codemie.service.mcp.toolkit_service.get_current_user")
+def test_legacy_resolver_seam_uses_oidc_exchange(mock_get_user, mock_user):
+    mock_get_user.return_value = mock_user
+
+    with patch("codemie.service.mcp.toolkit_service.config") as mock_config:
+        mock_config.TOKEN_EXCHANGE_URL = _TOKEN_EXCHANGE_URL
+        with patch("codemie.service.security.oidc_token_exchange_service.oidc_token_exchange_service") as mock_oidc:
+            mock_oidc.get_exchanged_token.return_value = "oidc-exchanged-token"
+            with patch("codemie.service.mcp.toolkit_service.token_exchange_service") as mock_factory:
+                server_config = MCPToolkitService._prepare_server_config(
+                    mcp_server=_build_mcp_server(audience=_AUDIENCE),
+                    user_id="user-123",
+                    execution_context=MCPExecutionContext(user_id="user-123"),
+                )
+
+    mock_factory.get_token_for_current_user.assert_not_called()
+    assert server_config.headers == {
+        "Authorization": "Bearer oidc-exchanged-token",
+        "X-User": "test.user",
+    }

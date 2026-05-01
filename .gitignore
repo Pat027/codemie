@@ -57,3 +57,6 @@ bmad/*
 /CLAUDE.local.md
 /.superpowers/
 /docs/superpowers/
+/.codex/config.toml
+/opencode.json
+/run_claude.sh

@@ -170,6 +170,20 @@ def has_migration() -> bool:
     return HAS_MIGRATION
 
 
+# MCP Auth imports
+try:
+    import codemie_enterprise.mcp_auth  # noqa: F401 — package availability check
+
+    HAS_MCP_AUTH = True
+except ImportError:
+    HAS_MCP_AUTH = False
+
+
+def has_mcp_auth() -> bool:
+    """Check if MCP Auth enterprise feature is available."""
+    return HAS_MCP_AUTH
+
+
 # Export all
 __all__ = [
     # LangFuse
@@ -216,4 +230,7 @@ __all__ = [
     "KeycloakAdminClient",
     "KeycloakAdminUser",
     "has_migration",
+    # MCP Auth
+    "HAS_MCP_AUTH",
+    "has_mcp_auth",
 ]

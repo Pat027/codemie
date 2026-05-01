@@ -179,6 +179,45 @@ def test_last_admin_deactivation_blocked(mock_get_session, mock_repo, mock_logge
     assert "blocked_last_admin_deactivation" in log_call
 
 
+@patch("codemie.service.user.user_management_service.enqueue_mcp_auth_cleanup")
+@patch("codemie.service.user.user_management_service.user_repository")
+@patch("codemie.clients.postgres.get_session")
+def test_deactivate_user_flow_schedules_cleanup_after_commit(
+    mock_get_session, mock_repo, mock_enqueue_cleanup, regular_user
+):
+    mock_session = MagicMock()
+    mock_get_session.return_value.__enter__.return_value = mock_session
+    mock_repo.get_by_id.return_value = regular_user
+    mock_repo.deactivate.return_value = regular_user
+
+    result = UserManagementService.deactivate_user_flow(user_id="regular-1", actor_user_id="system")
+
+    assert result == {"message": "User deactivated successfully"}
+    mock_session.commit.assert_called_once_with()
+    mock_enqueue_cleanup.assert_called_once_with("regular-1")
+
+
+@patch("codemie.service.user.user_management_service.enqueue_mcp_auth_cleanup")
+@patch("codemie.service.user.user_management_service.user_repository")
+@patch("codemie.clients.postgres.get_session")
+def test_deactivate_user_flow_does_not_schedule_cleanup_when_commit_fails(
+    mock_get_session,
+    mock_repo,
+    mock_enqueue_cleanup,
+    regular_user,
+):
+    mock_session = MagicMock()
+    mock_session.commit.side_effect = RuntimeError("commit failed")
+    mock_get_session.return_value.__enter__.return_value = mock_session
+    mock_repo.get_by_id.return_value = regular_user
+    mock_repo.deactivate.return_value = regular_user
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        UserManagementService.deactivate_user_flow(user_id="regular-1", actor_user_id="system")
+
+    mock_enqueue_cleanup.assert_not_called()
+
+
 # ===========================================
 # AC-4: Symmetric revocation (2 admins)
 # ===========================================

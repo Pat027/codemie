@@ -40,9 +40,11 @@ from codemie.enterprise.plugin import (
     set_global_plugin_service,
     get_global_plugin_service,
 )
+from codemie.enterprise.mcp_auth.router import get_mcp_auth_router
+from codemie.enterprise.mcp_auth.dependencies import initialize_mcp_auth, shutdown_mcp_auth
 from codemie.configs.logger import set_logging_info, logger
 from codemie.core.constants import APP_DESCRIPTION
-from codemie.core.exceptions import ExtendedHTTPException
+from codemie.core.exceptions import ExtendedHTTPException, MCPAuthenticationRequiredException
 from codemie.service.security.token_providers.base_provider import BrokerAuthRequiredException
 from codemie.rest_api.routers import budget_router, project_budget_router
 from codemie.rest_api.routers import (
@@ -286,6 +288,13 @@ def _setup_litellm_features():
             _setup_litellm_cache_cleanup_scheduler()
 
 
+async def ensure_predefined_budgets() -> None:
+    """Backward-compatible startup entrypoint for predefined budget initialization."""
+    from codemie.enterprise.litellm import ensure_predefined_budgets as _ensure_predefined_budgets
+
+    await _ensure_predefined_budgets()
+
+
 def _schedule_budget_reconciliation(app: FastAPI, tasks: list[asyncio.Task]) -> None:
     """Schedule budget reconciliation after readiness if enabled."""
     if not is_litellm_enabled():
@@ -452,6 +461,8 @@ async def _shutdown_services(app: FastAPI, langfuse_service, tasks: list):
 
     logger.info("Shutting down CodeMie application...")
 
+    await shutdown_mcp_auth()
+
     if langfuse_service is not None:
         langfuse_service.shutdown()
         logger.info("LangFuse service shutdown complete")
@@ -509,6 +520,8 @@ async def lifespan(app: FastAPI):
     from codemie.enterprise.idp import register_enterprise_idps
 
     register_enterprise_idps()
+
+    initialize_mcp_auth()
 
     # Initialize enterprise services
     langfuse_service, litellm_service = _initialize_enterprise_services(app)
@@ -676,6 +689,8 @@ if config.ENABLE_USER_MANAGEMENT:
     if config.IDP_PROVIDER == "local":
         app.include_router(local_auth_router.router)
 
+app.include_router(get_mcp_auth_router())
+
 
 @app.middleware("http")
 async def add_disconnect_handler(request: Request, call_next):
@@ -808,6 +823,15 @@ async def broker_auth_required_handler(request: Request, exc: BrokerAuthRequired
         status_code=status.HTTP_401_UNAUTHORIZED,
         content={"error": error_body},
         headers=headers,
+    )
+
+
+@app.exception_handler(MCPAuthenticationRequiredException)
+async def mcp_auth_required_handler(request: Request, exc: MCPAuthenticationRequiredException) -> JSONResponse:
+    logger.warning(f"MCP authentication required: {exc.payload}")
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content=exc.payload,
     )
 
 

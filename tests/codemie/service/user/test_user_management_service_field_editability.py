@@ -632,9 +632,10 @@ def test_user_type_update_allowed_for_regular_admin(mock_get_session, mock_repo,
 # ===========================================
 
 
+@patch("codemie.service.user.user_management_service.enqueue_mcp_auth_cleanup")
 @patch("codemie.service.user.user_management_service.user_repository")
 @patch("codemie.clients.postgres.get_session")
-def test_deactivation_via_put_is_active_false(mock_get_session, mock_repo, local_user):
+def test_deactivation_via_put_is_active_false(mock_get_session, mock_repo, mock_enqueue_cleanup, local_user):
     """AC-13: PUT with is_active=False triggers soft delete"""
     # Arrange
     mock_session = MagicMock()
@@ -677,8 +678,36 @@ def test_deactivation_via_put_is_active_false(mock_get_session, mock_repo, local
 
     # Assert
     assert result.is_active is False
+    mock_session.commit.assert_called_once_with()
+    mock_enqueue_cleanup.assert_called_once_with("user-local-1")
     assert result.deleted_at is not None
     mock_repo.soft_delete.assert_called_once_with(mock_session, "user-local-1")
+
+
+@patch("codemie.service.user.user_management_service.enqueue_mcp_auth_cleanup")
+@patch("codemie.service.user.user_management_service.user_repository")
+@patch("codemie.clients.postgres.get_session")
+def test_handle_deactivation_flow_does_not_schedule_cleanup_when_commit_fails(
+    mock_get_session,
+    mock_repo,
+    mock_enqueue_cleanup,
+    local_user,
+):
+    mock_session = MagicMock()
+    mock_session.commit.side_effect = RuntimeError("commit failed")
+    mock_get_session.return_value.__enter__.return_value = mock_session
+    mock_repo.get_by_id.return_value = local_user
+    mock_repo.count_active_admins.return_value = 2
+    mock_repo.soft_delete.return_value = True
+
+    with pytest.raises(RuntimeError, match="commit failed"):
+        UserManagementService.update_user_fields(
+            user_id="user-local-1",
+            actor_user_id="admin-1",
+            is_active=False,
+        )
+
+    mock_enqueue_cleanup.assert_not_called()
 
 
 @patch("codemie.clients.postgres.get_session")

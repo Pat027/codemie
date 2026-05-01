@@ -30,7 +30,7 @@ from codemie.configs import logger, config
 from codemie.configs.logger import set_logging_info
 from codemie.core.ability import Ability, Action
 from codemie.core.errors import ErrorDetailLevel
-from codemie.core.exceptions import ExtendedHTTPException
+from codemie.core.exceptions import ExtendedHTTPException, MCPAuthenticationRequiredException
 from codemie.core.models import (
     BaseResponse,
     BaseModelResponse,
@@ -559,6 +559,8 @@ def get_mcp_tools(
         return [toolkit_info]
 
     except BrokerAuthRequiredException:
+        raise
+    except MCPAuthenticationRequiredException:
         raise
     except MCPToolsInfoServiceError as e:
         logger.error(f"Failed getting MCP tools: {e.message}", exc_info=True)
@@ -1704,6 +1706,8 @@ def check_mcp_server(request: MCPServerCheckRequest, user: User = Depends(authen
         return JSONResponse(status_code=status.HTTP_200_OK, content={"success": success, "message": message})
     except BrokerAuthRequiredException:
         raise
+    except MCPAuthenticationRequiredException:
+        raise
     except Exception as e:
         raise ExtendedHTTPException(
             code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -2150,6 +2154,8 @@ def _ask_assistant(
         )
         _save_error(request_uuid, request, error, user, assistant)
         raise error from mce
+    except MCPAuthenticationRequiredException:
+        raise
     except BrokerAuthRequiredException:
         raise
     except Exception as e:

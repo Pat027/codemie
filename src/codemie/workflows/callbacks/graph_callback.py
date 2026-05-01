@@ -104,3 +104,16 @@ class LanggraphNodeCallback(BaseCallback):
             )
 
             self.reset_current_thought(state_id)
+
+    def on_node_fail(self, exception: Exception, *args, **kwargs):
+        state_id = kwargs.get('execution_state_id')
+        if state_id and state_id in self._thoughts:
+            current_thought = self._thoughts[state_id]
+            current_thought.in_progress = False
+            self.gen.send(
+                StreamedGenerationResult(
+                    thought=current_thought,
+                    context=self.get_thread_context(state_id),
+                ).model_dump_json()
+            )
+            self.reset_current_thought(state_id)

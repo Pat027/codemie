@@ -40,6 +40,7 @@ class WorkflowExecutionStatusEnum(str, Enum):
     FAILED = "Failed"
     SUCCEEDED = "Succeeded"
     ABORTED = "Aborted"
+    AUTHENTICATION_REQUIRED = "AUTHENTICATION_REQUIRED"
 
 
 class WorkflowExecutionCheckpoint(BaseModel):

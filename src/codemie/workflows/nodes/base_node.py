@@ -20,6 +20,7 @@ from typing import Generic, TypeVar, Type, Any, Optional
 from langgraph.types import Command
 
 from codemie.configs import logger
+from codemie.core.exceptions import MCPAuthenticationRequiredException
 from codemie.core.workflow_models import WorkflowExecutionStatusEnum, WorkflowState, WorkflowConfig
 from codemie.core.thought_queue import ThoughtQueue
 from codemie.rest_api.models.assistant import AssistantBase
@@ -256,6 +257,9 @@ class BaseNode(ABC, Generic[StateSchemaType]):
         except ExecutionAbortedException:
             self.workflow_execution_service.abort_state(execution_state_id)
             return {MESSAGES_VARIABLE: [ABORTED_MSG], NEXT_KEY: [END_NODE]}
+        except MCPAuthenticationRequiredException as e:
+            self._handle_mcp_auth_required(e, execution_state_id, current_node_name)
+            return {NEXT_KEY: [END_NODE]}
         except Exception as e:
             self.handle_execution_failure(e)
             self.workflow_execution_service.finish_state(
@@ -265,10 +269,27 @@ class BaseNode(ABC, Generic[StateSchemaType]):
             )
             # Call the on_complete method of each callback
             for callback in self.callbacks:
-                callback.on_node_fail(exception=e, args=self.args, kwargs=self.kwargs)
+                callback.on_node_fail(exception=e, execution_state_id=execution_state_id)
             raise e
         finally:
             self.after_execution(result=raw_output, state_schema=state_schema, args=self.args, kwargs=self.kwargs)
+
+    def _handle_mcp_auth_required(
+        self,
+        exc: MCPAuthenticationRequiredException,
+        execution_state_id: str,
+        current_node_name: str,
+    ) -> None:
+        enriched_payload = {**exc.payload, "node_name": current_node_name}
+        enriched_payload_json = json.dumps(enriched_payload)
+        self.workflow_execution_service.finish_state(
+            execution_state_id,
+            output=enriched_payload_json,
+            status=WorkflowExecutionStatusEnum.AUTHENTICATION_REQUIRED,
+        )
+        self.workflow_execution_service.mark_authentication_required(output=enriched_payload_json)
+        for callback in self.callbacks:
+            callback.on_node_fail(exception=exc, execution_state_id=execution_state_id)
 
     @classmethod
     def _prepare_iter_task_messages(cls, state_schema: Type[StateSchemaType]) -> list[str]:

@@ -19,12 +19,14 @@ This module provides models for managing a shareable pool of MCP server configur
 that can be selected and used across assistants.
 """
 
+from __future__ import annotations
+
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Any
 from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator
-from sqlmodel import Field as SQLField, Column, Index
+from sqlmodel import Field as SQLField, Column, Index, Session, select, text as sqltext
 from sqlalchemy.dialects.postgresql import JSONB
 
 from codemie.rest_api.models.base import BaseModelWithSQLSupport, PydanticType, PydanticListType
@@ -60,30 +62,43 @@ class MCPVariableDefinition(BaseModel):
     required: bool = Field(default=True, description="Whether this variable is required")
 
 
+class ConfigWarning(BaseModel):
+    """Warning attached to an MCP config read response when configuration is present but inactive."""
+
+    code: str
+    message: str
+    action: str
+
+
 class MCPServerConfigData(BaseModel):
     """
     MCP server configuration data.
     This represents the actual config block that will be used to start the MCP server.
     """
 
-    command: Optional[str] = Field(None, description="Command to invoke MCP server (e.g., 'uvx', 'npx')")
-    url: Optional[str] = Field(None, description="HTTP URL for remote MCP server")
-    args: List[str] = Field(default_factory=list, description="Arguments for the command")
-    headers: Dict[str, str] = Field(default_factory=dict, description="HTTP headers for URL-based servers")
-    env: Dict[str, Any] = Field(default_factory=dict, description="Environment variables")
-    type: Optional[str] = Field(None, description="Transport type (e.g., 'streamable-http')")
-    auth_token: Optional[str] = Field(None, description="Authentication token")
+    command: str | None = Field(None, description="Command to invoke MCP server (e.g., 'uvx', 'npx')")
+    url: str | None = Field(None, description="HTTP URL for remote MCP server")
+    args: list[str] = Field(default_factory=list, description="Arguments for the command")
+    headers: dict[str, str] = Field(default_factory=dict, description="HTTP headers for URL-based servers")
+    env: dict[str, Any] = Field(default_factory=dict, description="Environment variables")
+    type: str | None = Field(None, description="Transport type (e.g., 'streamable-http')")
+    auth_token: str | None = Field(None, description="Authentication token")
     single_usage: bool = Field(default=False, description="Whether server is single-use or persistent")
-    tools: Optional[List[str]] = Field(
+    tools: list[str] | None = Field(
         None,
         description="Optional list of tool names to use from this MCP server. "
         "If specified, only these tools will be available. "
         "If None or empty, all tools from the server will be used.",
     )
-    audience: Optional[str] = Field(
+    audience: str | None = Field(
         None,
         description="OAuth2 audience for OIDC token exchange (RFC 8693). When set, the user's IdP token "
         "will be exchanged for a service-specific token scoped to this audience.",
+    )
+    auth_config: dict[str, Any] | None = Field(
+        None,
+        description="Authentication configuration for this MCP server. Stored as raw dict; "
+        "typed models (OAuth2AuthConfig / SAMLAuthConfig) live in enterprise only.",
     )
 
 
@@ -97,35 +112,35 @@ class MCPConfig(BaseModelWithSQLSupport, table=True):
     __tablename__ = "mcp_configs"
 
     # Inherited from BaseModelWithSQLSupport:
-    # - id: Optional[str] (primary key)
+    # - id: str | None (primary key)
     # - date: Optional[datetime] (creation date)
     # - update_date: Optional[datetime] (last update)
 
     # Basic information
     name: str = SQLField(index=True, description=MCP_SERVER_NAME_DESCRIPTION)
-    description: Optional[str] = SQLField(None, description="Description of what the MCP server does")
+    description: str | None = SQLField(None, description="Description of what the MCP server does")
 
     # URLs for documentation
-    server_home_url: Optional[str] = SQLField(None, description="Link to MCP server documentation")
-    source_url: Optional[str] = SQLField(None, description="Link to source code repository")
+    server_home_url: str | None = SQLField(None, description="Link to MCP server documentation")
+    source_url: str | None = SQLField(None, description="Link to source code repository")
 
     # Logo/Icon
-    logo_url: Optional[str] = SQLField(None, description="URL to server logo/icon")
+    logo_url: str | None = SQLField(None, description="URL to server logo/icon")
 
     # Categories
-    categories: List[str] = SQLField(
+    categories: list[str] = SQLField(
         default_factory=list, sa_column=Column(JSONB), description="Categories for filtering (max 3)"
     )
 
     # Server configuration
-    config: Optional[MCPServerConfigData] = SQLField(
+    config: MCPServerConfigData | None = SQLField(
         default=None,
         sa_column=Column('config', PydanticType(MCPServerConfigData)),
         description=MCP_SERVER_CONFIG_DESCRIPTION,
     )
 
     # Required environment variables
-    required_env_vars: List[MCPVariableDefinition] = SQLField(
+    required_env_vars: list[MCPVariableDefinition] = SQLField(
         default_factory=list,
         sa_column=Column('required_env_vars', PydanticListType(MCPVariableDefinition)),
         description="Required environment variables with descriptions",
@@ -137,7 +152,7 @@ class MCPConfig(BaseModelWithSQLSupport, table=True):
     is_system: bool = SQLField(default=False, description="Whether this is a system-provided config")
 
     # Metadata
-    created_by: Optional[CreatedByUser] = SQLField(
+    created_by: CreatedByUser | None = SQLField(
         default=None,
         sa_column=Column('created_by', PydanticType(CreatedByUser)),
         description="Information about who created this config",
@@ -153,7 +168,28 @@ class MCPConfig(BaseModelWithSQLSupport, table=True):
     __table_args__ = (
         Index('ix_mcp_configs_name_user', 'name', 'user_id'),
         Index('ix_mcp_configs_is_public', 'is_public'),
+        Index(
+            'ix_mcp_configs_auth_config_id',
+            sqltext("((config->'auth_config'->>'id'))"),
+            unique=True,
+            postgresql_using='btree',
+            postgresql_where=sqltext("(config->'auth_config'->>'id') IS NOT NULL"),
+        ),
     )
+
+    @classmethod
+    def get_by_auth_config_id(cls, auth_config_id: str) -> MCPConfig | None:
+        """Reverse lookup from auth_config.id to owning MCPConfig.
+
+        Uses the partial unique index ``ix_mcp_configs_auth_config_id`` for
+        efficient lookup.  The ``IS NOT NULL`` predicate allows the query planner
+        to use the index automatically.
+        """
+        with Session(cls.get_engine()) as session:
+            statement = select(cls).where(
+                cls.config["auth_config"]["id"].astext == auth_config_id,  # type: ignore
+            )
+            return session.exec(statement).first()
 
 
 # API Request/Response Models
@@ -163,20 +199,20 @@ class MCPConfigCreateRequest(BaseModel):
     """Request model for creating a new MCP configuration"""
 
     name: str = Field(min_length=1, max_length=255, description=MCP_SERVER_NAME_DESCRIPTION)
-    description: Optional[str] = Field(None, max_length=2000, description="Description of the MCP server")
-    server_home_url: Optional[str] = Field(None, description="Link to MCP documentation")
-    source_url: Optional[str] = Field(None, description="Link to source code")
-    logo_url: Optional[str] = Field(None, description="URL to server logo")
-    categories: List[str] = Field(default_factory=list, max_length=3, description="Categories (max 3)")
+    description: str | None = Field(None, max_length=2000, description="Description of the MCP server")
+    server_home_url: str | None = Field(None, description="Link to MCP documentation")
+    source_url: str | None = Field(None, description="Link to source code")
+    logo_url: str | None = Field(None, description="URL to server logo")
+    categories: list[str] = Field(default_factory=list, max_length=3, description="Categories (max 3)")
     config: MCPServerConfigData = Field(description=MCP_SERVER_CONFIG_DESCRIPTION)
-    required_env_vars: List[MCPVariableDefinition] = Field(
+    required_env_vars: list[MCPVariableDefinition] = Field(
         default_factory=list, description="Required environment variables"
     )
     is_public: bool = Field(default=False, description="Make this config public")
 
     @field_validator('categories')
     @classmethod
-    def validate_categories(cls, v: List[str]) -> List[str]:
+    def validate_categories(cls, v: list[str]) -> list[str]:
         """Validate categories"""
         if len(v) > 3:
             raise ValueError("Maximum 3 categories allowed")
@@ -186,20 +222,20 @@ class MCPConfigCreateRequest(BaseModel):
 class MCPConfigUpdateRequest(BaseModel):
     """Request model for updating an existing MCP configuration"""
 
-    name: Optional[str] = Field(None, min_length=1, max_length=255, description=MCP_SERVER_NAME_DESCRIPTION)
-    description: Optional[str] = Field(None, max_length=2000, description="Description of the MCP server")
-    server_home_url: Optional[str] = Field(None, description="Link to MCP documentation")
-    source_url: Optional[str] = Field(None, description="Link to source code")
-    logo_url: Optional[str] = Field(None, description="URL to server logo")
-    categories: Optional[List[str]] = Field(None, max_length=3, description="Categories (max 3)")
-    config: Optional[MCPServerConfigData] = Field(None, description=MCP_SERVER_CONFIG_DESCRIPTION)
-    required_env_vars: Optional[List[MCPVariableDefinition]] = Field(None, description="Required environment variables")
-    is_public: Optional[bool] = Field(None, description="Make this config public")
-    is_active: Optional[bool] = Field(None, description="Activate/deactivate this config")
+    name: str | None = Field(None, min_length=1, max_length=255, description=MCP_SERVER_NAME_DESCRIPTION)
+    description: str | None = Field(None, max_length=2000, description="Description of the MCP server")
+    server_home_url: str | None = Field(None, description="Link to MCP documentation")
+    source_url: str | None = Field(None, description="Link to source code")
+    logo_url: str | None = Field(None, description="URL to server logo")
+    categories: list[str] | None = Field(None, max_length=3, description="Categories (max 3)")
+    config: MCPServerConfigData | None = Field(None, description=MCP_SERVER_CONFIG_DESCRIPTION)
+    required_env_vars: list[MCPVariableDefinition] | None = Field(None, description="Required environment variables")
+    is_public: bool | None = Field(None, description="Make this config public")
+    is_active: bool | None = Field(None, description="Activate/deactivate this config")
 
     @field_validator('categories')
     @classmethod
-    def validate_categories(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+    def validate_categories(cls, v: list[str] | None) -> list[str] | None:
         """Validate categories"""
         if v is not None and len(v) > 3:
             raise ValueError("Maximum 3 categories allowed")
@@ -211,27 +247,28 @@ class MCPConfigResponse(BaseModel):
 
     id: str
     name: str
-    description: Optional[str]
-    server_home_url: Optional[str]
-    source_url: Optional[str]
-    logo_url: Optional[str]
-    categories: List[str]
-    config: Optional[MCPServerConfigData]
-    required_env_vars: List[MCPVariableDefinition]
+    description: str | None
+    server_home_url: str | None
+    source_url: str | None
+    logo_url: str | None
+    categories: list[str]
+    config: MCPServerConfigData | None
+    required_env_vars: list[MCPVariableDefinition]
     user_id: str
     is_public: bool
     is_system: bool
-    created_by: Optional[CreatedByUser]
+    created_by: CreatedByUser | None
     usage_count: int
     is_active: bool
-    date: Optional[datetime]
-    update_date: Optional[datetime]
+    warnings: list[ConfigWarning] = Field(default_factory=list)
+    date: datetime | None
+    update_date: datetime | None
 
 
 class MCPConfigListResponse(BaseModel):
     """Response model for list of MCP configurations"""
 
     total: int
-    configs: List[MCPConfigResponse]
+    configs: list[MCPConfigResponse]
     page: int
     per_page: int

@@ -20,6 +20,7 @@ from .loader import (
     HAS_IDP,
     HAS_LANGFUSE,
     HAS_LITELLM,
+    HAS_MCP_AUTH,
     HAS_PLUGIN,
     LangFuseConfig,
     LangFuseService,
@@ -42,6 +43,7 @@ from .loader import (
     has_idp,
     has_langfuse,
     has_litellm,
+    has_mcp_auth,
     has_plugin,
 )
 
@@ -98,6 +100,11 @@ from .plugin import (
     set_global_plugin_service,
 )
 
+# MCP Auth integration
+from .mcp_auth import (
+    is_mcp_auth_enabled,
+)
+
 # IDP integration
 from .idp import (
     is_enterprise_idp_available,
@@ -109,6 +116,7 @@ __all__ = [
     "HAS_IDP",
     "HAS_LANGFUSE",
     "HAS_LITELLM",
+    "HAS_MCP_AUTH",
     "HAS_PLUGIN",
     # Classes and Types
     "BudgetTable",
@@ -177,6 +185,9 @@ __all__ = [
     "initialize_plugin_from_config",
     "is_plugin_enabled",
     "set_global_plugin_service",
+    # MCP Auth functions
+    "has_mcp_auth",
+    "is_mcp_auth_enabled",
     # IDP functions
     "has_idp",
     "is_enterprise_idp_available",

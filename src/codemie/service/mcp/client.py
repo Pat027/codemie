@@ -119,7 +119,10 @@ class MCPConnectClient:
             args=server_config.args,
             params={},
             env=server_config.env,
-            mcp_headers=server_config.headers,
+            mcp_headers=_merge_mcp_headers(
+                server_config.headers,
+                execution_context.auth_headers if execution_context else None,
+            ),
             http_transport_type=server_config.type,
             single_usage=server_config.single_usage or False,
             # Inject execution context fields
@@ -210,7 +213,10 @@ class MCPConnectClient:
             args=server_config.args,
             params={"name": tool_name, "arguments": tool_args},
             env=server_config.env,
-            mcp_headers=server_config.headers,
+            mcp_headers=_merge_mcp_headers(
+                server_config.headers,
+                execution_context.auth_headers if execution_context else None,
+            ),
             http_transport_type=server_config.type,
             single_usage=server_config.single_usage or False,
             # Inject execution context fields
@@ -238,6 +244,16 @@ class MCPConnectClient:
             except ValidationError as e:
                 logger.error(f"Failed to parse tool invocation response: {e}")
                 raise ValueError(f"Invalid response from MCP-Connect: {e}")
+
+
+def _merge_mcp_headers(
+    server_headers: dict[str, str] | None,
+    auth_headers: dict[str, str] | None,
+) -> dict[str, str]:
+    """Merge static server headers with request-scoped auth headers; auth values override on collision."""
+    merged_headers = dict(server_headers or {})
+    merged_headers.update(auth_headers or {})
+    return merged_headers
 
 
 def _get_headers(bucket_no: int, server_config: MCPServerConfig) -> dict[str, str]:

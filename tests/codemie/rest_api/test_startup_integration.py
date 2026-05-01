@@ -61,7 +61,13 @@ def mock_non_litellm_startup():
                     with patch("codemie.rest_api.main.create_preconfigured_workflows"):
                         with patch("codemie.rest_api.main.import_preconfigured_katas"):
                             with patch("codemie.rest_api.main._setup_memory_profiling_scheduler"):
-                                yield
+                                with patch("codemie.rest_api.main.initialize_mcp_auth"):
+                                    with patch("codemie.rest_api.main.shutdown_mcp_auth", new_callable=AsyncMock):
+                                        with patch(
+                                            "codemie.rest_api.main.ensure_predefined_budgets",
+                                            new_callable=AsyncMock,
+                                        ):
+                                            yield
 
 
 class TestLiteLLMServiceInitialization:
@@ -358,3 +364,59 @@ class TestGlobalServiceRegistry:
                                 async with lifespan(mock_app):
                                     # Verify service was registered globally
                                     mock_set_global.assert_called_once_with(mock_langfuse_service)
+
+
+class TestMCPAuthStartupValidation:
+    @pytest.mark.asyncio
+    async def test_initialize_mcp_auth_runs_during_startup(self, mock_app, mock_non_litellm_startup):
+        from codemie.rest_api.main import lifespan
+
+        with patch("codemie.rest_api.main.initialize_litellm_from_config", return_value=None):
+            with patch("codemie.rest_api.main.initialize_langfuse_from_config", return_value=None):
+                with patch("codemie.rest_api.main.is_litellm_enabled", return_value=False):
+                    with patch("codemie.rest_api.main.set_global_litellm_service"):
+                        with patch("codemie.rest_api.main.set_global_langfuse_service"):
+                            with patch("codemie.rest_api.main.close_llm_proxy_client", new_callable=AsyncMock):
+                                with patch("codemie.rest_api.main.initialize_mcp_auth") as mock_initialize_mcp_auth:
+                                    async with lifespan(mock_app):
+                                        pass
+
+                                    mock_initialize_mcp_auth.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_initialize_mcp_auth_failure_aborts_startup(self, mock_app, mock_non_litellm_startup):
+        from codemie.rest_api.main import lifespan
+
+        with patch("codemie.rest_api.main.initialize_litellm_from_config", return_value=None):
+            with patch("codemie.rest_api.main.initialize_langfuse_from_config", return_value=None):
+                with patch("codemie.rest_api.main.is_litellm_enabled", return_value=False):
+                    with patch("codemie.rest_api.main.set_global_litellm_service"):
+                        with patch("codemie.rest_api.main.set_global_langfuse_service"):
+                            with patch("codemie.rest_api.main.close_llm_proxy_client", new_callable=AsyncMock):
+                                with patch(
+                                    "codemie.rest_api.main.initialize_mcp_auth",
+                                    side_effect=RuntimeError("bad secret"),
+                                ):
+                                    with pytest.raises(RuntimeError, match="bad secret"):
+                                        async with lifespan(mock_app):
+                                            pass
+
+    @pytest.mark.asyncio
+    async def test_shutdown_mcp_auth_runs_during_shutdown(self, mock_app, mock_non_litellm_startup):
+        from codemie.rest_api.main import lifespan
+
+        with patch("codemie.rest_api.main.initialize_litellm_from_config", return_value=None):
+            with patch("codemie.rest_api.main.initialize_langfuse_from_config", return_value=None):
+                with patch("codemie.rest_api.main.is_litellm_enabled", return_value=False):
+                    with patch("codemie.rest_api.main.set_global_litellm_service"):
+                        with patch("codemie.rest_api.main.set_global_langfuse_service"):
+                            with patch("codemie.rest_api.main.close_llm_proxy_client", new_callable=AsyncMock):
+                                with patch("codemie.rest_api.main.initialize_mcp_auth"):
+                                    with patch(
+                                        "codemie.rest_api.main.shutdown_mcp_auth",
+                                        new_callable=AsyncMock,
+                                    ) as mock_shutdown_mcp_auth:
+                                        async with lifespan(mock_app):
+                                            pass
+
+                                        mock_shutdown_mcp_auth.assert_awaited_once_with()

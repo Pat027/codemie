@@ -136,6 +136,36 @@ class WorkflowExecutionService:
                 state.status = WorkflowExecutionStatusEnum.SUCCEEDED
                 state.save()
 
+    def mark_authentication_required(self, output: str) -> None:
+        """Set the overall workflow execution status to AUTHENTICATION_REQUIRED.
+
+        Called by BaseNode when MCPAuthenticationRequiredException is raised,
+        before the workflow graph exits. This stores the terminal status and
+        output so `finish()` can preserve them later while still running shared
+        cleanup such as token accounting, history updates, metrics, and summary
+        clearing.
+
+        Args:
+            output: Serialized auth-required payload to persist on the overall
+                workflow execution record.
+        """
+        with self.workflow_execution_lock:
+            self._refresh_workflow_execution()
+            if not self.workflow_execution:
+                logger.error(
+                    f"Workflow execution not found for execution_id: {self.workflow_execution_id}. "
+                    "Cannot mark workflow as authentication required."
+                )
+                return
+
+            logger.info(
+                f"Overall status for Execution ID: {self.workflow_execution.execution_id} "
+                f"set to {WorkflowExecutionStatusEnum.AUTHENTICATION_REQUIRED}"
+            )
+            self.workflow_execution.overall_status = WorkflowExecutionStatusEnum.AUTHENTICATION_REQUIRED
+            self.workflow_execution.output = output
+            self.workflow_execution.update(refresh=True)
+
     def finish(self):
         with self.workflow_execution_lock:
             self._refresh_workflow_execution()
@@ -149,15 +179,21 @@ class WorkflowExecutionService:
             if self.workflow_execution.overall_status == WorkflowExecutionStatusEnum.ABORTED:
                 return
 
-            logger.info(
-                f"Overall status for Execution ID: {self.workflow_execution.execution_id} "
-                f"set to {WorkflowExecutionStatusEnum.SUCCEEDED}"
-            )
             self.workflow_execution.tokens_usage = self._calculate_tokens_usage(
                 self.workflow_execution_id,
             )
 
-            self.workflow_execution.overall_status = WorkflowExecutionStatusEnum.SUCCEEDED
+            if self.workflow_execution.overall_status == WorkflowExecutionStatusEnum.AUTHENTICATION_REQUIRED:
+                logger.info(
+                    f"Overall status for Execution ID: {self.workflow_execution.execution_id} "
+                    f"preserved as {WorkflowExecutionStatusEnum.AUTHENTICATION_REQUIRED}"
+                )
+            else:
+                logger.info(
+                    f"Overall status for Execution ID: {self.workflow_execution.execution_id} "
+                    f"set to {WorkflowExecutionStatusEnum.SUCCEEDED}"
+                )
+                self.workflow_execution.overall_status = WorkflowExecutionStatusEnum.SUCCEEDED
 
             # Update assistant response in history with final output
             self._update_assistant_response_in_history(self.workflow_execution.output)
