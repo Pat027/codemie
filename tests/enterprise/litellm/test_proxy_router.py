@@ -36,6 +36,7 @@ from codemie.core.constants import (
     HEADER_CODEMIE_SESSION_ID,
 )
 from codemie.enterprise.litellm.budget_categories import BudgetCategory
+from codemie.enterprise.litellm.credentials import ResolvedLiteLLMUserCredentials
 from codemie.enterprise.litellm.proxy_router import (
     _build_premium_budget_error_body,
     _check_cli_version,
@@ -47,6 +48,7 @@ from codemie.enterprise.litellm.proxy_router import (
     _resolve_project_budget_runtime,
     register_proxy_endpoints,
 )
+from codemie.rest_api.models.settings import LiteLLMCredentials
 from codemie.service.budget.budget_enums import BudgetCategory as CoreBudgetCategory
 
 
@@ -411,46 +413,70 @@ class TestPrepareProxyHeaders:
 
         assert result["Authorization"] == "Bearer proxy-key"
 
-    def test_prepare_headers_with_integration(self):
-        """Test preparing headers with integration ID."""
+    def test_prepare_headers_ignores_integration_header_without_user_credentials(self):
+        """Integration header should not select project credentials for proxy auth."""
         mock_request = MagicMock()
         mock_request.headers = Headers(
             {
                 "content-type": "application/json",
-                HEADER_CODEMIE_INTEGRATION: "integration-123",
+                HEADER_CODEMIE_INTEGRATION: "project-integration",
             }
         )
 
         with patch("codemie.enterprise.litellm.proxy_router._get_integration_api_key") as mock_get_key:
-            mock_get_key.return_value = "integration-api-key"
-            with patch("codemie.enterprise.litellm.proxy_router.litellm_context") as mock_context:
-                mock_context.get.side_effect = LookupError()
+            with patch("codemie.enterprise.litellm.proxy_router.config") as mock_config:
+                mock_config.LITE_LLM_APP_KEY = "platform-key"
+                mock_config.LITE_LLM_PROXY_APP_KEY = ""
+                with patch("codemie.enterprise.litellm.proxy_router.litellm_context") as mock_context:
+                    mock_context.get.side_effect = LookupError()
 
-                result = _prepare_proxy_headers(mock_request)
+                    result = _prepare_proxy_headers(mock_request, request_info={}, user_credentials=None)
 
-        assert result["Authorization"] == "Bearer integration-api-key"
-        mock_get_key.assert_called_once_with("integration-123")
+        assert result["Authorization"] == "Bearer platform-key"
+        mock_get_key.assert_not_called()
 
-    def test_prepare_headers_with_integration_error(self):
-        """Test preparing headers when integration lookup fails."""
+    def test_prepare_headers_uses_resolved_user_credentials(self):
+        """Resolved user credentials should be used for proxy auth."""
         mock_request = MagicMock()
-        mock_request.headers = Headers(
-            {
-                "content-type": "application/json",
-                HEADER_CODEMIE_INTEGRATION: "invalid-integration",
-            }
+        mock_request.headers = Headers({"content-type": "application/json"})
+        user_credentials = ResolvedLiteLLMUserCredentials(
+            credentials=LiteLLMCredentials(api_key="sk-user", url=""),
+            setting_id="setting-1",
+            alias="personal-key",
         )
 
-        with patch("codemie.enterprise.litellm.proxy_router._get_integration_api_key") as mock_get_key:
-            mock_get_key.side_effect = HTTPException(status_code=404, detail="Not found")
-            with patch("codemie.enterprise.litellm.proxy_router.litellm_context") as mock_context:
-                mock_context.get.side_effect = LookupError()
+        with patch("codemie.enterprise.litellm.proxy_router.litellm_context") as mock_context:
+            mock_context.get.side_effect = LookupError()
 
-                result = _prepare_proxy_headers(mock_request)
+            result = _prepare_proxy_headers(
+                mock_request,
+                request_info={},
+                user_credentials=user_credentials,
+            )
 
-        # Should return error response
-        assert hasattr(result, 'status_code')
-        assert result.status_code == 404
+        assert result["Authorization"] == "Bearer sk-user"
+
+    def test_prepare_headers_prefers_project_budget_key_over_user_credentials(self):
+        """Project budget runtime key has higher precedence than user credentials."""
+        mock_request = MagicMock()
+        mock_request.headers = Headers({"content-type": "application/json"})
+        user_credentials = ResolvedLiteLLMUserCredentials(
+            credentials=LiteLLMCredentials(api_key="sk-user", url=""),
+            setting_id="setting-1",
+            alias="personal-key",
+        )
+        request_info = {"budget_provider_api_key": "project-budget-key"}
+
+        with patch("codemie.enterprise.litellm.proxy_router.litellm_context") as mock_context:
+            mock_context.get.side_effect = LookupError()
+
+            result = _prepare_proxy_headers(
+                mock_request,
+                request_info=request_info,
+                user_credentials=user_credentials,
+            )
+
+        assert result["Authorization"] == "Bearer project-budget-key"
 
     def test_prepare_headers_with_context(self):
         """Test preparing headers with litellm context."""
@@ -610,7 +636,6 @@ class TestCreateBodyStreamWithOptionalInjection:
 
                         result = await _create_body_stream_with_optional_injection(
                             body_bytes=b"{}",
-                            has_own_credentials=False,
                             user=user,
                             request_info=request_info,
                         )
@@ -662,7 +687,6 @@ class TestCreateBodyStreamWithOptionalInjection:
 
                             result = await _create_body_stream_with_optional_injection(
                                 body_bytes=b"{}",
-                                has_own_credentials=False,
                                 user=user,
                                 request_info=request_info,
                             )
@@ -697,7 +721,6 @@ class TestCreateBodyStreamWithOptionalInjection:
 
                     result = await _create_body_stream_with_optional_injection(
                         body_bytes=b"{}",
-                        has_own_credentials=False,
                         user=user,
                         request_info=request_info,
                     )
@@ -744,7 +767,6 @@ class TestCreateBodyStreamWithOptionalInjection:
 
                             result = await _create_body_stream_with_optional_injection(
                                 body_bytes=b"{}",
-                                has_own_credentials=False,
                                 user=user,
                                 request_info=request_info,
                             )
@@ -800,7 +822,6 @@ class TestCreateBodyStreamWithOptionalInjection:
 
                             result = await _create_body_stream_with_optional_injection(
                                 body_bytes=b"{}",
-                                has_own_credentials=False,
                                 user=user,
                                 request_info=request_info,
                             )
@@ -860,7 +881,6 @@ class TestCreateBodyStreamWithOptionalInjection:
                             ):
                                 result = await _create_body_stream_with_optional_injection(
                                     body_bytes=b"{}",
-                                    has_own_credentials=False,
                                     user=user,
                                     request_info=request_info,
                                 )
@@ -868,6 +888,36 @@ class TestCreateBodyStreamWithOptionalInjection:
         assert result == "stream"
         mock_resolve_runtime.assert_awaited_once()
         assert mock_resolve_runtime.await_args.kwargs["category"] == BudgetCategory.PLATFORM
+
+    @pytest.mark.asyncio
+    async def test_resolved_user_credentials_skip_budget_injection(self):
+        """Resolved user credentials are treated as own credentials and skip budget injection."""
+        from codemie.enterprise.litellm.proxy_router import _create_body_stream_with_optional_injection
+
+        user = MagicMock()
+        user.id = "user-1"
+        user.username = "user@example.com"
+        request_info = {"llm_model": "gpt-4.1-mini", "session_id": "session-123", "request_id": "request-456"}
+        user_credentials = ResolvedLiteLLMUserCredentials(
+            credentials=LiteLLMCredentials(api_key="sk-user", url=""),
+            setting_id="setting-1",
+            alias="personal-key",
+        )
+
+        with patch("codemie.enterprise.litellm.proxy_router._inject_user_into_request_body_from_bytes") as mock_inject:
+            result = await _create_body_stream_with_optional_injection(
+                body_bytes=b"{}",
+                user=user,
+                request_info=request_info,
+                user_credentials=user_credentials,
+            )
+
+        collected = []
+        async for chunk in result:
+            collected.append(chunk)
+
+        assert collected == [b"{}"]
+        mock_inject.assert_not_called()
 
 
 class TestParseUsageWithCost:
@@ -1108,6 +1158,77 @@ class TestProxyToLLMProxy:
         assert result is not None
         # Verify metrics were tracked
         assert mock_background_tasks.add_task.called
+
+    @pytest.mark.asyncio
+    async def test_proxy_resolves_user_credentials_without_header(self):
+        """Proxy should resolve user credentials from backend settings without an integration header."""
+        from codemie.enterprise.litellm.proxy_router import _proxy_to_llm_proxy
+
+        mock_request = MagicMock()
+        mock_request.method = "POST"
+        mock_request.headers = Headers({HEADER_CODEMIE_CLIENT: "cli", HEADER_CODEMIE_CLI_MODEL: "gpt-4"})
+        mock_request.body = AsyncMock(return_value=b'{"messages": [], "model": "gpt-4"}')
+        mock_user = MagicMock()
+        mock_user.id = "user-123"
+        mock_user.username = "user@example.com"
+        background_tasks = MagicMock()
+        user_credentials = ResolvedLiteLLMUserCredentials(
+            credentials=LiteLLMCredentials(api_key="sk-user", url=""),
+            setting_id="setting-1",
+            alias="personal-key",
+        )
+        downstream = MagicMock()
+        downstream.status_code = 200
+        downstream.headers = httpx.Headers({"content-type": "application/json"})
+
+        async def mock_iter():
+            yield b'{"choices": []}'
+
+        downstream.aiter_raw = mock_iter
+
+        with (
+            patch("codemie.enterprise.litellm.proxy_router.is_litellm_enabled", return_value=True),
+            patch(
+                "codemie.enterprise.litellm.proxy_router.resolve_litellm_user_credentials",
+                return_value=user_credentials,
+            ) as mock_resolve,
+            patch(
+                "codemie.enterprise.litellm.proxy_router._create_body_stream_with_optional_injection",
+                new_callable=AsyncMock,
+            ) as mock_body,
+            patch("codemie.enterprise.litellm.proxy_router._prepare_proxy_headers") as mock_headers,
+            patch("codemie.enterprise.litellm.proxy_router.get_llm_proxy_client") as mock_client_factory,
+            patch("codemie.enterprise.litellm.proxy_router.config") as mock_config,
+        ):
+
+            async def body_stream():
+                yield b"{}"
+
+            mock_body.return_value = body_stream()
+            mock_headers.return_value = {"Authorization": "Bearer sk-user"}
+            mock_client = MagicMock()
+            mock_client.build_request.return_value = MagicMock()
+            mock_client.send = AsyncMock(return_value=downstream)
+            mock_client_factory.return_value = mock_client
+            mock_config.LLM_PROXY_TIMEOUT = 300
+            mock_config.LLM_PROXY_TRACK_USAGE = False
+
+            await _proxy_to_llm_proxy(
+                request=mock_request,
+                user=mock_user,
+                endpoint="/v1/chat/completions",
+                background_tasks=background_tasks,
+            )
+
+        mock_resolve.assert_called_once_with(
+            user_id="user-123",
+            username="user@example.com",
+            project_name="",
+        )
+        mock_body.assert_called_once()
+        assert mock_body.call_args.kwargs["user_credentials"] is user_credentials
+        mock_headers.assert_called_once()
+        assert mock_headers.call_args.kwargs["user_credentials"] is user_credentials
 
     @pytest.mark.asyncio
     async def test_proxy_disabled(self):

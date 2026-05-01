@@ -408,7 +408,13 @@ class SettingsService(BaseSettingsService):
             setting_hash=setting_hash,  # Pass the hash here
         )
 
-        return new_user_setting.save()
+        saved = new_user_setting.save()
+        cls._clear_litellm_user_credentials_cache_if_needed(
+            credential_type=request.credential_type,
+            settings_type=settings_type,
+            user_id=user_id,
+        )
+        return saved
 
     @classmethod
     def update_settings(
@@ -458,6 +464,35 @@ class SettingsService(BaseSettingsService):
         user_setting.is_global = request.is_global
         user_setting.update_date = datetime.now(UTC)
         user_setting.update()
+        cls._clear_litellm_user_credentials_cache_if_needed(
+            credential_type=request.credential_type,
+            settings_type=user_setting.setting_type,
+            user_id=user_id or user_setting.user_id,
+        )
+
+    @classmethod
+    def delete_setting(cls, credential_id: str, user_id: Optional[str] = None) -> None:
+        setting = Settings.get_by_id(id_=credential_id)
+        Settings.delete_setting(credential_id)
+        cls._clear_litellm_user_credentials_cache_if_needed(
+            credential_type=setting.credential_type,
+            settings_type=setting.setting_type,
+            user_id=user_id or setting.user_id,
+        )
+
+    @staticmethod
+    def _clear_litellm_user_credentials_cache_if_needed(
+        *,
+        credential_type: CredentialTypes,
+        settings_type: SettingType,
+        user_id: str | None,
+    ) -> None:
+        if credential_type != CredentialTypes.LITE_LLM or settings_type != SettingType.USER or not user_id:
+            return
+
+        from codemie.enterprise.litellm.credentials import clear_litellm_user_credentials_cache
+
+        clear_litellm_user_credentials_cache(user_id)
 
     @classmethod
     def _handle_new_creds(cls, existing_creds_dict, force_all, prepared_creds, user_setting):

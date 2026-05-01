@@ -71,6 +71,7 @@ from codemie.service.monitoring.llm_proxy_monitoring_service import LLMProxyMoni
 
 from .client import get_llm_proxy_client
 from .budget_categories import BudgetCategory
+from .credentials import ResolvedLiteLLMUserCredentials, resolve_litellm_user_credentials
 from .dependencies import (
     get_category_budget_id,
     get_premium_username,
@@ -153,8 +154,11 @@ def _log_proxy_auth_source_selected(
     )
 
 
-def _apply_proxy_auth_header(headers: dict, request: Request, request_info: dict | None) -> Response | None:
-    integration_id = request.headers.get(HEADER_CODEMIE_INTEGRATION)
+def _apply_proxy_auth_header(
+    headers: dict,
+    request_info: dict | None,
+    user_credentials: ResolvedLiteLLMUserCredentials | None = None,
+) -> Response | None:
     if request_info is not None and request_info.get("budget_provider_api_key"):
         provider_key = request_info["budget_provider_api_key"]
         headers["Authorization"] = f"Bearer {provider_key}"
@@ -165,17 +169,14 @@ def _apply_proxy_auth_header(headers: dict, request: Request, request_info: dict
         )
         return None
 
-    if integration_id:
-        try:
-            api_key = _get_integration_api_key(integration_id)
-        except HTTPException as exc:
-            return Response(content=exc.detail, status_code=exc.status_code)
+    if user_credentials is not None:
+        api_key = user_credentials.credentials.api_key
         headers["Authorization"] = f"Bearer {api_key}"
         _log_proxy_auth_source_selected(
-            auth_source="integration",
+            auth_source="user_credentials",
             api_key=api_key,
             request_info=request_info,
-            integration_id=integration_id,
+            integration_id=user_credentials.alias,
         )
         return None
 
@@ -431,7 +432,10 @@ def _resolve_non_premium_tracking_identity(
 
 
 async def _create_body_stream_with_optional_injection(
-    body_bytes: bytes, has_own_credentials: bool, user: User, request_info: dict
+    body_bytes: bytes,
+    user: User,
+    request_info: dict,
+    user_credentials: ResolvedLiteLLMUserCredentials | None = None,
 ):
     """
     Create body stream with or without user injection.
@@ -444,19 +448,18 @@ async def _create_body_stream_with_optional_injection(
 
     Args:
         body_bytes: Buffered request body
-        has_own_credentials: Whether user has their own integration credentials
         user: Authenticated user
         request_info: Request metadata
 
     Returns:
         AsyncGenerator: Body stream (modified or original)
     """
-    if has_own_credentials:
-        # Passthrough without user injection - budget tracked against integration key
+    if user_credentials is not None:
         logger.debug(
             f"budget_event=runtime_mode_selected component=proxy_router user_id={user.id!r} "
             f"username={user.username!r} project_name={request_info.get(PROJECT)!r} "
-            f"mode={RuntimeBudgetMode.USER_CREDENTIALS_BYPASS.value!r} reason=own_credentials"
+            f"mode={RuntimeBudgetMode.USER_CREDENTIALS_BYPASS.value!r} "
+            f"reason=user_credentials setting_alias={user_credentials.alias!r}"
         )
         return _stream_body_bytes(body_bytes)
 
@@ -606,7 +609,11 @@ async def _resolve_project_budget_runtime(user: User, category: BudgetCategory, 
     return provider_result
 
 
-def _prepare_proxy_headers(request: Request, request_info: dict | None = None) -> dict | Response:
+def _prepare_proxy_headers(
+    request: Request,
+    request_info: dict | None = None,
+    user_credentials: ResolvedLiteLLMUserCredentials | None = None,
+) -> dict | Response:
     """
     Prepare headers for proxying (uses codemie services).
 
@@ -619,7 +626,7 @@ def _prepare_proxy_headers(request: Request, request_info: dict | None = None) -
     # Extract and filter hop-by-hop headers
     headers = {k: v for k, v in request.headers.items() if k.lower() not in PROXY_HOP_BY_HOP_HEADERS}
 
-    auth_error = _apply_proxy_auth_header(headers, request, request_info)
+    auth_error = _apply_proxy_auth_header(headers, request_info, user_credentials)
     if auth_error is not None:
         return auth_error
     _apply_budget_provider_headers(headers, request_info)
@@ -1069,13 +1076,18 @@ async def _proxy_to_llm_proxy(
             detail=f"LLM Proxy endpoint {endpoint} not available. LLM_PROXY_ENABLED={config.LLM_PROXY_ENABLED}",
         )
 
-    # Check if user has their own integration credentials
-    # When using own credentials, budget is tracked against the integration key, NOT the user
-    has_own_credentials = request.headers.get(HEADER_CODEMIE_INTEGRATION) is not None
+    user_credentials = resolve_litellm_user_credentials(
+        user_id=user.id,
+        username=user.username,
+        project_name=request_info.get(PROJECT),
+    )
 
     # Create body stream (with or without user injection)
     body_stream = await _create_body_stream_with_optional_injection(
-        body_bytes=body_bytes, has_own_credentials=has_own_credentials, user=user, request_info=request_info
+        body_bytes=body_bytes,
+        user=user,
+        request_info=request_info,
+        user_credentials=user_credentials,
     )
 
     # Extract IDs for logging
@@ -1089,7 +1101,7 @@ async def _proxy_to_llm_proxy(
     )
 
     # Prepare headers (uses codemie services)
-    headers = _prepare_proxy_headers(request, request_info)
+    headers = _prepare_proxy_headers(request, request_info, user_credentials=user_credentials)
     if isinstance(headers, Response):
         return headers
 

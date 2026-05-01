@@ -336,7 +336,6 @@ class TestProxyPremiumUsernameInjection:
 
                     await _create_body_stream_with_optional_injection(
                         body_bytes=b'{"model":"claude-opus-4"}',
-                        has_own_credentials=False,
                         user=mock_user,
                         request_info=request_info,
                     )
@@ -373,7 +372,6 @@ class TestProxyPremiumUsernameInjection:
 
                     await _create_body_stream_with_optional_injection(
                         body_bytes=b'{"model":"claude-3-5-sonnet"}',
-                        has_own_credentials=False,
                         user=mock_user,
                         request_info=request_info,
                     )
@@ -407,7 +405,6 @@ class TestProxyPremiumUsernameInjection:
 
                     await _create_body_stream_with_optional_injection(
                         body_bytes=b'{"model":"gpt-4.1-mini"}',
-                        has_own_credentials=False,
                         user=mock_user,
                         request_info=request_info,
                     )
@@ -441,7 +438,6 @@ class TestProxyPremiumUsernameInjection:
 
                     await _create_body_stream_with_optional_injection(
                         body_bytes=b'{"model":"claude-opus-4"}',
-                        has_own_credentials=False,
                         user=mock_user,
                         request_info=request_info,
                     )
@@ -478,7 +474,6 @@ class TestProxyPremiumUsernameInjection:
 
                     await _create_body_stream_with_optional_injection(
                         body_bytes=b'{"model":"claude-opus-4"}',
-                        has_own_credentials=False,
                         user=mock_user,
                         request_info=request_info,
                     )

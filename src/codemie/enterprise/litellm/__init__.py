@@ -53,7 +53,10 @@ from .models import (
 
 # Credentials (from credentials.py)
 from .credentials import (
+    ResolvedLiteLLMUserCredentials,
+    clear_litellm_user_credentials_cache,
     get_litellm_credentials_for_user,
+    resolve_litellm_user_credentials,
 )
 
 # LLM Factory (from llm_factory.py)
@@ -110,7 +113,10 @@ __all__ = [
     "map_litellm_to_llm_model",
     "get_user_allowed_models",
     # Credentials
+    "ResolvedLiteLLMUserCredentials",
+    "clear_litellm_user_credentials_cache",
     "get_litellm_credentials_for_user",
+    "resolve_litellm_user_credentials",
     # LLM Factory
     "create_litellm_chat_model",
     "create_litellm_embedding_model",

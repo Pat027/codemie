@@ -549,12 +549,12 @@ async def test_update_user_setting_database_error(
 
 @pytest.mark.anyio
 @patch('codemie.core.ability.Ability.can')
-@patch('codemie.rest_api.models.settings.Settings.delete_setting')
 @patch('codemie.service.aws_bedrock.bedrock_orchestration_service.BedrockOrchestratorService.delete_all_entities')
 @patch('codemie.service.settings.settings.SettingsService.get_setting_ability')
+@patch('codemie.service.settings.settings.SettingsService.delete_setting')
 @patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
 async def test_delete_user_setting_success(
-    mock_authenticate, mock_get_setting_ability, mock_delete_bedrock, mock_delete_setting, mock_can, mock_user
+    mock_authenticate, mock_delete_setting, mock_get_setting_ability, mock_delete_bedrock, mock_can, mock_user
 ):
     """Test delete_user_setting successfully removes setting."""
     # Arrange
@@ -573,17 +573,17 @@ async def test_delete_user_setting_success(
     assert response.status_code == status.HTTP_200_OK
     assert response.json() == {"message": "Specified credential removed"}
     mock_delete_bedrock.assert_called_once_with("setting123")
-    mock_delete_setting.assert_called_once_with("setting123")
+    mock_delete_setting.assert_called_once_with(credential_id="setting123", user_id="user123")
 
 
 @pytest.mark.anyio
 @patch('codemie.core.ability.Ability.can')
-@patch('codemie.rest_api.models.settings.Settings.delete_setting')
 @patch('codemie.service.aws_bedrock.bedrock_orchestration_service.BedrockOrchestratorService.delete_all_entities')
 @patch('codemie.service.settings.settings.SettingsService.get_setting_ability')
+@patch('codemie.service.settings.settings.SettingsService.delete_setting')
 @patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
 async def test_delete_user_setting_not_found(
-    mock_authenticate, mock_get_setting_ability, mock_delete_bedrock, mock_delete_setting, mock_can, mock_user
+    mock_authenticate, mock_delete_setting, mock_get_setting_ability, mock_delete_bedrock, mock_can, mock_user
 ):
     """Test delete_user_setting raises 404 when setting not found."""
     # Arrange

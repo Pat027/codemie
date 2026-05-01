@@ -211,7 +211,7 @@ def delete_user_setting(setting_id: str, user: User = Depends(authenticate)):
             raise_access_denied("delete")
 
         BedrockOrchestratorService.delete_all_entities(setting_id)
-        Settings.delete_setting(setting_id)
+        SettingsService.delete_setting(credential_id=setting_id, user_id=user.id)
     except ExtendedHTTPException:
         raise
     except KeyError as e:

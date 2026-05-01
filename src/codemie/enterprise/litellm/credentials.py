@@ -14,40 +14,121 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
+
+from cachetools import TTLCache
+
+from codemie.configs import config, logger
 
 if TYPE_CHECKING:
     from codemie.rest_api.models.settings import LiteLLMCredentials
 
 
-def get_litellm_credentials_for_user(user_id: str, user_applications: list[str]) -> Optional["LiteLLMCredentials"]:
+@dataclass(frozen=True)
+class ResolvedLiteLLMUserCredentials:
+    credentials: LiteLLMCredentials
+    setting_id: str
+    alias: str | None = None
+
+
+_NO_USER_CREDENTIALS = object()
+_user_credentials_cache: TTLCache = TTLCache(maxsize=4096, ttl=config.LITELLM_USER_CREDENTIALS_CACHE_TTL)
+
+
+def _build_cache_key(user_id: str, project_name: str | None) -> tuple[str, str]:
+    return user_id, project_name or ""
+
+
+def clear_litellm_user_credentials_cache(user_id: str | None = None) -> None:
+    if user_id is None:
+        _user_credentials_cache.clear()
+        return
+    keys_to_delete = [key for key in _user_credentials_cache if key[0] == user_id]
+    for key in keys_to_delete:
+        _user_credentials_cache.pop(key, None)
+
+
+def resolve_litellm_user_credentials(
+    *,
+    user_id: str,
+    username: str,
+    project_name: str | None = None,
+) -> ResolvedLiteLLMUserCredentials | None:
+    if not user_id:
+        return None
+
+    cache_key = _build_cache_key(user_id, project_name)
+    if cache_key in _user_credentials_cache:
+        cached = _user_credentials_cache[cache_key]
+        return None if cached is _NO_USER_CREDENTIALS else cached
+
+    try:
+        resolved = _resolve_litellm_user_credentials_uncached(
+            user_id=user_id,
+            username=username,
+            project_name=project_name,
+        )
+    except Exception as exc:
+        logger.warning(
+            f"credential_event=user_litellm_credentials_resolution_failed "
+            f"username={username!r} user_id={user_id!r} project_name={project_name!r} "
+            f"exception_type={type(exc).__name__}"
+        )
+        resolved = None
+
+    _user_credentials_cache[cache_key] = resolved if resolved is not None else _NO_USER_CREDENTIALS
+    return resolved
+
+
+def _resolve_litellm_user_credentials_uncached(
+    *,
+    user_id: str,
+    username: str,
+    project_name: str | None,
+) -> ResolvedLiteLLMUserCredentials | None:
+    from codemie.service.settings.base_settings import SearchFields
+    from codemie.service.settings.settings import SettingsService
+    from codemie_tools.base.models import CredentialTypes
+
+    credentials = SettingsService.get_litellm_creds(project_name=project_name, user_id=user_id)
+    if not credentials or not credentials.api_key:
+        logger.debug(
+            f"credential_event=no_user_litellm_credentials username={username!r} "
+            f"user_id={user_id!r} project_name={project_name!r}"
+        )
+        return None
+
+    setting = SettingsService.retrieve_setting(
+        {
+            SearchFields.CREDENTIAL_TYPE: CredentialTypes.LITE_LLM,
+            SearchFields.PROJECT_NAME: project_name,
+            SearchFields.USER_ID: user_id,
+        }
+    )
+    return _build_resolved(setting, credentials)
+
+
+def _build_resolved(setting: object, credentials: LiteLLMCredentials) -> ResolvedLiteLLMUserCredentials:
+    return ResolvedLiteLLMUserCredentials(
+        credentials=credentials,
+        setting_id=getattr(setting, "id", ""),
+        alias=getattr(setting, "alias", None),
+    )
+
+
+def get_litellm_credentials_for_user(user_id: str, user_applications: list[str]) -> Optional[LiteLLMCredentials]:
     """
     Get LiteLLM credentials for user from core SettingsService.
 
-    This function stays in core because it directly imports and uses
-    core SettingsService which cannot be accessed from enterprise package.
-
-    Checks user-level settings first, then application-level settings.
-
-    Args:
-        user_id: User ID
-        user_applications: List of applications user has access to
-
-    Returns:
-        LiteLLMCredentials or None if not found
-
-    Usage:
-        from codemie.enterprise.litellm import get_litellm_credentials_for_user
-
-        creds = get_litellm_credentials_for_user(user.id, user.project_names)
-        if creds:
-            api_key = creds.api_key
+    This compatibility helper keeps the legacy lookup behavior used by callers
+    outside the proxy runtime. The proxy runtime uses
+    resolve_litellm_user_credentials() so project credentials are not selected
+    by request headers.
     """
-    from codemie.configs import logger
     from codemie.core.exceptions import ExtendedHTTPException
     from codemie.service.settings.settings import SettingsService
 
-    # Try user-level credentials first
     try:
         creds = SettingsService.get_litellm_creds(project_name=None, user_id=user_id)
         if creds:
@@ -58,7 +139,6 @@ def get_litellm_credentials_for_user(user_id: str, user_applications: list[str])
     except Exception as e:
         logger.warning(f"Unexpected error retrieving user-level LiteLLM credentials for {user_id}: {e}")
 
-    # Try application-level credentials
     if user_applications:
         for app in user_applications:
             try:

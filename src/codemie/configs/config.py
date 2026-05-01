@@ -508,6 +508,7 @@ class Config(BaseSettings):
 
     # LiteLLM Cache and Optimization Configuration
     LITELLM_CUSTOMER_CACHE_TTL: int = 300  # 5 minutes - cache customer info TTL
+    LITELLM_USER_CREDENTIALS_CACHE_TTL: int = 600  # 10 minutes - cache user LiteLLM credential lookup TTL
     LITELLM_MODELS_CACHE_TTL: int = 1800  # 30 minutes - cache available models TTL
     LITELLM_REQUEST_TIMEOUT: float = 5.0  # 5 seconds - HTTP request timeout
     LITELLM_LIST_REQUEST_TIMEOUT: float = 30.0  # 30 seconds - timeout for list/bulk endpoints
