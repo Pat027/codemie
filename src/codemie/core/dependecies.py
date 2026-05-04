@@ -49,7 +49,7 @@ def get_embeddings_model(embedding_model: str = llm_service.default_embedding_mo
 
     # Try LiteLLM path (abstracted - returns None if not available)
     context = litellm_context.get(None)
-    user_email = current_user_email.get()
+    user_email = _resolve_user_email(current_user_email.get())
     user_id = logging_user_id.get(None)
 
     litellm_embeddings = get_litellm_embedding_model(

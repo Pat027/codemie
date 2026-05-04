@@ -179,6 +179,7 @@ class BaseDatasourceProcessor(ABC):
                 )
                 if self.index and self.user:
                     set_llm_context(None, self.index.project_name, self.user)
+                    set_logging_info(uuid=self.request_uuid, user_id=self.user.id, user_email=self.user.username)
                 self.index.start_fetching(is_incremental=self.is_incremental_reindex)
                 self.loader = self._init_loader()
                 self._on_process_start()
