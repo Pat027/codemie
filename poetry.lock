@@ -4597,6 +4597,24 @@ openai = ">=2.26.0,<3.0.0"
 tiktoken = ">=0.7.0,<1.0.0"
 
 [[package]]
+name = "langchain-tavily"
+version = "0.2.18"
+description = "An integration package connecting Tavily and LangChain"
+optional = false
+python-versions = "<4.0,>=3.10"
+groups = ["main"]
+files = [
+    {file = "langchain_tavily-0.2.18-py3-none-any.whl", hash = "sha256:dccf3ad1c50e2cb2a89bec11727555805c9df8abd42c1f3ad42ccad86e28aa44"},
+    {file = "langchain_tavily-0.2.18.tar.gz", hash = "sha256:cd7859ae1a6ce79236580ef67072ff5fc43c7ded94e7eac38ff04209ca85a320"},
+]
+
+[package.dependencies]
+aiohttp = ">=3.11.14,<4.0.0"
+langchain = ">=1.0.0,<2.0.0"
+langchain-core = ">=1.2.11,<2.0.0"
+requests = ">=2.32.3,<3.0.0"
+
+[[package]]
 name = "langchain-tests"
 version = "1.1.5"
 description = "Standard tests for LangChain implementations"
@@ -11161,4 +11179,4 @@ pdf-svg = ["cairosvg"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.14"
-content-hash = "79fda1b58a79c5e3e916cad2f1c758001d00cd1e993d344de377d504b5b40202"
+content-hash = "a721a875827de02cca1824694410c9399339c1da6f21f056e77c0d35e9947f17"

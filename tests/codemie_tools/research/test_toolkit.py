@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from unittest.mock import patch
+
 import pytest
 
 from codemie_tools.research.toolkit import ResearchToolkit
 from codemie_tools.research.tools import WebScrapperTool, WikipediaQueryRun, GoogleSearchResults
+from codemie_tools.research.tools_vars import TAVILY_SEARCH_TOOL
 
 
 class TestResearchToolkit:
@@ -41,11 +44,38 @@ class TestResearchToolkit:
         assert len(ui_info['tools']) == 6, "Incorrect number of tools in UI info"
 
     def test_get_tools(self):
-        toolkit = ResearchToolkit.get_toolkit(configs={'tavily_api_key': 'test_tavily_api_key'})
+        toolkit = ResearchToolkit.get_toolkit(configs={'tavily_search_key': 'test_tavily_api_key'})
         tools = toolkit.get_tools()
-        assert len(tools) == 2, "Incorrect number of tools returned"
+        assert len(tools) == 3, "Incorrect number of tools returned"
         assert any(isinstance(tool, WikipediaQueryRun) for tool in tools), "WikipediaQueryRun tool missing"
         assert any(isinstance(tool, WebScrapperTool) for tool in tools), "WebScrapperTool missing"
+
+    def test_get_tavily_tool_uses_official_langchain_tavily_search(self, toolkit):
+        with patch("codemie_tools.research.toolkit.TavilySearch") as mock_tavily_search:
+            toolkit.get_tavily_tool()
+
+        mock_tavily_search.assert_called_once_with(
+            name=TAVILY_SEARCH_TOOL.name,
+            description=TAVILY_SEARCH_TOOL.description,
+            handle_validation_error=True,
+            tavily_api_key=toolkit.research_config.tavily_search_key,
+            max_results=5,
+            topic="general",
+            search_depth="basic",
+            include_answer=False,
+            include_raw_content=False,
+        )
+
+    def test_tavily_tool_description_guides_agents_to_current_research_use_cases(self):
+        description = TAVILY_SEARCH_TOOL.description.lower()
+
+        assert "up-to-date" in description
+        assert "research" in description
+        assert "market research" in description
+        assert "competitive" in description
+        assert "news" in description
+        assert "finance" in description
+        assert "sources" in description
 
     def test_google_search_tool(self, toolkit):
         tool = toolkit.google_search_tool()

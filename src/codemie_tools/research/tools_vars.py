@@ -62,12 +62,16 @@ GOOGLE_PLACES_FIND_NEAR_TOOL = ToolMetadata(
 TAVILY_SEARCH_TOOL = ToolMetadata(
     name="tavily_search_results_json",
     label="Tavily Search",
-    description="""A web search engine optimized for comprehensive, accurate, and trusted results.
-    Useful for when you need to answer questions about current events.
-    Input should be a search query.
+    description="""Search the live web with Tavily, a search API optimized for AI agents and RAG.
+    Use this tool when the answer depends on up-to-date or externally verifiable information: current events,
+    recent company/product updates, market research, competitive analysis, industry trends, news, finance,
+    regulations, pricing, releases, or any topic where local model knowledge may be stale.
+    Input should be a natural-language search query. Output includes ranked sources with titles, URLs,
+    snippets, scores, and optional metadata that should be cited or inspected before making factual claims.
     """.strip(),
-    user_description="""A web search engine optimized for comprehensive, accurate, and trusted results.
-    Useful for when you need to answer questions about current events.
+    user_description="""Searches the live web for current, source-backed information.
+    Useful for research, market research, competitive analysis, news, finance, company/product updates,
+    regulations, pricing, releases, and other facts that may change over time.
     """.strip(),
 )
 

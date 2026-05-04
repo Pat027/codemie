@@ -15,8 +15,7 @@
 import logging
 from typing import List, Dict, Any, Optional
 
-from langchain_community.tools.tavily_search import TavilySearchResults
-from langchain_community.utilities.tavily_search import TavilySearchAPIWrapper
+from langchain_tavily import TavilySearch
 from langchain_community.utilities.wikipedia import WikipediaAPIWrapper
 from langchain_google_community import GoogleSearchAPIWrapper
 from pydantic import BaseModel
@@ -111,5 +110,14 @@ class ResearchToolkit(BaseToolkit):
         )
 
     def get_tavily_tool(self):
-        api_wrapper = TavilySearchAPIWrapper(tavily_api_key=self.research_config.tavily_search_key)
-        return TavilySearchResults(name=TAVILY_SEARCH_TOOL.name, handle_validation_error=True, api_wrapper=api_wrapper)
+        return TavilySearch(
+            name=TAVILY_SEARCH_TOOL.name,
+            description=TAVILY_SEARCH_TOOL.description,
+            handle_validation_error=True,
+            tavily_api_key=self.research_config.tavily_search_key,
+            max_results=5,
+            topic="general",
+            search_depth="basic",
+            include_answer=False,
+            include_raw_content=False,
+        )
