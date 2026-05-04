@@ -262,7 +262,7 @@ class TestPrepareSystemPrompt:
         assistant.skill_ids = []
         user = Mock(spec=User)
         user.id = 'user-123'
-        user.full_name = 'Test User'
+        user.username = "test@email.com"
 
         request = AssistantChatRequest(text='Test', file_names=[])
 
@@ -271,7 +271,7 @@ class TestPrepareSystemPrompt:
 
         # Assert
         assert result == "Base system prompt"
-        mock_get_system_prompt.assert_called_once_with(assistant, user_id='user-123', current_user='Test User')
+        mock_get_system_prompt.assert_called_once_with(assistant, user_id='user-123', current_user='test@email.com')
 
     @patch('codemie.service.assistant_service.AssistantService.get_system_prompt')
     def test_prepare_system_prompt_with_skills(
@@ -286,7 +286,7 @@ class TestPrepareSystemPrompt:
         assistant.skill_ids = ["skill-1", "skill-2"]
         user = Mock(spec=User)
         user.id = 'user-123'
-        user.full_name = 'Test User'
+        user.username = "test@email.com"
 
         request = AssistantChatRequest(text='Test', file_names=[])
 
@@ -314,7 +314,7 @@ class TestPrepareSystemPrompt:
         assistant.skill_ids = []
         user = Mock(spec=User)
         user.id = 'user-123'
-        user.full_name = 'Test User'
+        user.username = "test@email.com"
 
         request = IdeChatRequest(text='Test', file_names=[], prompt_header='Header', prompt_footer='Footer')
 
@@ -340,7 +340,7 @@ class TestPrepareSystemPrompt:
 
         user = Mock(spec=User)
         user.id = 'user-123'
-        user.full_name = 'Test User'
+        user.username = "test@email.com"
 
         output_schema = {"type": "object", "properties": {"name": {"type": "string"}}}
         request = AssistantChatRequest(text='Test', file_names=[], output_schema=output_schema)
@@ -597,7 +597,7 @@ class TestPrepareWorkflowSystemPrompt:
         assistant.skill_ids = []
         user = Mock(spec=User)
         user.id = 'user-123'
-        user.full_name = 'Test User'
+        user.username = "test@email.com"
 
         # Act
         result_prompt, result_schema = AssistantService._prepare_workflow_system_prompt(
@@ -627,7 +627,7 @@ class TestPrepareWorkflowSystemPrompt:
         assistant.skill_ids = ['skill-1', 'skill-2']
         user = Mock(spec=User)
         user.id = 'user-123'
-        user.full_name = 'Test User'
+        user.username = "test@email.com"
 
         # Act
         result_prompt, result_schema = AssistantService._prepare_workflow_system_prompt(
@@ -661,7 +661,7 @@ class TestPrepareWorkflowSystemPrompt:
         assistant.skill_ids = []
         user = Mock(spec=User)
         user.id = 'user-123'
-        user.full_name = 'Test User'
+        user.username = "test@email.com"
 
         workflow_state = Mock()
         workflow_state.output_schema = '{"type": "object"}'

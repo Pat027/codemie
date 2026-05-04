@@ -90,7 +90,8 @@ class TestAssistantServiceBuildAgentWithHeaders:
         user = Mock(spec=User)
         user.id = 'user-123'
         user.name = 'Test User'
-        user.full_name = 'Test User Full'
+        user.full_name = "Test User Full Name"
+        user.username = "test@email.com"
 
         test_headers = {'X-Tenant-ID': 'tenant-123', 'X-User-ID': 'user-456'}
 
@@ -170,7 +171,8 @@ class TestAssistantServiceBuildAgentWithHeaders:
         user = Mock(spec=User)
         user.id = 'user-123'
         user.name = 'Test User'
-        user.full_name = 'Test User Full'
+        user.full_name = "Test User Full Name"
+        user.username = "test@email.com"
 
         # Act - call without request_headers (backward compatibility)
         agent = AssistantService.build_agent(
@@ -249,7 +251,8 @@ class TestAssistantServiceBuildAgentForWorkflowWithHeaders:
         user = Mock(spec=User)
         user.id = 'user-123'
         user.name = 'Test User'
-        user.full_name = 'Test User Full'
+        user.full_name = "Test User Full Name"
+        user.username = "test@email.com"
 
         from codemie.core.workflow_models import WorkflowAssistant
 
@@ -339,7 +342,8 @@ class TestAssistantServiceBuildAgentForWorkflowWithHeaders:
         user = Mock(spec=User)
         user.id = 'user-123'
         user.name = 'Test User'
-        user.full_name = 'Test User Full'
+        user.full_name = "Test User Full Name"
+        user.username = "test@email.com"
 
         from codemie.core.workflow_models import WorkflowAssistant
 

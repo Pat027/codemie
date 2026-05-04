@@ -397,7 +397,7 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
         request: AssistantChatRequest,
     ) -> str:
         """Prepare system prompt with optional IDE decorations and output schema."""
-        system_prompt = cls.get_system_prompt(assistant, user_id=user.id, current_user=user.full_name)
+        system_prompt = cls.get_system_prompt(assistant, user_id=user.id, current_user=user.username)
 
         if isinstance(request, IdeChatRequest):
             system_prompt = cls.decorate_system_prompt(system_prompt, request)
