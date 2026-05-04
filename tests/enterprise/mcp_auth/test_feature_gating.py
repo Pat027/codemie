@@ -114,10 +114,27 @@ def test_mcp_auth_exports_in_loader_all():
 def test_is_mcp_auth_enabled_false_when_no_package(monkeypatch):
     """AC#2: is_mcp_auth_enabled() returns False when enterprise not installed"""
     monkeypatch.setattr("codemie.enterprise.mcp_auth.dependencies.HAS_MCP_AUTH", False)
+    from codemie.configs import config
+
+    monkeypatch.setattr(config, "MCP_AUTH_ENABLED", False)
+    monkeypatch.setattr(config, "MCP_AUTH_TMS_ENABLED", False)
 
     from codemie.enterprise.mcp_auth.dependencies import is_mcp_auth_enabled
 
     assert is_mcp_auth_enabled() is False
+
+
+def test_is_mcp_auth_enabled_fails_closed_when_tms_enabled_without_package(monkeypatch):
+    monkeypatch.setattr("codemie.enterprise.mcp_auth.dependencies.HAS_MCP_AUTH", False)
+    from codemie.configs import config
+
+    monkeypatch.setattr(config, "MCP_AUTH_ENABLED", True)
+    monkeypatch.setattr(config, "MCP_AUTH_TMS_ENABLED", True)
+
+    from codemie.enterprise.mcp_auth.dependencies import is_mcp_auth_enabled
+
+    with pytest.raises(RuntimeError, match="enterprise MCP auth package"):
+        is_mcp_auth_enabled()
 
 
 def test_is_mcp_auth_enabled_false_when_config_disabled(monkeypatch):
@@ -350,9 +367,10 @@ def test_initialize_mcp_auth_registers_resolver_once(monkeypatch):
     from codemie.service.mcp.toolkit_service import MCPToolkitService
 
     class FakeResolver:
-        def __init__(self, token_management_system, authentication_required_factory):
+        def __init__(self, token_management_system, authentication_required_factory, audit_context_provider=None):
             self.token_management_system = token_management_system
             self.authentication_required_factory = authentication_required_factory
+            self.audit_context_provider = audit_context_provider
 
         def can_handle(self, server_config):
             return True
@@ -380,6 +398,7 @@ def test_initialize_mcp_auth_registers_resolver_once(monkeypatch):
     monkeypatch.setattr(runtime_config, "MCP_AUTH_HMAC_SECRET", "s" * 32)
     monkeypatch.setattr(dependencies.asyncio, "get_running_loop", lambda: MagicMock(create_task=create_task))
     monkeypatch.setattr(dependencies, "create_redis_client", lambda: MagicMock(close=MagicMock()))
+    monkeypatch.setattr(dependencies, "_build_token_management_system", MagicMock(return_value=MagicMock()))
     monkeypatch.setitem(sys.modules, "codemie_enterprise.mcp_auth", fake_enterprise_module)
 
     dependencies._initialized = False
@@ -456,13 +475,19 @@ def test_initialize_mcp_auth_closes_partial_resources_when_startup_fails(monkeyp
         RedisPKCEStore=MagicMock(),
     )
     loop = MagicMock()
-    loop.create_task.side_effect = RuntimeError("create_task failed")
+
+    def raise_create_task_error(coroutine):
+        coroutine.close()
+        raise RuntimeError("create_task failed")
+
+    loop.create_task.side_effect = raise_create_task_error
 
     monkeypatch.setattr(dependencies, "HAS_MCP_AUTH", True)
     monkeypatch.setattr(runtime_config, "MCP_AUTH_ENABLED", True)
     monkeypatch.setattr(runtime_config, "MCP_AUTH_HMAC_SECRET", "s" * 32)
     monkeypatch.setattr(dependencies.asyncio, "get_running_loop", lambda: loop)
     monkeypatch.setattr(dependencies, "create_redis_client", lambda: redis_client)
+    monkeypatch.setattr(dependencies, "_build_token_management_system", MagicMock(return_value=MagicMock()))
     monkeypatch.setitem(sys.modules, "codemie_enterprise.mcp_auth", fake_enterprise_module)
 
     dependencies._initialized = False
@@ -503,13 +528,25 @@ def test_enqueue_mcp_auth_cleanup_returns_cleanly_when_bridge_unavailable(monkey
     assert debug_messages
 
 
-def test_has_any_credentials_for_auth_config_returns_false_when_bridge_unavailable(monkeypatch) -> None:
+def test_has_any_credentials_for_auth_config_returns_false_when_mcp_auth_disabled(monkeypatch) -> None:
     from codemie.enterprise.mcp_auth import dependencies
 
     dependencies._tms = None
-    monkeypatch.setattr(dependencies, "is_mcp_auth_enabled", lambda: True)
+    monkeypatch.setattr(dependencies, "is_mcp_auth_enabled", lambda: False)
 
     assert dependencies.has_any_credentials_for_auth_config("auth-id") is False
+
+
+def test_has_any_credentials_for_auth_config_fails_closed_when_tms_uninitialized(monkeypatch) -> None:
+    from codemie.enterprise.mcp_auth import dependencies
+
+    warning_messages: list[str] = []
+    dependencies._tms = None
+    monkeypatch.setattr(dependencies, "is_mcp_auth_enabled", lambda: True)
+    monkeypatch.setattr(dependencies.logger, "warning", warning_messages.append)
+
+    assert dependencies.has_any_credentials_for_auth_config("auth-id") is True
+    assert any("auth_config_id=auth-id" in message for message in warning_messages)
 
 
 def test_has_any_credentials_for_auth_config_fails_closed_on_tms_error(monkeypatch) -> None:
@@ -519,7 +556,7 @@ def test_has_any_credentials_for_auth_config_fails_closed_on_tms_error(monkeypat
 
     class BrokenTMS:
         def has_any_credentials(self, auth_config_id: str) -> bool:
-            raise RuntimeError(f"boom:{auth_config_id}")
+            raise RuntimeError(f"secret-bearing-message:{auth_config_id}")
 
     dependencies._tms = BrokenTMS()
     monkeypatch.setattr(dependencies, "is_mcp_auth_enabled", lambda: True)
@@ -527,6 +564,7 @@ def test_has_any_credentials_for_auth_config_fails_closed_on_tms_error(monkeypat
 
     assert dependencies.has_any_credentials_for_auth_config("auth-id") is True
     assert any("auth_config_id=auth-id" in message for message in warning_messages)
+    assert all("secret-bearing-message" not in message for message in warning_messages)
 
 
 def test_invalidate_credentials_for_auth_config_is_noop_when_bridge_unavailable(monkeypatch) -> None:
@@ -579,6 +617,7 @@ async def test_shutdown_mcp_auth_resets_bridge_state() -> None:
     dependencies._mcp_auth_service = mcp_auth_service
     dependencies._redis_client = redis_client
     dependencies._tms = MagicMock()
+    dependencies._tms_audit_context_provider = MagicMock()
     dependencies._registered_resolver_types = {object}
 
     await dependencies.shutdown_mcp_auth()
@@ -593,4 +632,109 @@ async def test_shutdown_mcp_auth_resets_bridge_state() -> None:
     assert dependencies._mcp_auth_service is None
     assert dependencies._redis_client is None
     assert dependencies._tms is None
+    assert dependencies._tms_audit_context_provider is None
     assert len(dependencies._registered_resolver_types) == 0
+
+
+@pytest.mark.asyncio
+async def test_shutdown_mcp_auth_resets_bridge_state_when_cleanup_steps_fail() -> None:
+    from codemie.enterprise.mcp_auth import dependencies
+
+    class FailingBridgeTask:
+        def done(self) -> bool:
+            return False
+
+        def cancel(self) -> None:
+            raise RuntimeError("cancel failed")
+
+    dependencies._initialized = True
+    dependencies._bridge_queue = MagicMock()
+    dependencies._bridge_task = FailingBridgeTask()
+    dependencies._bridge_loop = MagicMock()
+    dependencies._mcp_auth_service = MagicMock(shutdown=MagicMock(side_effect=RuntimeError("shutdown failed")))
+    dependencies._redis_client = MagicMock(close=MagicMock(side_effect=RuntimeError("close failed")))
+    dependencies._tms = MagicMock()
+    dependencies._tms_audit_context_provider = MagicMock()
+    dependencies._registered_resolver_types = {object}
+
+    await dependencies.shutdown_mcp_auth()
+
+    assert dependencies._initialized is False
+    assert dependencies._bridge_queue is None
+    assert dependencies._bridge_task is None
+    assert dependencies._bridge_loop is None
+    assert dependencies._mcp_auth_service is None
+    assert dependencies._redis_client is None
+    assert dependencies._tms is None
+    assert dependencies._tms_audit_context_provider is None
+    assert len(dependencies._registered_resolver_types) == 0
+
+
+def test_initialize_mcp_auth_preserves_startup_failure_when_cleanup_steps_fail(monkeypatch) -> None:
+    from codemie.enterprise.mcp_auth import dependencies
+    from codemie.configs import config as runtime_config
+    from codemie.service.mcp.toolkit_service import MCPToolkitService
+
+    class FakeResolver:
+        def __init__(self, token_management_system, authentication_required_factory, audit_context_provider=None):
+            self.token_management_system = token_management_system
+            self.authentication_required_factory = authentication_required_factory
+            self.audit_context_provider = audit_context_provider
+
+    bridge_task = MagicMock()
+    bridge_task.cancel.side_effect = RuntimeError("cancel-secret")
+    redis_client = MagicMock()
+    redis_client.close.side_effect = RuntimeError("redis-secret")
+    created_service = MagicMock()
+    created_service.shutdown.side_effect = RuntimeError("shutdown-secret")
+    fake_enterprise_module = MagicMock(
+        DCRCredentialsCache=MagicMock(),
+        DiscoveryMetadataCache=MagicMock(),
+        MCPAuthResolver=FakeResolver,
+        MCPAuthService=MagicMock(return_value=created_service),
+        MCPAuthServiceConfig=MagicMock(return_value=MagicMock()),
+        MockTokenManagementSystem=MagicMock(return_value=MagicMock()),
+        RedisEncryption=MagicMock(return_value=MagicMock()),
+        RedisPKCEStore=MagicMock(),
+    )
+
+    def create_task(coroutine):
+        coroutine.close()
+        return bridge_task
+
+    warning_messages: list[str] = []
+    monkeypatch.setattr(dependencies, "HAS_MCP_AUTH", True)
+    monkeypatch.setattr(runtime_config, "MCP_AUTH_ENABLED", True)
+    monkeypatch.setattr(runtime_config, "MCP_AUTH_HMAC_SECRET", "s" * 32)
+    monkeypatch.setattr(dependencies.asyncio, "get_running_loop", lambda: MagicMock(create_task=create_task))
+    monkeypatch.setattr(dependencies, "create_redis_client", lambda: redis_client)
+    monkeypatch.setattr(dependencies, "_build_token_management_system", MagicMock(return_value=MagicMock()))
+    monkeypatch.setattr(dependencies.logger, "warning", warning_messages.append)
+    monkeypatch.setattr(
+        MCPToolkitService,
+        "register_auth_resolver",
+        MagicMock(side_effect=RuntimeError("registration failed")),
+    )
+    monkeypatch.setitem(sys.modules, "codemie_enterprise.mcp_auth", fake_enterprise_module)
+
+    dependencies._initialized = False
+    dependencies._bridge_queue = None
+    dependencies._bridge_task = None
+    dependencies._bridge_loop = None
+    dependencies._mcp_auth_service = None
+    dependencies._redis_client = None
+    dependencies._registered_resolver_types.clear()
+
+    try:
+        with pytest.raises(RuntimeError, match="registration failed"):
+            dependencies.initialize_mcp_auth()
+
+        bridge_task.cancel.assert_called_once_with()
+        created_service.shutdown.assert_called_once_with()
+        redis_client.close.assert_called_once_with()
+        assert all("cancel-secret" not in message for message in warning_messages)
+        assert all("shutdown-secret" not in message for message in warning_messages)
+        assert all("redis-secret" not in message for message in warning_messages)
+    finally:
+        MCPToolkitService._auth_resolvers.clear()
+        dependencies._registered_resolver_types.clear()

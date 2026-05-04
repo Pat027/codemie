@@ -12,14 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import json
 import atexit
+import hashlib
+import json
+import os
 from contextlib import asynccontextmanager, contextmanager
 
 from pydantic.json import pydantic_encoder
-from sqlmodel import create_engine, Session
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlmodel import Session, create_engine
 from urllib.parse import quote_plus
 
 from codemie.configs import config
@@ -120,6 +122,44 @@ def alembic_upgrade_postgres() -> None:
     alembic_cfg = Config(config.ALEMBIC_INI_PATH)
     alembic_cfg.set_main_option("script_location", str(config.ALEMBIC_MIGRATIONS_DIR))
     command.upgrade(alembic_cfg, "head")
+
+
+def _enterprise_migration_lock_id(location_name: str) -> int:
+    """Return a stable PostgreSQL advisory lock id for an enterprise migration location."""
+    digest = hashlib.sha256(f"codemie_enterprise:{location_name}:migrations".encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], byteorder="big", signed=True)
+
+
+def alembic_upgrade_enterprise_postgres() -> None:
+    """Run enabled enterprise Alembic migration locations to head."""
+    from codemie.enterprise.loader import HAS_MCP_AUTH, enterprise_mcp_auth_alembic_locations
+
+    if not (config.MCP_AUTH_ENABLED and config.MCP_AUTH_TMS_ENABLED):
+        return
+
+    if not HAS_MCP_AUTH:
+        raise RuntimeError("enterprise MCP auth package is unavailable while MCP auth TMS is enabled")
+
+    if enterprise_mcp_auth_alembic_locations is None:
+        raise RuntimeError("enterprise MCP auth migrations are unavailable while MCP auth TMS is enabled")
+
+    from alembic import command
+    from alembic.config import Config
+
+    engine = PostgresClient.get_engine()
+    with enterprise_mcp_auth_alembic_locations() as locations:
+        for location in locations:
+            with engine.begin() as connection:
+                connection.execute(
+                    text("select pg_advisory_xact_lock(:lock_id)"),
+                    {"lock_id": _enterprise_migration_lock_id(location.name)},
+                )
+
+                alembic_cfg = Config(config.ALEMBIC_INI_PATH)
+                alembic_cfg.set_main_option("script_location", str(location.script_location))
+                alembic_cfg.attributes["connection"] = connection
+                alembic_cfg.attributes["schema_name"] = config.DEFAULT_DB_SCHEMA
+                command.upgrade(alembic_cfg, "head")
 
 
 @contextmanager

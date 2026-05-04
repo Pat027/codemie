@@ -172,10 +172,12 @@ def has_migration() -> bool:
 
 # MCP Auth imports
 try:
-    import codemie_enterprise.mcp_auth  # noqa: F401 — package availability check
+    import codemie_enterprise.mcp_auth as enterprise_mcp_auth
 
     HAS_MCP_AUTH = True
+    enterprise_mcp_auth_alembic_locations = getattr(enterprise_mcp_auth, "enterprise_alembic_locations", None)
 except ImportError:
+    enterprise_mcp_auth_alembic_locations = None  # type: ignore
     HAS_MCP_AUTH = False
 
 
@@ -232,5 +234,6 @@ __all__ = [
     "has_migration",
     # MCP Auth
     "HAS_MCP_AUTH",
+    "enterprise_mcp_auth_alembic_locations",
     "has_mcp_auth",
 ]

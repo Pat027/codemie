@@ -157,3 +157,17 @@ def test_migration_exports_in_all():
 
     for export in expected_migration_exports:
         assert export in loader.__all__, f"Missing export in __all__: {export}"
+
+
+def test_loader_exports_enterprise_tms_migrations_symbols() -> None:
+    from codemie.enterprise import loader
+
+    assert "enterprise_mcp_auth_alembic_locations" in loader.__all__
+    assert hasattr(loader, "enterprise_mcp_auth_alembic_locations")
+
+
+def test_enterprise_package_reexports_enterprise_tms_migrations_symbols() -> None:
+    import codemie.enterprise as enterprise
+
+    assert "enterprise_mcp_auth_alembic_locations" in enterprise.__all__
+    assert hasattr(enterprise, "enterprise_mcp_auth_alembic_locations")

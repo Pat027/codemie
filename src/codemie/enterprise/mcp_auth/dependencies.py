@@ -20,7 +20,7 @@ import html
 import re
 from datetime import datetime, timedelta, timezone
 from collections.abc import Callable
-from contextlib import suppress
+from contextlib import AbstractContextManager, nullcontext, suppress
 from typing import TYPE_CHECKING, Any, NoReturn, Protocol
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
@@ -58,6 +58,7 @@ _registered_resolver_types: set[type] = set()
 _pkce_store: RedisPKCEStore | None = None
 _saml_relay_state_store: SAMLRelayStateStore | None = None
 _redis_encryption: RedisEncryption | None = None
+_tms_audit_context_provider = None
 
 SUPPORTED_AUTH_TYPES = ("oauth2", "saml")
 _REQUIRED_AUTH_FIELDS = {
@@ -832,13 +833,29 @@ def _exchange_callback_code(
         ) from exc
 
 
+def _tms_audit_context(source: str, correlation_id: str | None = None) -> AbstractContextManager[None]:
+    if _tms_audit_context_provider is None:
+        return nullcontext()
+    return _tms_audit_context_provider.context(source=source, correlation_id=correlation_id)
+
+
 def _store_callback_token(
-    *, user_id: str, auth_config_id: str, token_data: Any, server_name: str | None, tms: Any
+    *,
+    user_id: str,
+    auth_config_id: str,
+    token_data: Any,
+    server_name: str | None,
+    tms: Any,
+    audit_source: str,
 ) -> None:
     try:
-        tms.store(user_id, auth_config_id, token_data)
+        with _tms_audit_context(audit_source, correlation_id=auth_config_id):
+            tms.store(user_id, auth_config_id, token_data)
     except Exception as exc:
-        logger.warning(f"Failed to persist MCP auth callback credentials for auth_config_id={auth_config_id}: {exc}")
+        logger.warning(
+            "Failed to persist MCP auth callback credentials for "
+            f"auth_config_id={auth_config_id}: {type(exc).__name__}"
+        )
         raise _build_trusted_callback_error(
             _CALLBACK_TMS_STORE_ERROR_MESSAGE,
             auth_config_id=auth_config_id,
@@ -1005,6 +1022,7 @@ def _build_saml_callback_response(*, saml_response: str | None, relay_state: str
         token_data=token_data,
         server_name=server_name,
         tms=tms,
+        audit_source="saml_acs",
     )
     return _build_success_callback_response(server_name, state_payload.auth_config_id)
 
@@ -1072,6 +1090,7 @@ def _build_oauth2_callback_response(
         token_data=token_data,
         server_name=server_name,
         tms=tms,
+        audit_source="oauth2_callback",
     )
     return _build_success_callback_response(server_name, state_payload.auth_config_id)
 
@@ -1300,24 +1319,34 @@ def is_mcp_auth_enabled() -> bool:
     1. codemie-enterprise package with mcp_auth module is installed (HAS_MCP_AUTH)
     2. MCP_AUTH_ENABLED environment variable is set to True
     """
-    if not HAS_MCP_AUTH:
-        return False
     from codemie.configs import config  # deferred import to avoid circular dependency
+
+    if not HAS_MCP_AUTH:
+        if config.MCP_AUTH_ENABLED and config.MCP_AUTH_TMS_ENABLED:
+            raise RuntimeError("enterprise MCP auth package is unavailable while MCP auth TMS is enabled")
+        return False
 
     return config.MCP_AUTH_ENABLED
 
 
 def has_any_credentials_for_auth_config(auth_config_id: str) -> bool:
     """Return True on bridge errors to fail closed and block ID changes."""
-    if not is_mcp_auth_enabled() or _tms is None:
+    if not is_mcp_auth_enabled():
         return False
+    if _tms is None:
+        logger.warning(
+            "Failed to check stored credentials because MCP auth TMS is not initialized; "
+            f"blocking auth_config.id change for auth_config_id={auth_config_id}"
+        )
+        return True
 
     try:
-        return bool(_tms.has_any_credentials(auth_config_id))
+        with _tms_audit_context("status_check", correlation_id=auth_config_id):
+            return bool(_tms.has_any_credentials(auth_config_id))
     except Exception as exc:
         logger.warning(
             "Failed to check stored credentials for "
-            f"auth_config_id={auth_config_id}; blocking auth_config.id change: {exc}"
+            f"auth_config_id={auth_config_id}; blocking auth_config.id change: {type(exc).__name__}"
         )
         return True
 
@@ -1326,7 +1355,8 @@ def invalidate_credentials_for_auth_config(auth_config_id: str) -> None:
     if not is_mcp_auth_enabled() or _tms is None:
         return
 
-    _tms.invalidate_by_config(auth_config_id)
+    with _tms_audit_context("admin_config_change", correlation_id=auth_config_id):
+        _tms.invalidate_by_config(auth_config_id)
 
 
 def _validate_hmac_secret() -> None:
@@ -1368,6 +1398,87 @@ def _build_authentication_required_exception(
     return MCPAuthenticationRequiredException(payload)
 
 
+def _normalize_tms_environment(environment: str) -> str:
+    normalized_environment = environment.strip().lower()
+    return {
+        "development": "dev",
+        "develop": "dev",
+        "prod": "production",
+        "tests": "test",
+    }.get(normalized_environment, normalized_environment)
+
+
+def _build_token_management_system(redis_client: Any, audit_context_provider: Any) -> Any:
+    from codemie.clients.postgres import PostgresClient
+    from codemie.configs import config
+    from codemie.service.encryption.encryption_factory import EncryptionFactory, EncryptionType
+    from codemie_enterprise.mcp_auth import (
+        AEADEnvelopeEncryption,
+        ExternalEncryptionServiceKeyManagementProvider,
+        MockTokenManagementSystem,
+        PostgresTokenManagementSystem,
+        RedisTMSRefreshLock,
+        TMSConfig,
+        TMSRuntimeEnvironment,
+    )
+
+    tms_environment = _normalize_tms_environment(config.ENV)
+
+    if tms_environment == TMSRuntimeEnvironment.PRODUCTION and (
+        not config.MCP_AUTH_TMS_ENABLED or config.MCP_AUTH_TMS_ALLOW_MOCK
+    ):
+        raise RuntimeError("production MCP auth requires TMS enabled")
+
+    tms_config = TMSConfig(
+        enabled=config.MCP_AUTH_TMS_ENABLED,
+        environment=tms_environment,
+        refresh_timeout_seconds=config.MCP_AUTH_TMS_REFRESH_TIMEOUT_SECONDS,
+        redis_lock_enabled=config.MCP_AUTH_TMS_REDIS_LOCK_ENABLED,
+        redis_lock_ttl_seconds=config.MCP_AUTH_TMS_REDIS_LOCK_TTL_SECONDS,
+        audit_required=config.MCP_AUTH_TMS_AUDIT_REQUIRED,
+        audit_fallback_enabled=config.MCP_AUTH_TMS_AUDIT_FALLBACK_ENABLED,
+        audit_fallback_sink_configured=config.MCP_AUTH_TMS_AUDIT_FALLBACK_SINK_CONFIGURED,
+        kms_key_id=config.MCP_AUTH_TMS_KMS_KEY_ID,
+        encryption_context_prefix=config.MCP_AUTH_TMS_ENCRYPTION_CONTEXT_PREFIX,
+        allow_mock_tms=config.MCP_AUTH_TMS_ALLOW_MOCK,
+    )
+
+    if not tms_config.enabled:
+        if not tms_config.allow_mock_tms:
+            raise RuntimeError("production MCP auth requires TMS enabled or non-production mock guard")
+        return MockTokenManagementSystem()
+
+    encryption_type = EncryptionFactory.get_current_encryption_service_type()
+    local_encryption_types = {
+        EncryptionType.PLAIN_TEXT,
+        EncryptionType.BASE64_ENCRYPTION,
+    }
+    if tms_config.environment == TMSRuntimeEnvironment.PRODUCTION and encryption_type in local_encryption_types:
+        raise RuntimeError("Production MCP auth TMS requires a KMS-backed encryption provider")
+
+    if encryption_type in local_encryption_types:
+        from codemie_enterprise.mcp_auth.tms_crypto import LocalKeyManagementProvider
+
+        kms_provider = LocalKeyManagementProvider(config.MCP_AUTH_HMAC_SECRET, tms_config.kms_key_id)
+    else:
+        kms_provider = ExternalEncryptionServiceKeyManagementProvider(
+            encryption_service=EncryptionFactory.get_current_encryption_service(),
+            kms_key_id=tms_config.kms_key_id,
+        )
+
+    refresh_lock = (
+        RedisTMSRefreshLock(redis_client, tms_config.redis_lock_ttl_seconds) if tms_config.redis_lock_enabled else None
+    )
+
+    return PostgresTokenManagementSystem(
+        config=tms_config,
+        connection_factory=lambda: PostgresClient.get_engine().begin(),
+        encryption=AEADEnvelopeEncryption(kms_provider=kms_provider, kms_key_id=tms_config.kms_key_id),
+        audit_context_provider=audit_context_provider,
+        refresh_lock=refresh_lock,
+    )
+
+
 async def _bridge_consumer(bridge_queue: asyncio.Queue[str], mcp_auth_service: _CleanupEnqueuer) -> None:
     while True:
         user_id = await bridge_queue.get()
@@ -1391,9 +1502,27 @@ def enqueue_mcp_auth_cleanup(user_id: str) -> None:
         logger.debug(f"Skipping MCP auth cleanup enqueue for user_id={user_id}: bridge loop closed")
 
 
+def _cleanup_partial_mcp_auth_startup(bridge_task: Any, mcp_auth_service: Any, redis_client: Any) -> None:
+    if bridge_task is not None:
+        try:
+            bridge_task.cancel()
+        except Exception as exc:
+            logger.warning(f"MCP auth bridge task cancellation failed after startup error: {type(exc).__name__}")
+    if mcp_auth_service is not None:
+        try:
+            mcp_auth_service.shutdown()
+        except Exception as exc:
+            logger.warning(f"MCP auth service shutdown failed after startup error: {type(exc).__name__}")
+    try:
+        redis_client.close()
+    except Exception as exc:
+        logger.warning(f"MCP auth Redis client shutdown failed after startup error: {type(exc).__name__}")
+
+
 def initialize_mcp_auth() -> None:
     global _initialized, _bridge_queue, _bridge_task, _bridge_loop, _mcp_auth_service, _redis_client, _tms
     global _pkce_store, _saml_relay_state_store, _redis_encryption
+    global _tms_audit_context_provider
 
     _validate_hmac_secret()
     if not is_mcp_auth_enabled() or _initialized:
@@ -1403,11 +1532,11 @@ def initialize_mcp_auth() -> None:
     from codemie.service.mcp.toolkit_service import MCPToolkitService
     from codemie_enterprise.mcp_auth import (
         DCRCredentialsCache,
+        ContextVarTMSAuditContextProvider,
         DiscoveryMetadataCache,
         MCPAuthResolver,
         MCPAuthService,
         MCPAuthServiceConfig,
-        MockTokenManagementSystem,
         RedisEncryption,
         RedisPKCEStore,
         SAMLRelayStateStore,
@@ -1416,12 +1545,15 @@ def initialize_mcp_auth() -> None:
     bridge_loop = asyncio.get_running_loop()
     bridge_queue: asyncio.Queue[str] = asyncio.Queue()
     redis_client = create_redis_client()
+    bridge_task: Any = None
+    mcp_auth_service: Any = None
 
     try:
         redis_encryption = RedisEncryption(config.MCP_AUTH_HMAC_SECRET)
         pkce_store = RedisPKCEStore(redis_client, redis_encryption)
         saml_relay_state_store = SAMLRelayStateStore(redis_client, redis_encryption)
-        token_management_system = MockTokenManagementSystem()
+        audit_context_provider = ContextVarTMSAuditContextProvider()
+        token_management_system = _build_token_management_system(redis_client, audit_context_provider)
         mcp_auth_service = MCPAuthService(
             config=MCPAuthServiceConfig(),
             redis_client=redis_client,
@@ -1430,20 +1562,21 @@ def initialize_mcp_auth() -> None:
             dcr_credentials_cache=DCRCredentialsCache(redis_client, redis_encryption),
             token_management_system=token_management_system,
             alert_callback=_build_alert_callback(),
+            audit_context_provider=audit_context_provider,
         )
         mcp_auth_service.initialize()
         bridge_task = bridge_loop.create_task(_bridge_consumer(bridge_queue, mcp_auth_service))
 
-        resolver = MCPAuthResolver(token_management_system, _build_authentication_required_exception)
+        resolver = MCPAuthResolver(
+            token_management_system,
+            _build_authentication_required_exception,
+            audit_context_provider=audit_context_provider,
+        )
         if type(resolver) not in _registered_resolver_types:
             MCPToolkitService.register_auth_resolver(resolver)
             _registered_resolver_types.add(type(resolver))
     except Exception:
-        if 'bridge_task' in locals():
-            bridge_task.cancel()
-        if 'mcp_auth_service' in locals():
-            mcp_auth_service.shutdown()
-        redis_client.close()
+        _cleanup_partial_mcp_auth_startup(bridge_task, mcp_auth_service, redis_client)
         raise
 
     _bridge_loop = bridge_loop
@@ -1455,39 +1588,56 @@ def initialize_mcp_auth() -> None:
     _pkce_store = pkce_store
     _saml_relay_state_store = saml_relay_state_store
     _redis_encryption = redis_encryption
+    _tms_audit_context_provider = audit_context_provider
     _initialized = True
 
 
 async def shutdown_mcp_auth() -> None:
     global _initialized, _bridge_queue, _bridge_task, _bridge_loop, _mcp_auth_service, _redis_client, _tms
     global _pkce_store, _saml_relay_state_store, _redis_encryption
+    global _tms_audit_context_provider
 
     if not _initialized and _bridge_task is None and _mcp_auth_service is None and _redis_client is None:
         return
 
-    bridge_task = _bridge_task
-    if bridge_task is not None:
-        bridge_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await bridge_task
+    try:
+        bridge_task = _bridge_task
+        if bridge_task is not None:
+            try:
+                bridge_task.cancel()
+            except Exception as exc:
+                logger.warning(f"MCP auth bridge task cancellation failed: {type(exc).__name__}")
+            else:
+                with suppress(asyncio.CancelledError):
+                    try:
+                        await bridge_task
+                    except Exception as exc:
+                        logger.warning(f"MCP auth bridge task shutdown failed: {type(exc).__name__}")
 
-    if _mcp_auth_service is not None:
-        _mcp_auth_service.shutdown()
+        if _mcp_auth_service is not None:
+            try:
+                _mcp_auth_service.shutdown()
+            except Exception as exc:
+                logger.warning(f"MCP auth service shutdown failed: {type(exc).__name__}")
 
-    if _redis_client is not None:
-        _redis_client.close()
-
-    _initialized = False
-    _bridge_queue = None
-    _bridge_task = None
-    _bridge_loop = None
-    _mcp_auth_service = None
-    _redis_client = None
-    _tms = None
-    _pkce_store = None
-    _saml_relay_state_store = None
-    _redis_encryption = None
-    _registered_resolver_types.clear()
+        if _redis_client is not None:
+            try:
+                _redis_client.close()
+            except Exception as exc:
+                logger.warning(f"MCP auth Redis client shutdown failed: {type(exc).__name__}")
+    finally:
+        _initialized = False
+        _bridge_queue = None
+        _bridge_task = None
+        _bridge_loop = None
+        _mcp_auth_service = None
+        _redis_client = None
+        _tms = None
+        _pkce_store = None
+        _saml_relay_state_store = None
+        _redis_encryption = None
+        _tms_audit_context_provider = None
+        _registered_resolver_types.clear()
 
 
 def get_mcp_auth_status_payload(auth_config_id: str) -> dict[str, str] | None:

@@ -1382,18 +1382,19 @@ files = [
 
 [[package]]
 name = "codemie-enterprise"
-version = "2.3.16"
+version = "2.3.17"
 description = "CodeMie Enterprise Package - Closed-source enterprise features"
 optional = true
 python-versions = ">=3.12,<4.0"
 groups = ["main"]
 markers = "extra == \"enterprise\""
 files = [
-    {file = "codemie_enterprise-2.3.16-py3-none-any.whl", hash = "sha256:f2e6f4a096aeecc5b960d3ab897ae509ae3e94cedc4f6d20a67d449663ee56db"},
-    {file = "codemie_enterprise-2.3.16.tar.gz", hash = "sha256:eee586f4cfff6facba9a86f5ef1f62a4d912999d4b7400c628b17c2945380aa6"},
+    {file = "codemie_enterprise-2.3.17-py3-none-any.whl", hash = "sha256:8c5ad8e001cc365a888184d4cdec884d233671235d37b131bad1b4ea749130ea"},
+    {file = "codemie_enterprise-2.3.17.tar.gz", hash = "sha256:9475e5675910a40a382c444f03b94a38d341136f00c188f4bd09f230c3d252ec"},
 ]
 
 [package.dependencies]
+alembic = ">=1.15.2,<2.0.0"
 cachetools = ">=6.2.4,<7.0.0"
 cryptography = ">=43.0.0"
 httpx = ">=0.28.1,<0.29.0"
@@ -1405,6 +1406,7 @@ PyJWT = ">=2.8.0,<3.0.0"
 python-keycloak = ">=5.1.0,<6.0.0"
 python3-saml = ">=1.16.0,<2.0.0"
 redis = ">=5.0.0,<6.0.0"
+sqlalchemy = ">=2.0.35,<3.0.0"
 
 [package.source]
 type = "legacy"
@@ -11159,4 +11161,4 @@ pdf-svg = ["cairosvg"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.14"
-content-hash = "9a10cb7425432f7bf6fc49e304b0aa1789006fa482ec2a1813686391ed406ffb"
+content-hash = "79fda1b58a79c5e3e916cad2f1c758001d00cd1e993d344de377d504b5b40202"

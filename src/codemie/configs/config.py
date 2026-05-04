@@ -375,6 +375,27 @@ class Config(BaseSettings):
     MCP_AUTH_REDIS_SSL: bool = False
     MCP_AUTH_REDIS_CONNECT_TIMEOUT_SECONDS: float = 5.0
     MCP_AUTH_REDIS_TIMEOUT_SECONDS: float = 5.0
+
+    # Enables PostgreSQL-backed enterprise Token Management System instead of the mock in-memory TMS.
+    MCP_AUTH_TMS_ENABLED: bool = False
+    # Logical KMS key id used by enterprise TMS envelope encryption; required when TMS is enabled.
+    MCP_AUTH_TMS_KMS_KEY_ID: str = ""
+    # Stable encryption context prefix used in encrypted credential AAD; changing it breaks old token decryption.
+    MCP_AUTH_TMS_ENCRYPTION_CONTEXT_PREFIX: str = "codemie-enterprise:mcp-auth:tms"
+    # OAuth2 refresh request timeout; enterprise validation requires this to be > 0 and <= 3 seconds.
+    MCP_AUTH_TMS_REFRESH_TIMEOUT_SECONDS: float = 2.5
+    # Enables Redis refresh locks to reduce duplicate refreshes across clustered backend instances.
+    MCP_AUTH_TMS_REDIS_LOCK_ENABLED: bool = True
+    # Redis refresh lock TTL in seconds; must be greater than MCP_AUTH_TMS_REFRESH_TIMEOUT_SECONDS.
+    MCP_AUTH_TMS_REDIS_LOCK_TTL_SECONDS: int = 10
+    # Requires durable audit write before successful credential operations return.
+    MCP_AUTH_TMS_AUDIT_REQUIRED: bool = True
+    # Enables durable fallback audit sink when the primary audit write path is unavailable.
+    MCP_AUTH_TMS_AUDIT_FALLBACK_ENABLED: bool = False
+    # Confirms that a durable fallback audit sink is configured when fallback audit is enabled.
+    MCP_AUTH_TMS_AUDIT_FALLBACK_SINK_CONFIGURED: bool = False
+    # Allows mock TMS only in non-production environments when real TMS is disabled.
+    MCP_AUTH_TMS_ALLOW_MOCK: bool = False
     MCP_CONNECT_ENABLED: bool = True
     MCP_CONNECT_URL: str = "http://localhost:3000"
     MCP_CONNECT_BUCKETS_COUNT: int = 10

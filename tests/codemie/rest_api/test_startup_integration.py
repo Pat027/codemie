@@ -55,19 +55,48 @@ def mock_langfuse_service():
 def mock_non_litellm_startup():
     """Mock all non-LiteLLM startup functions to isolate LiteLLM integration testing."""
     with patch("codemie.rest_api.main.alembic_upgrade_postgres"):
-        with patch("codemie.rest_api.main.create_default_applications"):
-            with patch("codemie.rest_api.main.manage_preconfigured_assistants"):
-                with patch("codemie.rest_api.main.manage_preconfigured_skills"):
-                    with patch("codemie.rest_api.main.create_preconfigured_workflows"):
-                        with patch("codemie.rest_api.main.import_preconfigured_katas"):
-                            with patch("codemie.rest_api.main._setup_memory_profiling_scheduler"):
-                                with patch("codemie.rest_api.main.initialize_mcp_auth"):
-                                    with patch("codemie.rest_api.main.shutdown_mcp_auth", new_callable=AsyncMock):
-                                        with patch(
-                                            "codemie.rest_api.main.ensure_predefined_budgets",
-                                            new_callable=AsyncMock,
-                                        ):
-                                            yield
+        with patch("codemie.rest_api.main.alembic_upgrade_enterprise_postgres"):
+            with patch("codemie.rest_api.main.create_default_applications"):
+                with patch("codemie.rest_api.main.manage_preconfigured_assistants"):
+                    with patch("codemie.rest_api.main.manage_preconfigured_skills"):
+                        with patch("codemie.rest_api.main.create_preconfigured_workflows"):
+                            with patch("codemie.rest_api.main.import_preconfigured_katas"):
+                                with patch("codemie.rest_api.main._setup_memory_profiling_scheduler"):
+                                    with patch("codemie.rest_api.main.initialize_mcp_auth"):
+                                        with patch("codemie.rest_api.main.shutdown_mcp_auth", new_callable=AsyncMock):
+                                            with patch(
+                                                "codemie.rest_api.main.ensure_predefined_budgets",
+                                                new_callable=AsyncMock,
+                                            ):
+                                                yield
+
+
+def test_initialize_database_and_defaults_runs_enterprise_migrations_before_defaults():
+    from codemie.rest_api import main
+
+    calls = []
+
+    def track(name):
+        return MagicMock(side_effect=lambda: calls.append(name))
+
+    with patch("codemie.rest_api.main.alembic_upgrade_postgres", track("core_migrations")):
+        with patch("codemie.rest_api.main.alembic_upgrade_enterprise_postgres", track("enterprise_migrations")):
+            with patch("codemie.rest_api.main.create_default_applications", track("default_applications")):
+                with patch("codemie.rest_api.main.manage_preconfigured_assistants", track("assistants")):
+                    with patch("codemie.rest_api.main.manage_preconfigured_skills", track("skills")):
+                        with patch("codemie.rest_api.main.create_preconfigured_workflows", track("workflows")):
+                            with patch("codemie.rest_api.main.import_preconfigured_katas", track("katas")):
+                                main._initialize_database_and_defaults()
+
+    assert calls == [
+        "core_migrations",
+        "enterprise_migrations",
+        "default_applications",
+        "assistants",
+        "skills",
+        "workflows",
+        "katas",
+    ]
 
 
 class TestLiteLLMServiceInitialization:

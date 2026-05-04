@@ -40,6 +40,7 @@ from .loader import (
     TraceContext,
     build_agent_metadata,
     build_workflow_metadata,
+    enterprise_mcp_auth_alembic_locations,
     has_idp,
     has_langfuse,
     has_litellm,
@@ -138,6 +139,7 @@ __all__ = [
     # Loader functions
     "build_agent_metadata",
     "build_workflow_metadata",
+    "enterprise_mcp_auth_alembic_locations",
     "has_langfuse",
     "has_litellm",
     "has_plugin",

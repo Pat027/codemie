@@ -102,7 +102,7 @@ from external.deployment_scripts.preconfigured_assistants import manage_preconfi
 from external.deployment_scripts.preconfigured_skills import manage_preconfigured_skills
 from external.deployment_scripts.preconfigured_workflows import create_preconfigured_workflows
 from external.deployment_scripts.preconfigured_katas import import_preconfigured_katas
-from codemie.clients.postgres import alembic_upgrade_postgres
+from codemie.clients.postgres import alembic_upgrade_enterprise_postgres, alembic_upgrade_postgres
 from codemie.service.budget.startup_reconciliation_service import budget_startup_reconciliation_service
 
 # Rate limiting imports (EPMCDME-10160)
@@ -320,6 +320,7 @@ def _schedule_budget_reconciliation(app: FastAPI, tasks: list[asyncio.Task]) -> 
 def _initialize_database_and_defaults():
     """Run database migrations and create default data."""
     alembic_upgrade_postgres()
+    alembic_upgrade_enterprise_postgres()
     create_default_applications()
     manage_preconfigured_assistants()
     manage_preconfigured_skills()
