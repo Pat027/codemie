@@ -2158,10 +2158,14 @@ def _ask_assistant(
         raise
     except BrokerAuthRequiredException:
         raise
+    except ExtendedHTTPException as ehe:
+        _save_error(request_uuid, request, ehe, user, assistant)
+        raise ehe
     except Exception as e:
+        error_details = f"{type(e).__name__}: {str(e)}" if str(e) else type(e).__name__
         error = _create_assistant_error(
             "Assistant Error",
-            f"{str(e)}",
+            error_details,
             "We apologize for the inconvenience. Here are some steps you can try:\n"
             "1. Retry your request after a short delay.\n"
             "2. Check if your input is within the expected parameters.\n"
@@ -2169,7 +2173,7 @@ def _ask_assistant(
             "with the timestamp of your request and any error messages you received.",
         )
         _save_error(request_uuid, request, error, user, assistant)
-        logger.error(f"{str(e)}", exc_info=True)
+        logger.error(error_details, exc_info=True)
         raise error from e
 
 
