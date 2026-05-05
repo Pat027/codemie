@@ -67,6 +67,10 @@ class MetricName(str, Enum):
     CLI_AGENT_USAGE_TOTAL = "cli_agent_usage_total"
     CLI_ERROR_TOTAL = "cli_error_total"
     CLI_REPOSITORY_ACTIVITY_TOTAL = "cli_repository_activity_total"
+    # Mirror of `skill_events` Postgres rows. Authoritative source is the
+    # `skill_events` table; this entry exists so legacy Elastic-backed
+    # dashboards can keep filtering by metric name during the transition.
+    CLI_SKILL_COMMAND_TOTAL = "codemie_cli_skill_command_total"
     SKILL_TOOL_INVOKED = "codemie_skill_tool_invoked"
 
     # LLM Proxy metrics
