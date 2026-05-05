@@ -143,7 +143,7 @@ class TestMetricsElasticRepository:
         result = await repository.execute_esql_query(query, filter_query=None)
 
         # Assert
-        mock_es_client.esql.query.assert_called_once_with(query=query)
+        mock_es_client.esql.query.assert_called_once_with(query=query, request_timeout=60)
         assert result == sample_esql_result
 
     @pytest.mark.asyncio
@@ -160,7 +160,7 @@ class TestMetricsElasticRepository:
         result = await repository.execute_esql_query(query, filter_query=filter_query)
 
         # Assert
-        mock_es_client.esql.query.assert_called_once_with(query=query, filter=filter_query)
+        mock_es_client.esql.query.assert_called_once_with(query=query, filter=filter_query, request_timeout=60)
         assert result == sample_esql_result
 
     @pytest.mark.asyncio
@@ -201,7 +201,7 @@ class TestMetricsElasticRepository:
 
         # Assert - Query execution succeeds
         assert result == sample_esql_result
-        mock_es_client.esql.query.assert_called_once_with(query=query)
+        mock_es_client.esql.query.assert_called_once_with(query=query, request_timeout=60)
 
     # ================================================================================
     # execute_aggregation_query Tests
@@ -218,7 +218,7 @@ class TestMetricsElasticRepository:
         result = await repository.execute_aggregation_query(body)
 
         # Assert
-        mock_es_client.search.assert_called_once_with(index="test-metrics-index", body=body)
+        mock_es_client.search.assert_called_once_with(index="test-metrics-index", body=body, request_timeout=60)
         assert result == sample_aggregation_result
 
     @pytest.mark.asyncio
@@ -288,7 +288,7 @@ class TestMetricsElasticRepository:
         result = await repository.execute_aggregation_query(body)
 
         # Assert
-        mock_es_client.search.assert_called_once_with(index="test-metrics-index", body=body)
+        mock_es_client.search.assert_called_once_with(index="test-metrics-index", body=body, request_timeout=60)
         assert result == sample_aggregation_result
 
     # ================================================================================
@@ -307,7 +307,9 @@ class TestMetricsElasticRepository:
 
         # Assert
         expected_body = {"query": query, "size": 20, "from": 0}
-        mock_es_client.search.assert_called_once_with(index="test-metrics-index", body=expected_body)
+        mock_es_client.search.assert_called_once_with(
+            index="test-metrics-index", body=expected_body, request_timeout=60
+        )
         assert result == sample_search_result
 
     @pytest.mark.asyncio
@@ -326,7 +328,9 @@ class TestMetricsElasticRepository:
 
         # Assert
         expected_body = {"query": query, "size": 50, "from": 100}
-        mock_es_client.search.assert_called_once_with(index="test-metrics-index", body=expected_body)
+        mock_es_client.search.assert_called_once_with(
+            index="test-metrics-index", body=expected_body, request_timeout=60
+        )
         assert result == sample_search_result
 
     @pytest.mark.asyncio
@@ -383,7 +387,9 @@ class TestMetricsElasticRepository:
 
         # Assert
         expected_body = {"query": query, "size": 1000, "from": 50000}
-        mock_es_client.search.assert_called_once_with(index="test-metrics-index", body=expected_body)
+        mock_es_client.search.assert_called_once_with(
+            index="test-metrics-index", body=expected_body, request_timeout=60
+        )
         assert result == sample_search_result
 
     # ================================================================================
@@ -402,7 +408,7 @@ class TestMetricsElasticRepository:
         result = await repository.execute_esql_query(query, filter_query=filter_query)
 
         # Assert - Empty dict is falsy, so filter is not passed (same as None)
-        mock_es_client.esql.query.assert_called_once_with(query=query)
+        mock_es_client.esql.query.assert_called_once_with(query=query, request_timeout=60)
         assert result == sample_esql_result
 
     @pytest.mark.asyncio
@@ -417,7 +423,9 @@ class TestMetricsElasticRepository:
 
         # Assert
         expected_body = {"query": query, "size": 0, "from": 0}
-        mock_es_client.search.assert_called_once_with(index="test-metrics-index", body=expected_body)
+        mock_es_client.search.assert_called_once_with(
+            index="test-metrics-index", body=expected_body, request_timeout=60
+        )
         assert result == sample_search_result
 
     @pytest.mark.asyncio

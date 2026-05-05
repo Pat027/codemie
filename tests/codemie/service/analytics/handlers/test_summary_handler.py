@@ -86,6 +86,8 @@ class TestGetSummaries:
                     "skills_invoked": {"count": {"value": 7}},
                 }
             },
+            # Third call: CLI costs adjustment query
+            {"aggregations": {"total_cost": {"value": 25.50}}},
         ]
 
         # Act
@@ -96,8 +98,8 @@ class TestGetSummaries:
         assert "data" in result
         assert "metrics" in result["data"]
         assert "metadata" in result
-        # Verify repository was called twice (unique_users + main)
-        assert mock_repository.execute_aggregation_query.call_count == 2
+        # Verify repository was called 3 times (unique_users + main + CLI costs)
+        assert mock_repository.execute_aggregation_query.call_count == 3
 
     @pytest.mark.asyncio
     @patch("codemie.service.analytics.handlers.cli_cost_processor.config.CLI_METRICS_CUTOFF_DATE", "2024-01-01")
@@ -133,14 +135,16 @@ class TestGetSummaries:
                     "skills_invoked": {"count": {"value": 0}},
                 }
             },
+            # Third call: CLI costs adjustment query
+            {"aggregations": {"total_cost": {"value": 0.0}}},
         ]
 
         # Act
         result = await handler.get_summaries(time_period="last_7_days")
 
         # Assert
-        # Verify that repository was called twice (unique_users + main)
-        assert mock_repository.execute_aggregation_query.call_count == 2
+        # Verify that repository was called 3 times (unique_users + main + CLI costs)
+        assert mock_repository.execute_aggregation_query.call_count == 3
         assert result is not None
 
 

@@ -234,7 +234,7 @@ class CLICostAdjustmentMixin:
         for bucket in buckets:
             entity_value = bucket["key"]
             cli_cost = bucket.get("cli_cost", {}).get("value", 0) or 0
-            cli_costs[entity_value] = round(cli_cost, 2)
+            cli_costs[entity_value] = cli_cost
 
         logger.debug(f"CLI costs by {entity_name}: {len(cli_costs)} {entity_name}s with CLI usage")
         return cli_costs

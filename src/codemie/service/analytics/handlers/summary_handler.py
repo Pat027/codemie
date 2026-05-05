@@ -22,8 +22,10 @@ from datetime import datetime
 
 from codemie.repository.metrics_elastic_repository import MetricsElasticRepository
 from codemie.rest_api.security.user import User
+from codemie.service.analytics.handlers.cli_cost_processor import CLICostAdjustmentMixin
 from codemie.service.analytics.metric_names import MetricName
 from codemie.service.analytics.query_pipeline import AnalyticsQueryPipeline
+from codemie.service.analytics.time_parser import TimeParser
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +38,7 @@ CLI_REQUEST_FIELD = "attributes.cli_request"
 METRIC_NAME_KEYWORD_FIELD = "metric_name.keyword"
 
 
-class SummaryHandler:
+class SummaryHandler(CLICostAdjustmentMixin):
     """Handler for summary metrics: tokens, costs, usage statistics."""
 
     def __init__(self, user: User, repository: MetricsElasticRepository):
@@ -66,6 +68,8 @@ class SummaryHandler:
         """
         logger.info(f"Requesting summaries. Period={time_period}")
 
+        start_dt, end_dt = TimeParser.parse(time_period, start_date, end_date)
+
         # Execute separate query for unique_users first (without metric_name filter)
         unique_users_count = await self._get_unique_users_count(
             time_period=time_period,
@@ -75,13 +79,20 @@ class SummaryHandler:
             projects=projects,
         )
 
+        cli_adjusted = await self.get_cli_costs_with_adjustment(
+            start_dt, end_dt, users, projects, include_cache_costs=False
+        )
+        cli_adjusted_total = cli_adjusted["total_cost"]
+
         return await self._pipeline.execute_summary_query(
             agg_builder=self._build_summaries_aggregation,
-            metrics_builder=lambda result: self._build_summaries_metrics(result, unique_users_count),
+            metrics_builder=lambda result: self._build_summaries_metrics(
+                result, unique_users_count, cli_adjusted_total
+            ),
             metric_filters=None,
-            time_period=time_period,
-            start_date=start_date,
-            end_date=end_date,
+            time_period=None,
+            start_date=start_dt,
+            end_date=end_dt,
             users=users,
             projects=projects,
             timestamp_field="time",
@@ -247,7 +258,9 @@ class SummaryHandler:
         logger.info(f"Unique users count (all metrics): {unique_users}")
         return int(unique_users)
 
-    def _build_summaries_metrics(self, result: dict, unique_users_count: int) -> list[dict]:
+    def _build_summaries_metrics(
+        self, result: dict, unique_users_count: int, cli_adjusted_total: float = 0.0
+    ) -> list[dict]:
         """Build metrics list from ES result.
 
         Combines web + CLI tokens for LLM operations, excludes embeddings.
@@ -273,8 +286,10 @@ class SummaryHandler:
         total_cache_creation_tokens = int(total_tokens_data.get("cache_creation_tokens", {}).get("value", 0))
         total_tokens = input_tokens + output_tokens + cached_input_tokens + total_cache_creation_tokens
 
-        # Total money spent (excludes legacy CLI metric, matches Kibana formula)
-        money_spent = float(aggs.get("total_money_spent", {}).get("sum", {}).get("value", 0.0))
+        # Total money spent with CLI cutoff adjustment (matches user/project spending totals)
+        money_spent_raw = float(aggs.get("total_money_spent", {}).get("sum", {}).get("value", 0.0))
+        cli_money_spent_raw = float(aggs.get("cli_cost", {}).get("money_spent", {}).get("value", 0.0))
+        money_spent = money_spent_raw - cli_money_spent_raw + cli_adjusted_total
 
         # Extract unique counts
         unique_users = unique_users_count
@@ -286,8 +301,7 @@ class SummaryHandler:
         embedding_input_tokens = int(embedding_aggs.get("input_tokens", {}).get("value", 0))
         embedding_money_spent = float(embedding_aggs.get("money_spent", {}).get("value", 0.0))
 
-        # Extract CLI-specific cost
-        cli_money_spent = float(aggs.get("cli_cost", {}).get("money_spent", {}).get("value", 0.0))
+        cli_money_spent = cli_money_spent_raw
 
         # Extract new usage counts
         cli_invoked_count = int(aggs.get("cli_invoked", {}).get("doc_count", 0))

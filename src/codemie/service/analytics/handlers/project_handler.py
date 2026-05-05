@@ -124,7 +124,12 @@ class ProjectHandler(CLICostAdjustmentMixin):
                 },
                 "aggs": {"sum": {"sum": {"field": MONEY_SPENT_FIELD}}},
             },
-            **AggregationBuilder.build_zero_token_filter_aggs(),
+            "filter_zero_cost": {
+                "bucket_selector": {
+                    "buckets_path": {"cost": "total_cost>sum"},
+                    "script": "params.cost > 0",
+                }
+            },
         }
 
         # Build terms aggregation using helper
@@ -177,7 +182,7 @@ class ProjectHandler(CLICostAdjustmentMixin):
             rows.append(
                 {
                     "project_name": project_name,
-                    "total_cost_usd": round(total_cost, 2),
+                    "total_cost_usd": total_cost,
                 }
             )
 

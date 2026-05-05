@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import uuid
 from datetime import datetime, UTC
 from typing import Optional
 
@@ -440,6 +441,33 @@ class UserRepository:
     # Async methods (AsyncSession)
     # ===========================================
 
+    async def afind_emails_by_identifiers(self, session: AsyncSession, identifiers: set[str]) -> dict[str, str]:
+        """Bulk-lookup email addresses for a set of raw user identifiers (UUIDs, usernames, display names).
+
+        Returns a mapping from each input identifier to the corresponding email address.
+        Identifiers that cannot be resolved are omitted from the result.
+        """
+        uuids = {v for v in identifiers if self._is_uuid(v)}
+        names = identifiers - uuids
+        mapping: dict[str, str] = {}
+
+        if uuids:
+            rows = await session.execute(select(UserDB.id, UserDB.email).where(UserDB.id.in_(uuids)))
+            mapping.update({r.id: r.email for r in rows})
+        if names:
+            rows = await session.execute(
+                select(UserDB.username, UserDB.name, UserDB.email).where(
+                    or_(UserDB.username.in_(names), UserDB.name.in_(names))
+                )
+            )
+            for r in rows:
+                if r.username in names:
+                    mapping[r.username] = r.email
+                if r.name and r.name in names:
+                    mapping[r.name] = r.email
+
+        return mapping
+
     async def aget_by_id(self, session: AsyncSession, user_id: str) -> Optional[UserDB]:
         """Get user by ID (async)"""
         statement = select(UserDB).where(UserDB.id == user_id)
@@ -611,6 +639,14 @@ class UserRepository:
             .exists()
         )
         return query.where(is_user_on_projects)
+
+    @staticmethod
+    def _is_uuid(val: str) -> bool:
+        try:
+            uuid.UUID(val)
+            return True
+        except (ValueError, TypeError, AttributeError):
+            return False
 
 
 # Singleton instance

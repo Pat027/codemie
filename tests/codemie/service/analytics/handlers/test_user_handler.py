@@ -75,7 +75,7 @@ class TestGetUsersSpending:
         assert users_agg["terms"]["order"] == {"total_cost": "desc"}
 
     def test_parse_users_spending_result_rounds_cost(self, handler):
-        """Verify cost is rounded to 2 decimal places."""
+        """Verify cost is returned as-is from Elasticsearch."""
         # Arrange
         result = {
             "aggregations": {
@@ -101,9 +101,9 @@ class TestGetUsersSpending:
         # Assert
         assert len(rows) == 2
         assert rows[0]["user_email"] == "user1@example.com"
-        assert rows[0]["total_cost_usd"] == 123.46  # Rounded
+        assert rows[0]["total_cost_usd"] == 123.456789
         assert rows[1]["user_email"] == "user2@example.com"
-        assert rows[1]["total_cost_usd"] == 46.0  # Rounded
+        assert rows[1]["total_cost_usd"] == 45.999
 
     def test_parse_users_spending_result_handles_none_cost(self, handler):
         """Verify None cost is handled."""
@@ -129,8 +129,8 @@ class TestGetUsersSpending:
         assert len(rows) == 1
         assert rows[0]["total_cost_usd"] == 0
 
-    def test_parse_users_spending_result_filters_empty_emails(self, handler):
-        """Verify empty user emails are filtered out."""
+    def test_parse_users_spending_result_maps_empty_emails_to_unknown(self, handler):
+        """Verify empty user emails are mapped to 'unknown' in results."""
         # Arrange
         result = {
             "aggregations": {
@@ -141,7 +141,7 @@ class TestGetUsersSpending:
                             "total_cost": {"value": 10.50},
                         },
                         {
-                            "key": "",  # Empty email should be filtered
+                            "key": "",
                             "total_cost": {"value": 0.01},
                         },
                         {
@@ -158,11 +158,13 @@ class TestGetUsersSpending:
         rows = handler._parse_users_spending_result(result, cli_costs_by_user={})
 
         # Assert
-        assert len(rows) == 2  # Empty email filtered out
+        assert len(rows) == 3
         assert rows[0]["user_email"] == "user1@example.com"
         assert rows[0]["total_cost_usd"] == 10.50
-        assert rows[1]["user_email"] == "user2@example.com"
-        assert rows[1]["total_cost_usd"] == 5.25
+        assert rows[1]["user_email"] == "unknown"
+        assert rows[1]["total_cost_usd"] == 0.01
+        assert rows[2]["user_email"] == "user2@example.com"
+        assert rows[2]["total_cost_usd"] == 5.25
 
 
 class TestGetUsersActivity:

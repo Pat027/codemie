@@ -47,6 +47,8 @@ CIRCUIT_BREAKER_DETAILS_PREFIX = "Query requires too much memory"
 ES_SERVICE_ERROR_DETAILS_PREFIX = "Elasticsearch service error"
 UNEXPECTED_ERROR_DETAILS_PREFIX = "Unexpected error"
 
+DEFAULT_REQUEST_TIMEOUT = 60
+
 # Log message templates
 LOG_CIRCUIT_BREAKER_MSG = "ES|QL query hit circuit breaker: {error}"
 LOG_AGGREGATION_CIRCUIT_BREAKER_MSG = "Aggregation query hit circuit breaker: {error}"
@@ -86,9 +88,11 @@ class MetricsElasticRepository:
 
             # ES|QL supports a filter parameter for applying filters
             if filter_query:
-                result = await self._client.esql.query(query=query, filter=filter_query)
+                result = await self._client.esql.query(
+                    query=query, filter=filter_query, request_timeout=DEFAULT_REQUEST_TIMEOUT
+                )
             else:
-                result = await self._client.esql.query(query=query)
+                result = await self._client.esql.query(query=query, request_timeout=DEFAULT_REQUEST_TIMEOUT)
 
             execution_time = (time.time() - start_time) * 1000
             logger.info(f"ES|QL query completed in {execution_time:.2f}ms")
@@ -122,7 +126,7 @@ class MetricsElasticRepository:
                 help=ANALYTICS_QUERY_HELP_MSG,
             ) from e
 
-    async def execute_aggregation_query(self, body: dict, *, request_timeout: int | None = None) -> dict:
+    async def execute_aggregation_query(self, body: dict, *, request_timeout: int = DEFAULT_REQUEST_TIMEOUT) -> dict:
         """Execute aggregation query and return results.
 
         Args:
@@ -139,10 +143,7 @@ class MetricsElasticRepository:
             logger.debug(f"Executing aggregation query on index {self._index}, body={body}")
             start_time = time.time()
 
-            kwargs: dict = {"index": self._index, "body": body}
-            if request_timeout is not None:
-                kwargs["request_timeout"] = request_timeout
-            result = await self._client.search(**kwargs)
+            result = await self._client.search(index=self._index, body=body, request_timeout=request_timeout)
 
             execution_time = (time.time() - start_time) * 1000
             logger.info(f"Aggregation query completed in {execution_time:.2f}ms")
@@ -197,7 +198,7 @@ class MetricsElasticRepository:
             body = {"query": query, "size": size, "from": from_}
             logger.debug(f"Executing search query on index {self._index}, body={body}")
             start_time = time.time()
-            result = await self._client.search(index=self._index, body=body)
+            result = await self._client.search(index=self._index, body=body, request_timeout=DEFAULT_REQUEST_TIMEOUT)
 
             execution_time = (time.time() - start_time) * 1000
             logger.info(f"Search query completed in {execution_time:.2f}ms")

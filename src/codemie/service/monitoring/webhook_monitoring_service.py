@@ -1,4 +1,4 @@
-# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
+# Copyright 2026 EPAM Systems, Inc. ("EPAM")
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,8 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-from typing import Optional
 
 from codemie.core.dependecies import get_current_project
 from codemie.service.monitoring.base_monitoring_service import BaseMonitoringService
@@ -32,7 +30,7 @@ class WebhookMonitoringService(BaseMonitoringService):
         resource_type: str,
         resource_id: str,
         webhook_alias: str,
-        additional_attributes: Optional[dict] = None,
+        additional_attributes: dict | None = None,
     ):
         """
         Send webhook invocation metrics.
@@ -45,7 +43,7 @@ class WebhookMonitoringService(BaseMonitoringService):
             resource_type (str): Type of resource (ASSISTANT, WORKFLOW, DATASOURCE)
             resource_id (str): ID of the resource
             webhook_alias (str): Alias of the webhook
-            additional_attributes (Optional[dict]): Additional attributes to include
+            additional_attributes (dict | None): Additional attributes to include
         """
         attributes = {
             MetricsAttributes.WEBHOOK_ID: webhook_id,
@@ -60,7 +58,6 @@ class WebhookMonitoringService(BaseMonitoringService):
         if additional_attributes:
             attributes.update(additional_attributes)
 
-        # Send metric for total invocations
         cls.send_count_metric(
             name=f"{cls.WEBHOOK_BASE_METRIC}_total",
             description="Total number of webhook invocations",
@@ -68,7 +65,6 @@ class WebhookMonitoringService(BaseMonitoringService):
         )
 
         if not success:
-            # Send metric for failed invocations
             cls.send_count_metric(
                 name=f"{cls.WEBHOOK_BASE_METRIC}_error_total",
                 description="Total number of failed webhook invocations",

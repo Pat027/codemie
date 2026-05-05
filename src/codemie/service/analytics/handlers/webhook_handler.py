@@ -21,7 +21,12 @@ from datetime import datetime
 
 from codemie.repository.metrics_elastic_repository import MetricsElasticRepository
 from codemie.rest_api.security.user import User
-from codemie.service.analytics.handlers.field_constants import METRIC_NAME_KEYWORD_FIELD
+from codemie.service.analytics.handlers.field_constants import (
+    METRIC_NAME_KEYWORD_FIELD,
+    USER_EMAIL_KEYWORD_FIELD,
+    USER_NAME_KEYWORD_FIELD,
+)
+from codemie.service.analytics.handlers.user_identity_resolver import UserIdentityResolver
 from codemie.service.analytics.metric_names import MetricName
 from codemie.service.analytics.query_pipeline import AnalyticsQueryPipeline
 
@@ -31,6 +36,9 @@ logger = logging.getLogger(__name__)
 USER_ID_KEYWORD_FIELD = "attributes.user_id.keyword"
 WEBHOOK_ALIAS_KEYWORD_FIELD = "attributes.webhook_alias.keyword"
 WEBHOOK_RESOURCE_TYPE_KEYWORD_FIELD = "attributes.resource_type.keyword"
+TIMESTAMP_FIELD = "@timestamp"
+
+UNKNOWN_USER_ID = "unknown"
 
 # Aggregation name constants
 AGG_PAGINATED_RESULTS = "paginated_results"
@@ -62,7 +70,7 @@ class WebhookHandler:
         """
         logger.info("Requesting webhooks-invocation analytics")
 
-        return await self._pipeline.execute_tabular_query(
+        result = await self._pipeline.execute_tabular_query(
             agg_builder=lambda query, fetch_size: self._build_webhooks_invocation_aggregation(query, fetch_size),
             result_parser=self._parse_webhooks_invocation_result,
             columns=self._get_webhooks_invocation_columns(),
@@ -76,12 +84,33 @@ class WebhookHandler:
             page=page,
             per_page=per_page,
         )
+        rows = result.get("data", {}).get("rows", [])
+        for row in rows:
+            row["user_id"] = (
+                row.pop("raw_user_email", None) or row.pop("raw_user_name", None) or row.pop("raw_user_id", None)
+            )
+        await UserIdentityResolver.resolve_rows(rows, "user_id")
+        return result
 
     def _build_webhooks_invocation_aggregation(self, query: dict, fetch_size: int) -> dict:
         """Build terms aggregation for webhooks invocation grouped by user."""
         from codemie.service.analytics.aggregation_builder import AggregationBuilder
 
         sub_aggs = {
+            "user_email_top": {
+                "top_metrics": {
+                    "metrics": {"field": USER_EMAIL_KEYWORD_FIELD},
+                    "size": 1,
+                    "sort": {TIMESTAMP_FIELD: "desc"},
+                }
+            },
+            "user_name_top": {
+                "top_metrics": {
+                    "metrics": {"field": USER_NAME_KEYWORD_FIELD},
+                    "size": 1,
+                    "sort": {TIMESTAMP_FIELD: "desc"},
+                }
+            },
             AGG_WEBHOOK_FILTER: {
                 "filter": {
                     "bool": {
@@ -108,7 +137,7 @@ class WebhookHandler:
                         "top_metrics": {
                             "metrics": {"field": "attributes.project.keyword"},
                             "size": 1,
-                            "sort": {"@timestamp": "desc"},
+                            "sort": {TIMESTAMP_FIELD: "desc"},
                         }
                     }
                 },
@@ -120,7 +149,7 @@ class WebhookHandler:
                         "top_metrics": {
                             "metrics": {"field": WEBHOOK_ALIAS_KEYWORD_FIELD},
                             "size": 1,
-                            "sort": {"@timestamp": "desc"},
+                            "sort": {TIMESTAMP_FIELD: "desc"},
                         }
                     }
                 },
@@ -168,7 +197,15 @@ class WebhookHandler:
 
         rows = []
         for bucket in buckets:
-            user_id = bucket["key"]
+            raw_user_id = bucket["key"]
+            user_email_top = bucket.get("user_email_top", {}).get("top", [])
+            raw_user_email = (
+                user_email_top[0].get("metrics", {}).get(USER_EMAIL_KEYWORD_FIELD) if user_email_top else None
+            )
+            user_name_top = bucket.get("user_name_top", {}).get("top", [])
+            raw_user_name = user_name_top[0].get("metrics", {}).get(USER_NAME_KEYWORD_FIELD) if user_name_top else None
+            if raw_user_id == UNKNOWN_USER_ID:
+                continue
             total_invocations = bucket.get("3-bucket", {}).get("doc_count", 0)
 
             project = None
@@ -183,7 +220,9 @@ class WebhookHandler:
 
             rows.append(
                 {
-                    "user_id": user_id,
+                    "raw_user_email": raw_user_email,
+                    "raw_user_name": raw_user_name,
+                    "raw_user_id": raw_user_id,
                     "project": project or "N/A",
                     "webhook_alias": webhook_alias or "N/A",
                     "total_invocations": total_invocations,

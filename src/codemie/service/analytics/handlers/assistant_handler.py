@@ -76,10 +76,8 @@ FROM codemie_metrics_logs
 | STATS
     messages_per_conv = COUNT(*),
     total_cost_per_conv = SUM(attributes.money_spent),
-    total_input_tokens_per_conv = SUM(attributes.input_tokens),
-    total_output_tokens_per_conv = SUM(attributes.output_tokens),
+    total_tokens_per_conv = SUM(attributes.input_tokens + attributes.output_tokens),
     errors_per_conv = SUM(CASE(attributes.status != \"success\", 1, 0)),
-    success_per_conv = SUM(CASE(attributes.status == \"success\", 1, 0)),
     avg_exec_time_per_conv = AVG(attributes.execution_time),
     user_name = MAX(attributes.user_name.keyword),
     last_error_timestamp = MAX(CASE(attributes.status != \"success\", @timestamp, null))
@@ -93,16 +91,14 @@ FROM codemie_metrics_logs
     max_messages_per_chat = MAX(messages_per_conv),
     failed_conversations = SUM(CASE(errors_per_conv > 0, 1, 0)),
     total_errors = SUM(errors_per_conv),
-    successful_operations = SUM(success_per_conv),
     total_cost = SUM(total_cost_per_conv),
-    total_input_tokens = SUM(total_input_tokens_per_conv),
-    total_output_tokens = SUM(total_output_tokens_per_conv),
+    total_tokens = SUM(total_tokens_per_conv),
     avg_execution_time = AVG(avg_exec_time_per_conv),
     unique_users = COUNT_DISTINCT(user_name),
     last_error_time = MAX(last_error_timestamp)
   BY attributes.assistant_name.keyword
 | EVAL
-    total_tokens = total_input_tokens + total_output_tokens,
+    successful_operations = total_messages - total_errors,
     error_rate_percent = ROUND((TO_DOUBLE(failed_conversations) / TO_DOUBLE(total_conversations)) * 100, 2),
     cost_per_operation = CASE(successful_operations > 0, ROUND(total_cost / successful_operations, 5), 0),
     avg_messages_rounded = ROUND(avg_messages_per_chat, 2),

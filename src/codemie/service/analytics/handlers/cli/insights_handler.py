@@ -30,6 +30,7 @@ from codemie.service.analytics.handlers.field_constants import (
     PROJECT_KEYWORD_FIELD,
     USER_EMAIL_KEYWORD_FIELD,
 )
+from codemie.service.analytics.handlers.user_identity_resolver import UserIdentityResolver
 from codemie.service.analytics.metric_names import MetricName
 from codemie.service.analytics.response_formatter import ResponseFormatter
 from codemie.service.analytics.time_parser import TimeParser
@@ -688,8 +689,10 @@ class CLIInsightsHandler(CLIBaseHandler):
         rows = []
         for bucket in result.get("aggregations", {}).get("users", {}).get("buckets", []):
             user_id = bucket["key"]
-            user_name = self._extract_top_metric(bucket, "user_name", USER_NAME_KEYWORD_FIELD) or user_id
-            user_email = self._extract_top_metric(bucket, "user_email", USER_EMAIL_KEYWORD_FIELD) or user_name
+            raw_user_name = self._extract_top_metric(bucket, "user_name", USER_NAME_KEYWORD_FIELD)
+            raw_user_email = self._extract_top_metric(bucket, "user_email", USER_EMAIL_KEYWORD_FIELD)
+            user_name = raw_user_email or raw_user_name or user_id
+            user_email = raw_user_email or user_name
             total_cost = round(bucket.get("cost_bucket", {}).get("total_cost", {}).get("value", 0) or 0, 2)
             repositories = [
                 repo["key"] for repo in bucket.get("repositories", {}).get("buckets", {}).get("buckets", [])
@@ -720,6 +723,7 @@ class CLIInsightsHandler(CLIBaseHandler):
                     "total_cost": total_cost,
                 }
             )
+        await UserIdentityResolver.resolve_rows(rows, "user_name", "user_email")
         return rows
 
     async def _get_cli_insights_project_rows(

@@ -19,9 +19,11 @@ Uses mocking to test repository logic without database dependency.
 """
 
 import pytest
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 from datetime import datetime, UTC
 
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Session
 
 from codemie.repository.user_repository import UserRepository
@@ -257,3 +259,98 @@ class TestUserRepositoryPagination:
         users = user_repository.query_users(db_session, filters=UserListFilters(), page=1, per_page=2)
 
         assert len(users) == 2
+
+
+def _db_row(**kwargs):
+    row = MagicMock()
+    for k, v in kwargs.items():
+        setattr(row, k, v)
+    return row
+
+
+_UUID = "550e8400-e29b-41d4-a716-446655440000"
+
+
+class TestIsUuid:
+    """Tests for UserRepository._is_uuid."""
+
+    def test_valid_uuid_returns_true(self):
+        assert UserRepository._is_uuid(_UUID) is True
+
+    def test_plain_string_returns_false(self):
+        assert UserRepository._is_uuid("alice_smith") is False
+
+    def test_email_returns_false(self):
+        assert UserRepository._is_uuid("alice@example.com") is False
+
+    def test_empty_string_returns_false(self):
+        assert UserRepository._is_uuid("") is False
+
+    def test_partial_uuid_returns_false(self):
+        assert UserRepository._is_uuid("550e8400-e29b-41d4") is False
+
+
+class TestAfindEmailsByIdentifiers:
+    """Tests for UserRepository.afind_emails_by_identifiers."""
+
+    @pytest.fixture
+    def repo(self):
+        return UserRepository()
+
+    @pytest.fixture
+    def async_session(self):
+        session = MagicMock(spec=AsyncSession)
+        session.execute = AsyncMock()
+        return session
+
+    @pytest.mark.asyncio
+    async def test_empty_identifiers_returns_empty(self, repo, async_session):
+        result = await repo.afind_emails_by_identifiers(async_session, set())
+        assert result == {}
+        async_session.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_uuid_resolved_via_id_query(self, repo, async_session):
+        async_session.execute.return_value = [_db_row(id=_UUID, email="alice@example.com")]
+        result = await repo.afind_emails_by_identifiers(async_session, {_UUID})
+        assert result == {_UUID: "alice@example.com"}
+        assert async_session.execute.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_username_resolved_via_name_query(self, repo, async_session):
+        async_session.execute.return_value = [
+            _db_row(username="alice_smith", name="Alice Smith", email="alice@example.com")
+        ]
+        result = await repo.afind_emails_by_identifiers(async_session, {"alice_smith"})
+        assert result == {"alice_smith": "alice@example.com"}
+        assert async_session.execute.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_display_name_resolved(self, repo, async_session):
+        async_session.execute.return_value = [_db_row(username="asmith", name="Alice Smith", email="alice@example.com")]
+        result = await repo.afind_emails_by_identifiers(async_session, {"Alice Smith"})
+        assert result == {"Alice Smith": "alice@example.com"}
+
+    @pytest.mark.asyncio
+    async def test_mixed_uuid_and_name_makes_two_queries(self, repo, async_session):
+        async_session.execute.side_effect = [
+            [_db_row(id=_UUID, email="alice@example.com")],
+            [_db_row(username="bob", name="Bob", email="bob@example.com")],
+        ]
+        result = await repo.afind_emails_by_identifiers(async_session, {_UUID, "bob"})
+        assert result == {_UUID: "alice@example.com", "bob": "bob@example.com"}
+        assert async_session.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_db_miss_returns_empty(self, repo, async_session):
+        async_session.execute.return_value = []
+        result = await repo.afind_emails_by_identifiers(async_session, {"unknown_user"})
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_username_and_name_collision_both_mapped(self, repo, async_session):
+        """When a row matches both username and name columns, both keys are mapped."""
+        row = _db_row(username="alice", name="alice", email="alice@example.com")
+        async_session.execute.return_value = [row]
+        result = await repo.afind_emails_by_identifiers(async_session, {"alice"})
+        assert result == {"alice": "alice@example.com"}

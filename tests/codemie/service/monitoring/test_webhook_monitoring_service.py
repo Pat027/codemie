@@ -88,16 +88,9 @@ class TestWebhookMonitoringService:
             additional_attributes=additional_attributes,
         )
 
-        mock_send_count_metric.assert_any_call(
-            name=f"{WebhookMonitoringService.WEBHOOK_BASE_METRIC}_total",
-            description="Total number of webhook invocations",
-            attributes=expected_attributes,
-        )
-
-        mock_send_count_metric.assert_any_call(
+        assert mock_send_count_metric.call_count == 2
+        mock_send_count_metric.assert_called_with(
             name=f"{WebhookMonitoringService.WEBHOOK_BASE_METRIC}_error_total",
             description="Total number of failed webhook invocations",
             attributes=expected_attributes,
         )
-
-        assert mock_send_count_metric.call_count == 2

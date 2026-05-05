@@ -31,6 +31,7 @@ from codemie.core.constants import (
     HEADER_CODEMIE_CLI,
     HEADER_CODEMIE_CLI_MODEL,
     HEADER_CODEMIE_CLIENT,
+    HEADER_CODEMIE_CLI_PROJECT,
     HEADER_CODEMIE_INTEGRATION,
     HEADER_CODEMIE_REQUEST_ID,
     HEADER_CODEMIE_SESSION_ID,
@@ -40,17 +41,131 @@ from codemie.enterprise.litellm.credentials import ResolvedLiteLLMUserCredential
 from codemie.enterprise.litellm.proxy_router import (
     _build_premium_budget_error_body,
     _check_cli_version,
+    _extract_model,
     _extract_request_info,
     _get_integration_api_key,
     _handle_error_response,
     _prepare_proxy_headers,
     _resolve_non_premium_tracking_identity,
     _resolve_tracking_identity,
+    _read_request_body,
     _resolve_project_budget_runtime,
     register_proxy_endpoints,
 )
 from codemie.rest_api.models.settings import LiteLLMCredentials
 from codemie.service.budget.budget_enums import BudgetCategory as CoreBudgetCategory
+
+
+class TestReadRequestBody:
+    """Tests for _read_request_body."""
+
+    @pytest.mark.asyncio
+    async def test_valid_json_body(self):
+        mock_request = MagicMock()
+        mock_request.body = AsyncMock(return_value=b'{"model": "gpt-4", "messages": []}')
+
+        body_bytes, body_json = await _read_request_body(mock_request)
+
+        assert body_bytes == b'{"model": "gpt-4", "messages": []}'
+        assert body_json == {"model": "gpt-4", "messages": []}
+
+    @pytest.mark.asyncio
+    async def test_invalid_json_returns_empty_dict(self):
+        mock_request = MagicMock()
+        mock_request.body = AsyncMock(return_value=b"not-json")
+
+        body_bytes, body_json = await _read_request_body(mock_request)
+
+        assert body_bytes == b"not-json"
+        assert body_json == {}
+
+    @pytest.mark.asyncio
+    async def test_empty_body_returns_empty_dict(self):
+        mock_request = MagicMock()
+        mock_request.body = AsyncMock(return_value=b"")
+
+        body_bytes, body_json = await _read_request_body(mock_request)
+
+        assert body_bytes == b""
+        assert body_json == {}
+
+    @pytest.mark.asyncio
+    async def test_get_request_no_body(self):
+        """GET requests (e.g. /v1/models) have no body — returns empty dict."""
+        mock_request = MagicMock()
+        mock_request.body = AsyncMock(return_value=b"")
+
+        body_bytes, body_json = await _read_request_body(mock_request)
+
+        assert body_json == {}
+
+
+class TestExtractModel:
+    """Tests for _extract_model."""
+
+    def test_model_from_body(self):
+        body_json = {"model": "gpt-4o", "messages": []}
+        request_info = {LLM_MODEL: "unknown"}
+
+        assert _extract_model(body_json, request_info) == "gpt-4o"
+
+    def test_model_from_path_params_when_body_empty(self):
+        """Gemini-style: model is in URL path, not body."""
+        body_json = {}
+        request_info = {LLM_MODEL: "unknown"}
+        path_params = {"model_name": "gemini-1.5-pro"}
+
+        assert _extract_model(body_json, request_info, path_params) == "gemini-1.5-pro"
+
+    def test_model_from_header_when_body_and_path_empty(self):
+        body_json = {}
+        request_info = {LLM_MODEL: "claude-sonnet-4-6"}
+
+        assert _extract_model(body_json, request_info) == "claude-sonnet-4-6"
+
+    def test_returns_none_when_all_sources_unresolvable(self):
+        """GET /v1/models or /health — no model anywhere."""
+        body_json = {}
+        request_info = {LLM_MODEL: "unknown"}
+
+        assert _extract_model(body_json, request_info) is None
+
+    def test_returns_none_when_request_info_empty(self):
+        assert _extract_model({}, {}) is None
+
+    def test_body_takes_priority_over_path_params(self):
+        body_json = {"model": "gpt-4o"}
+        request_info = {LLM_MODEL: "unknown"}
+        path_params = {"model_name": "gemini-1.5-pro"}
+
+        assert _extract_model(body_json, request_info, path_params) == "gpt-4o"
+
+    def test_path_params_take_priority_over_header(self):
+        body_json = {}
+        request_info = {LLM_MODEL: "claude-sonnet-4-6"}
+        path_params = {"model_name": "gemini-1.5-pro"}
+
+        assert _extract_model(body_json, request_info, path_params) == "gemini-1.5-pro"
+
+    def test_unknown_header_treated_as_unresolvable(self):
+        """Header value 'unknown' is the sentinel — must not be returned as a model name."""
+        body_json = {}
+        request_info = {LLM_MODEL: "unknown"}
+
+        assert _extract_model(body_json, request_info) is None
+
+    def test_empty_path_params_dict_falls_through_to_header(self):
+        body_json = {}
+        request_info = {LLM_MODEL: "claude-haiku-4-5"}
+        path_params = {}
+
+        assert _extract_model(body_json, request_info, path_params) == "claude-haiku-4-5"
+
+    def test_none_path_params_falls_through_to_header(self):
+        body_json = {}
+        request_info = {LLM_MODEL: "claude-haiku-4-5"}
+
+        assert _extract_model(body_json, request_info, path_params=None) == "claude-haiku-4-5"
 
 
 class TestExtractRequestInfo:
@@ -132,6 +247,34 @@ class TestExtractRequestInfo:
         result = _extract_request_info(headers)
 
         assert result[CODEMIE_CLI] == ""
+
+    def test_project_taken_from_header_when_present(self):
+        """Project header takes precedence over user fallback."""
+        headers = Headers({HEADER_CODEMIE_CLI_PROJECT: "my-project"})
+        user = MagicMock()
+        user.username = "user@example.com"
+
+        result = _extract_request_info(headers, user)
+
+        assert result[PROJECT] == "my-project"
+
+    def test_project_falls_back_to_user_username_when_header_missing(self):
+        """Missing project header falls back to user.username for legacy CLI clients."""
+        headers = Headers({})
+        user = MagicMock()
+        user.username = "user@example.com"
+
+        result = _extract_request_info(headers, user)
+
+        assert result[PROJECT] == "user@example.com"
+
+    def test_project_empty_when_header_missing_and_no_user(self):
+        """Missing header and no user produces empty string."""
+        headers = Headers({})
+
+        result = _extract_request_info(headers, user=None)
+
+        assert result[PROJECT] == ""
 
 
 class TestResolveProjectBudgetRuntime:
@@ -1343,7 +1486,7 @@ class TestProxyToLLMProxy:
         mock_resolve.assert_called_once_with(
             user_id="user-123",
             username="user@example.com",
-            project_name="",
+            project_name="user@example.com",
         )
         mock_body.assert_called_once()
         assert mock_body.call_args.kwargs["user_credentials"] is user_credentials

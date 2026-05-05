@@ -27,6 +27,7 @@ from codemie.service.analytics.handlers.field_constants import (
     PROJECT_KEYWORD_FIELD,
     USER_NAME_KEYWORD_FIELD,
 )
+from codemie.service.analytics.handlers.user_identity_resolver import UserIdentityResolver
 from codemie.service.analytics.handlers.cli_cost_processor import CLICostAdjustmentMixin
 from codemie.service.analytics.metric_names import MetricName
 from codemie.service.analytics.query_pipeline import AnalyticsQueryPipeline
@@ -43,6 +44,7 @@ INPUT_TOKENS_FIELD = "attributes.input_tokens"
 OUTPUT_TOKENS_FIELD = "attributes.output_tokens"
 CLI_REQUEST_FIELD = "attributes.cli_request"
 USER_EMAIL_LABEL = "User Email"
+UNKNOWN_USER = "unknown"
 
 
 class UserHandler(CLICostAdjustmentMixin):
@@ -217,7 +219,7 @@ class UserHandler(CLICostAdjustmentMixin):
         def parse_with_cli_adjustment(result: dict) -> list[dict]:
             return self._parse_users_spending_result(result, cli_costs_by_user)
 
-        return await self._pipeline.execute_tabular_query(
+        result = await self._pipeline.execute_tabular_query(
             agg_builder=lambda query, fetch_size: self._build_users_spending_aggregation(query, fetch_size),
             result_parser=parse_with_cli_adjustment,
             columns=self._get_users_spending_columns(),
@@ -232,6 +234,8 @@ class UserHandler(CLICostAdjustmentMixin):
             per_page=per_page,
             use_bucket_selector=True,
         )
+        await UserIdentityResolver.resolve_rows(result.get("data", {}).get("rows", []), "user_email")
+        return result
 
     def _build_users_spending_aggregation(self, query: dict, fetch_size: int) -> dict:
         """Build terms aggregation for users spending with fetch-and-slice."""
@@ -252,7 +256,12 @@ class UserHandler(CLICostAdjustmentMixin):
                 },
                 "aggs": {"sum": {"sum": {"field": MONEY_SPENT_FIELD}}},
             },
-            **AggregationBuilder.build_zero_token_filter_aggs(),
+            "filter_zero_cost": {
+                "bucket_selector": {
+                    "buckets_path": {"cost": "total_cost"},
+                    "script": "params.cost > 0",
+                }
+            },
         }
 
         # Build terms aggregation using helper
@@ -286,15 +295,13 @@ class UserHandler(CLICostAdjustmentMixin):
         rows = []
 
         for bucket in buckets:
-            if not bucket["key"]:  # Filter out empty or null user emails
-                continue
-
-            user_email = bucket["key"]
+            raw_key = bucket["key"]
+            user_email = raw_key or UNKNOWN_USER
             total_cost_original = bucket.get("total_cost", {}).get("value", 0) or 0
             cli_cost_original = bucket.get("cli_cost", {}).get("sum", {}).get("value", 0) or 0
 
-            # Get adjusted CLI cost for this user (default to 0 if not in map)
-            cli_cost_adjusted = cli_costs_by_user.get(user_email, 0.0)
+            # Get adjusted CLI cost — look up by raw key so empty-email buckets resolve correctly
+            cli_cost_adjusted = cli_costs_by_user.get(raw_key, 0.0)
 
             # Calculate adjustment (can be negative if original costs were inflated)
             # Example: cli_cost_adjusted=$10 (Feb 2-3 only) - cli_cost_original=$100 (Jan 1 - Feb 3) = -$90
@@ -308,14 +315,11 @@ class UserHandler(CLICostAdjustmentMixin):
             rows.append(
                 {
                     "user_email": user_email,
-                    "total_cost_usd": round(total_cost, 2),
+                    "total_cost_usd": total_cost,
                 }
             )
 
-        logger.debug(
-            f"Parsed users-spending result: total_user_buckets={len(buckets)}, "
-            f"rows_parsed={len(rows)}, filtered_out={len(buckets) - len(rows)}"
-        )
+        logger.debug(f"Parsed users-spending result: total_user_buckets={len(buckets)}, rows_parsed={len(rows)}")
         return rows
 
     def _get_users_spending_columns(self) -> list[dict]:
@@ -362,7 +366,7 @@ class UserHandler(CLICostAdjustmentMixin):
         def parse_platform(result: dict) -> list[dict]:
             return self._parse_simple_spending_result(result, "user_email")
 
-        return await self._pipeline.execute_tabular_query(
+        result = await self._pipeline.execute_tabular_query(
             agg_builder=lambda query, fetch_size: self._build_simple_spending_aggregation(
                 query, fetch_size, USER_EMAIL_KEYWORD_FIELD
             ),
@@ -379,6 +383,8 @@ class UserHandler(CLICostAdjustmentMixin):
             per_page=per_page,
             use_bucket_selector=False,
         )
+        await UserIdentityResolver.resolve_rows(result.get("data", {}).get("rows", []), "user_email")
+        return result
 
     async def get_users_cli_spending(
         self,
@@ -411,7 +417,7 @@ class UserHandler(CLICostAdjustmentMixin):
 
         from codemie.service.analytics.handlers.field_constants import USER_NAME_KEYWORD_FIELD
 
-        return await self._pipeline.execute_tabular_query(
+        result = await self._pipeline.execute_tabular_query(
             agg_builder=lambda query, fetch_size: self._build_cli_spending_aggregation(query, fetch_size),
             result_parser=self._parse_cli_spending_result,
             columns=self._get_cli_spending_columns(),
@@ -426,6 +432,8 @@ class UserHandler(CLICostAdjustmentMixin):
             per_page=per_page,
             use_bucket_selector=True,
         )
+        await UserIdentityResolver.resolve_rows(result.get("data", {}).get("rows", []), "user_name")
+        return result
 
     def _build_simple_spending_aggregation(self, query: dict, fetch_size: int, group_by_field: str) -> dict:
         """Build terms aggregation for simple spending (sum money_spent, no CLI adjustment)."""
@@ -458,7 +466,7 @@ class UserHandler(CLICostAdjustmentMixin):
             if not key:
                 continue
             total_cost = bucket.get("total_cost", {}).get("value", 0) or 0
-            rows.append({field_name: key, "total_cost_usd": round(total_cost, 2)})
+            rows.append({field_name: key, "total_cost_usd": total_cost})
 
         logger.debug(f"Parsed simple-spending result: total_buckets={len(buckets)}, rows_parsed={len(rows)}")
         return rows
@@ -504,7 +512,7 @@ class UserHandler(CLICostAdjustmentMixin):
             if not user_name:
                 continue
             total_cost = bucket.get("cli_request_filter", {}).get("total_cost", {}).get("value", 0) or 0
-            rows.append({"user_name": user_name, "total_cost_usd": round(total_cost, 2)})
+            rows.append({"user_name": user_name, "total_cost_usd": total_cost})
 
         logger.debug(f"Parsed cli-spending result: total_buckets={len(buckets)}, rows_parsed={len(rows)}")
         return rows
@@ -950,7 +958,7 @@ class UserHandler(CLICostAdjustmentMixin):
         """Get power users analytics: assistant and workflow creation/update/deletion activity per user."""
         logger.info("Requesting power-users analytics")
 
-        return await self._pipeline.execute_tabular_query(
+        result = await self._pipeline.execute_tabular_query(
             agg_builder=self._build_power_users_aggregation,
             result_parser=self._parse_power_users_result,
             columns=self._get_power_users_columns(),
@@ -964,6 +972,8 @@ class UserHandler(CLICostAdjustmentMixin):
             page=page,
             per_page=per_page,
         )
+        await UserIdentityResolver.resolve_rows(result.get("data", {}).get("rows", []), "user_email")
+        return result
 
     def _build_power_users_aggregation(self, query: dict, fetch_size: int) -> dict:
         """Build terms aggregation for power users with assistant/workflow lifecycle counts."""

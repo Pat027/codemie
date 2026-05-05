@@ -94,6 +94,7 @@ from ..loader import inject_user_into_body, parse_usage_from_response
 
 
 LITELLM_CUSTOMER_ID_HEADER = "x-litellm-customer-id"
+UNKNOWN = "unknown"
 
 # HTTP headers that should NOT be forwarded between proxies (hop-by-hop headers)
 # See: https://datatracker.ietf.org/doc/html/rfc2616#section-13.5.1
@@ -276,58 +277,67 @@ def _check_cli_version(request: Request) -> None:
         )
 
 
-def _extract_request_info(headers: Headers | httpx.Headers | dict) -> dict:
+def _extract_request_info(headers: Headers | httpx.Headers | dict, user: User | None = None) -> dict:
     """Extract request metadata from headers (uses codemie constants)."""
+    project = headers.get(HEADER_CODEMIE_CLI_PROJECT) or (user.username if user else "")
     return {
-        CLIENT_TYPE: headers.get(HEADER_CODEMIE_CLIENT, "unknown"),
+        CLIENT_TYPE: headers.get(HEADER_CODEMIE_CLIENT, UNKNOWN),
         SESSION_ID: headers.get(HEADER_CODEMIE_SESSION_ID, str(uuid.uuid4())),
         REQUEST_ID: headers.get(HEADER_CODEMIE_REQUEST_ID, str(uuid.uuid4())),
-        LLM_MODEL: headers.get(HEADER_CODEMIE_CLI_MODEL, "unknown"),
-        USER_AGENT: headers.get("User-Agent", "unknown"),
+        LLM_MODEL: headers.get(HEADER_CODEMIE_CLI_MODEL, UNKNOWN),
+        USER_AGENT: headers.get("User-Agent", UNKNOWN),
         CODEMIE_CLI: headers.get(HEADER_CODEMIE_CLI, ""),
         BRANCH: headers.get(HEADER_CODEMIE_CLI_BRANCH, ""),
         REPOSITORY: headers.get(HEADER_CODEMIE_CLI_REPOSITORY, ""),
-        PROJECT: headers.get(HEADER_CODEMIE_CLI_PROJECT, ""),
+        PROJECT: project,
     }
 
 
-async def _extract_model_from_request_body(request: Request, request_info: dict) -> tuple[bytes, dict, str]:
-    """
-    Extract model from request body and validate against header.
-
-    Args:
-        request: FastAPI request
-        request_info: Request metadata (contains header model if present)
+async def _read_request_body(request: Request) -> tuple[bytes, dict]:
+    """Read and parse the request body.
 
     Returns:
-        (body_bytes, body_json, model_name): Buffered body, parsed JSON, and extracted model
+        (body_bytes, body_json): Raw bytes and parsed JSON (empty dict if not JSON)
     """
     body_bytes = await request.body()
-
-    model_from_header = request_info.get(LLM_MODEL, "unknown")
-    model_from_body = "unknown"
     body_json = {}
-
     try:
         body_json = json.loads(body_bytes)
-        model_from_body = body_json.get("model", "unknown")
-
-        if model_from_header != "unknown" and model_from_header != model_from_body:
-            logger.debug(
-                f"Model mismatch detected! Header={model_from_header}, "
-                f"Body={model_from_body}. Using body as source of truth."
-            )
-
-        logger.debug(f"Extracted model from request body: {model_from_body}")
-
     except json.JSONDecodeError as e:
         logger.debug(f"Invalid JSON in request body: {e}")
-        model_from_body = model_from_header  # Fallback to header
     except Exception as e:
-        logger.debug(f"Failed to extract model from body: {e}")
-        model_from_body = model_from_header  # Fallback to header
+        logger.debug(f"Failed to parse request body: {e}")
+    return body_bytes, body_json
 
-    return body_bytes, body_json, model_from_body
+
+def _extract_model(
+    body_json: dict,
+    request_info: dict,
+    path_params: dict | None = None,
+) -> str | None:
+    """Resolve the LLM model name from available sources, in priority order:
+
+    1. Request body "model" field (OpenAI-style: /v1/chat/completions, /v1/messages, etc.)
+    2. URL path parameter "model_name" (Gemini-style: /v1beta/models/{model_name}:generateContent)
+    3. Request header (HEADER_CODEMIE_CLI_MODEL)
+    4. None — unresolvable (e.g. GET /v1/models, GET /health); omitted from metrics
+
+    Returns:
+        Resolved model name, or None if unresolvable
+    """
+    if model := body_json.get("model"):
+        logger.debug(f"Extracted model from request body: {model}")
+        return model
+
+    if path_params and (model := path_params.get("model_name")):
+        logger.debug(f"Extracted model from URL path params: {model}")
+        return model
+
+    if (header_model := request_info.get(LLM_MODEL)) and header_model != UNKNOWN:
+        logger.debug(f"Extracted model from request header: {header_model}")
+        return header_model
+
+    return None
 
 
 def _inject_user_into_request_body_from_bytes(body_bytes: bytes, user_id: str, request_info: dict):
@@ -459,7 +469,7 @@ def _resolve_tracking_identity(
     request_info: dict,
     availability: BudgetAvailability,
 ) -> tuple[BudgetCategory, str, str | None, str]:
-    llm_model = request_info.get(LLM_MODEL, "unknown")
+    llm_model = request_info.get(LLM_MODEL, UNKNOWN)
     username = get_premium_username(user.username, llm_model)
     premium_budget_id = availability.user_budget_ids.get(BudgetCategory.PREMIUM_MODELS.value)
     if username is not None and BudgetCategory.PREMIUM_MODELS in availability.project_scopes:
@@ -1039,8 +1049,8 @@ async def _passthrough_stream(downstream_response: httpx.Response, request_info:
     if request_info is None:
         request_info = {}
 
-    session_id = request_info.get(SESSION_ID, "unknown")
-    request_id = request_info.get(REQUEST_ID, "unknown")
+    session_id = request_info.get(SESSION_ID, UNKNOWN)
+    request_id = request_info.get(REQUEST_ID, UNKNOWN)
     chunks_received = 0
     total_bytes = 0
 
@@ -1183,6 +1193,7 @@ async def _proxy_to_llm_proxy(
     user: User,
     endpoint: str,
     background_tasks: BackgroundTasks,
+    path_params: dict | None = None,
 ):
     """
     Main proxy orchestrator (thin coordination layer).
@@ -1194,6 +1205,7 @@ async def _proxy_to_llm_proxy(
         user: Authenticated user
         endpoint: Target endpoint path
         background_tasks: FastAPI background tasks
+        path_params: URL path parameters extracted by FastAPI (e.g. {"model_name": "gemini-1.5-pro"})
 
     Returns:
         StreamingResponse: Proxied response
@@ -1204,11 +1216,10 @@ async def _proxy_to_llm_proxy(
     _check_cli_version(request)
 
     # Extract request info (uses codemie constants)
-    request_info = _extract_request_info(request.headers)
+    request_info = _extract_request_info(request.headers, user)
 
-    body_bytes, request_body, model_from_body = await _extract_model_from_request_body(request, request_info)
-
-    request_info[LLM_MODEL] = model_from_body
+    body_bytes, request_body = await _read_request_body(request)
+    request_info[LLM_MODEL] = _extract_model(request_body, request_info, path_params) or UNKNOWN
 
     # Check if proxy enabled
     if not is_litellm_enabled():
@@ -1234,7 +1245,7 @@ async def _proxy_to_llm_proxy(
     # Extract IDs for logging
     session_id = request_info.get(SESSION_ID)
     request_id = request_info.get(REQUEST_ID)
-    llm_model = request_info.get(LLM_MODEL, "unknown")
+    llm_model = request_info.get(LLM_MODEL, UNKNOWN)
 
     logger.debug(
         f"LLM proxy: session={session_id}, request={request_id}, "
@@ -1416,7 +1427,8 @@ async def proxy_handler(
         forward_path = forward_path.replace(f"{{{{{{param_name}}}}}}", param_value)
 
     return await _proxy_to_llm_proxy(
-        request=request, user=user, endpoint=forward_path, background_tasks=background_tasks
+        request=request, user=user, endpoint=forward_path,
+        background_tasks=background_tasks, path_params=param_values,
     )
 """
 
