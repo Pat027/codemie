@@ -337,36 +337,25 @@ def _create_field_definition(
     base_annotation = _schema_to_type_annotation(prop_model_name, prop_name, prop_schema, cache)
     final_annotation = base_annotation  # Start with base, may become Optional
 
-    # 2. Determine the Pydantic FieldInfo (handling required/optional/default)
+    # 2. Collect metadata from schema
+    description: str | None = prop_schema.get("description") or None
+    examples: list[Any] | None = prop_schema.get("examples") or None
+
+    # 3. Determine the Pydantic FieldInfo (handling required/optional/default)
     field_info: FieldInfo
 
     if is_required:
-        # Required field: Use Field(...)
-        # Type annotation remains as derived (already handles schema nullability)
-        field_info = Field()  # Ellipsis (...) is the default marker for required
+        field_info = Field(description=description, examples=examples)
     else:
-        # Optional field: Check for explicit "default" in schema
         schema_default = prop_schema.get("default", PydanticUndefined)
 
         if schema_default is not PydanticUndefined:
-            # Optional with an explicit default value
-            field_info = Field(default=schema_default)
-            # If explicit default is None, ensure type hint includes None
+            field_info = Field(default=schema_default, description=description, examples=examples)
             if schema_default is None:
                 final_annotation = _make_type_nullable(base_annotation)
         else:
-            # Optional with no explicit default -> Pydantic default is None
-            field_info = Field(default=None)
-            # Make the Python type hint explicitly Optional (T | None)
+            field_info = Field(default=None, description=description, examples=examples)
             final_annotation = _make_type_nullable(base_annotation)
-
-    # 3. Transfer metadata from schema to FieldInfo
-    if description := prop_schema.get("description"):
-        field_info.description = description
-    if examples := prop_schema.get("examples"):
-        field_info.examples = examples
-    # Pydantic v2 uses 'json_schema_extra' for arbitrary schema keys
-    # field_info.json_schema_extra = {k: v for k, v in prop_schema.items() if k not in ...} # Optional
 
     return final_annotation, field_info
 
@@ -475,12 +464,9 @@ def _generate_allof_primitive_field(
     base_name = _get_base_name_for_type(part_type)
     field_name = _make_unique_field_name(base_name, existing_field_names)
 
-    # Create FieldInfo - always required for allOf primitives
-    field_info = Field()  # Required
-    if description := subschema.get("description"):
-        field_info.description = description
-    if examples := subschema.get("examples"):
-        field_info.examples = examples
+    description: str | None = subschema.get("description") or None
+    examples: list[Any] | None = subschema.get("examples") or None
+    field_info = Field(description=description, examples=examples)
 
     return field_name, (part_type, field_info)
 
