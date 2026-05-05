@@ -21,6 +21,7 @@ from codemie.rest_api.models.conversation_folder import ConversationFolder
 from codemie.rest_api.security.user import User
 import codemie.rest_api.routers.conversation as conversation_router
 from unittest.mock import patch
+from codemie.rest_api.models.assistant import Assistant
 
 
 client = TestClient(app)
@@ -55,6 +56,68 @@ def conversation_with_history():
         name="Test Conversation",
         history=[GeneratedMessage(message="test", role="User"), GeneratedMessage(message="test", role="Assistant")],
     )
+
+
+@pytest.mark.asyncio
+async def test_get_new_conversation_within_assistant_chat(user):
+    assistant = Assistant(
+        id="asst-1",
+        name="Assistant One",
+        description="",
+        system_prompt="",
+        project="demo",
+        icon_url="http://example.com/icon.png",
+        toolkits=[],
+        conversation_starters=["Hi"],
+        shared=True,
+    )
+
+    with (
+        patch(
+            "codemie.service.conversation_service.ConversationService.build_new_conversation",
+            return_value=Conversation(
+                id="new",
+                conversation_id="new",
+                user_id=user.id,
+                user_name=user.name,
+                initial_assistant_id="asst-1",
+                assistant_ids=["asst-1"],
+                assistant_data=[
+                    {
+                        "assistant_id": "asst-1",
+                        "assistant_name": "Assistant One",
+                        "assistant_icon": "http://example.com/icon.png",
+                        "assistant_type": assistant.type,
+                        "context": None,
+                        "tools": None,
+                        "conversation_starters": ["Hi"],
+                    }
+                ],
+                history=[],
+            ),
+        ) as mock_build,
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            response = await ac.get(
+                "/v1/conversations/new?initial_assistant_id=asst-1",
+                headers={"Authorization": "Bearer testtoken"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["conversation_id"] == "new"
+        assert data["initial_assistant_id"] == "asst-1"
+        assert data["assistant_ids"] == ["asst-1"]
+        assert "assistant_data" in data
+        assert len(data["assistant_data"]) == 1
+        assert data["assistant_data"][0]["assistant_id"] == "asst-1"
+        assert data["assistant_data"][0]["assistant_name"] == "Assistant One"
+        assert data["assistant_data"][0]["assistant_icon"] == "http://example.com/icon.png"
+        assert data["assistant_data"][0]["conversation_starters"] == ["Hi"]
+
+        mock_build.assert_called_once()
 
 
 @pytest.fixture

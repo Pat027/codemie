@@ -38,6 +38,7 @@ def mock_user():
     user.is_admin = False
     user.id = "12"
     user.name = "123"
+    user.current_project = None
 
     return user
 
@@ -284,3 +285,88 @@ def test_upsert_chat_history_with_missing_history_index(
 
     # Verify other mocks were called
     mock_conv_update.assert_called_once()
+
+
+@patch("codemie.rest_api.models.assistant.Assistant.get_by_ids")
+def test_build_new_conversation_with_assistant(
+    mock_get_by_ids,
+    mock_user,
+):
+    from codemie.rest_api.models.assistant import AssistantType
+
+    mock_tool_1 = MagicMock()
+    mock_tool_1.name = "git"
+    mock_tool_1.label = "Git"
+    mock_tool_2 = MagicMock()
+    mock_tool_2.name = "jira"
+    mock_tool_2.label = "Jira"
+
+    mock_toolkit = MagicMock()
+    mock_toolkit.tools = [mock_tool_1, mock_tool_2]
+
+    mock_assistant = MagicMock()
+    mock_assistant.id = "asst-1"
+    mock_assistant.name = "My Assistant"
+    mock_assistant.type = AssistantType.CODEMIE
+    mock_assistant.icon_url = "http://icon"
+    mock_assistant.context = ["some context"]
+    mock_assistant.conversation_starters = ["Hello", "How can you help?"]
+    mock_assistant.toolkits = [mock_toolkit]
+
+    mock_get_by_ids.return_value = [mock_assistant]
+
+    result = ConversationService.build_new_conversation(
+        user=mock_user, initial_assistant_id="asst-1", folder="my-folder"
+    )
+
+    assert result.id == "new"
+    assert result.folder == "my-folder"
+    assert result.assistant_ids == ["asst-1"]
+    assert result.initial_assistant_id == "asst-1"
+    assert result.is_workflow_conversation is False
+    assert len(result.assistant_data) == 1
+
+    detail = result.assistant_data[0]
+    assert detail.assistant_id == "asst-1"
+    assert detail.assistant_name == "My Assistant"
+    assert detail.assistant_icon == "http://icon"
+    assert detail.assistant_type == AssistantType.CODEMIE
+    assert detail.context == ["some context"]
+    assert detail.conversation_starters == ["Hello", "How can you help?"]
+    assert len(detail.tools) == 2
+    assert detail.tools[0].name == "git"
+    assert detail.tools[0].label == "Git"
+    assert detail.tools[1].name == "jira"
+    assert detail.tools[1].label == "Jira"
+
+
+@patch("codemie.core.workflow_models.workflow_config.WorkflowConfig.get_by_id")
+def test_build_new_conversation_with_workflow(
+    mock_get_by_id,
+    mock_user,
+):
+    mock_workflow = MagicMock()
+    mock_workflow.id = "wf-1"
+    mock_workflow.name = "My Workflow"
+    mock_workflow.icon_url = "http://wf-icon"
+    mock_get_by_id.return_value = mock_workflow
+
+    result = ConversationService.build_new_conversation(
+        user=mock_user, initial_assistant_id="wf-1", is_workflow=True, folder="my-folder"
+    )
+
+    assert result.id == "new"
+    assert result.folder == "my-folder"
+    assert result.assistant_ids == ["wf-1"]
+    assert result.initial_assistant_id == "wf-1"
+    assert result.is_workflow_conversation is True
+    assert len(result.assistant_data) == 1
+
+    detail = result.assistant_data[0]
+    assert detail.assistant_id == "wf-1"
+    assert detail.assistant_name == "My Workflow"
+    assert detail.assistant_icon == "http://wf-icon"
+    assert detail.assistant_type is None
+    assert detail.context is None
+    assert detail.tools is None
+    assert detail.conversation_starters == []

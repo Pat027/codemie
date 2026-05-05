@@ -28,6 +28,7 @@ from codemie.chains.base import Thought
 from codemie.clients.postgres import get_session
 from codemie.configs import config, logger
 from codemie.core.dependecies import get_stt_openai_client
+from codemie.core.exceptions import ExtendedHTTPException
 from codemie.core.models import AssistantChatRequest, UpdateConversationRequest, UpdateAiMessageRequest, TokensUsage
 from codemie.core.utils import safe_divide
 from codemie.rest_api.models.base import ConversationStatus
@@ -540,6 +541,85 @@ class ConversationService:
             cls._handle_conversation_folder(folder, user.id)
 
         return conversation
+
+    @classmethod
+    def build_new_conversation(
+        cls,
+        user: User,
+        initial_assistant_id: str | None = None,
+        is_workflow: bool = False,
+        folder: str | None = None,
+    ) -> "Conversation":
+        """Build a new non-persisted conversation."""
+
+        from codemie.rest_api.models.conversation import Conversation, AssistantDetails
+        from codemie.rest_api.models.assistant import Assistant
+        from codemie_tools.base.models import Tool
+        from codemie.core.workflow_models import WorkflowConfig
+
+        assistant_data: list[AssistantDetails] = []
+        assistant_ids: list[str] = []
+
+        if initial_assistant_id:
+            assistant_ids = [initial_assistant_id]
+            if is_workflow:
+                try:
+                    workflow = WorkflowConfig.get_by_id(initial_assistant_id)
+                    assistant_data = [
+                        AssistantDetails(
+                            assistant_id=workflow.id,
+                            assistant_name=workflow.name,
+                            assistant_icon=workflow.icon_url,
+                            assistant_type=None,
+                            context=None,
+                            tools=None,
+                            conversation_starters=[],
+                        )
+                    ]
+                except KeyError:
+                    raise ExtendedHTTPException(
+                        code=404,
+                        message=f"Workflow {initial_assistant_id} not found.",
+                    )
+            else:
+                assistants = Assistant.get_by_ids(ids=[initial_assistant_id], user=user)
+                if not assistants:
+                    raise ExtendedHTTPException(
+                        code=404,
+                        message=f"Assistant {initial_assistant_id} not found.",
+                    )
+                assistant_data = [
+                    AssistantDetails(
+                        assistant_id=a.id,
+                        assistant_type=a.type,
+                        assistant_name=a.name,
+                        assistant_icon=a.icon_url,
+                        context=a.context,
+                        conversation_starters=a.conversation_starters,
+                        tools=[
+                            Tool(name=tool.name, label=tool.label) for toolkit in a.toolkits for tool in toolkit.tools
+                        ],
+                    )
+                    for a in assistants
+                ]
+
+        return Conversation(
+            id="new",
+            conversation_id="new",
+            conversation_name="",
+            folder=folder,
+            pinned=False,
+            history=[],
+            user_id=user.id,
+            user_name=getattr(user, "name", None) or "",
+            assistant_ids=assistant_ids,
+            assistant_data=assistant_data,
+            initial_assistant_id=initial_assistant_id,
+            project=getattr(user, "current_project", None),
+            mcp_server_single_usage=False,
+            is_workflow_conversation=bool(is_workflow),
+            is_folder_migrated=False,
+        )
 
     @classmethod
     def delete_conversation_folder(cls, user: User, folder: str, remove_conversations: bool = False):

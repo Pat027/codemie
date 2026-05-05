@@ -124,6 +124,35 @@ def _is_pagination_required(page: int | None, per_page: int | None, sort_order: 
 
 
 @router.get(
+    "/conversations/new",
+    response_model=ConversationResponse,
+)
+def get_conversation_template(
+    initial_assistant_id: Optional[str] = Query(None),
+    is_workflow: Optional[bool] = Query(False),
+    folder: Optional[str] = Query(None),
+    user: User = Depends(authenticate),
+) -> ConversationResponse:
+    """Get a new conversation payload.
+
+    Args:
+        initial_assistant_id: Assistant/workflow id to generate conversation data. Optional.
+        is_workflow: If true, treat initial_assistant_id as a WorkflowConfig id. Optional.
+        folder: Chat folder name. Optional.
+    """
+
+    template = ConversationService.build_new_conversation(
+        user=user,
+        initial_assistant_id=initial_assistant_id,
+        is_workflow=bool(is_workflow),
+        folder=folder,
+    )
+
+    response = ConversationResponse.model_validate(template)
+    return response
+
+
+@router.get(
     "/conversations/{conversation_id}",
     response_model=ConversationResponse,
 )
