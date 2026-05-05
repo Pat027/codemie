@@ -230,7 +230,7 @@ class DocxProcessor:
         Returns:
             Operation result (varies by operation type)
         """
-        pages = kwargs.get("pages", None)
+        pages = kwargs.get("pages")
 
         # Determine query type based on operation
         query_map = {
@@ -248,14 +248,14 @@ class DocxProcessor:
             return content.text
         elif operation == "analyze":
             analysis_type = kwargs.get("analysis_type", "full")
-            instructions = kwargs.get("instructions", None)
+            instructions = kwargs.get("instructions")
             return self.analyze_content(content, analysis_type, instructions=instructions)
         elif operation == "extract_images":
             return [self._image_data_to_dict(img) for img in content.images]
         elif operation == "extract_tables":
             return [self._table_data_to_dict(table) for table in content.tables]
         elif operation == "summary":
-            instructions = kwargs.get("instructions", None)
+            instructions = kwargs.get("instructions")
             analysis = self.analyze_content(content, "text", instructions=instructions)
             return analysis.summary
         else:

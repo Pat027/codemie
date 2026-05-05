@@ -342,7 +342,7 @@ def get_llm_by_credentials_raw(
             LLMProvider.AWS_BEDROCK: get_bedrock_llm,
             LLMProvider.ANTHROPIC: get_anthropic_llm,
         }
-        llm_factory = providers.get(llm_model_details.provider, None)
+        llm_factory = providers.get(llm_model_details.provider)
         if llm_factory:
             llm = llm_factory(
                 llm_model_details=llm_model_details,

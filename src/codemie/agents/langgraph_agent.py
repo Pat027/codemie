@@ -22,7 +22,7 @@ import hashlib
 
 import langgraph_supervisor.supervisor
 
-from codemie.agents.tools.agent import AbstractAgent
+from codemie.agents.tools.agent import WorkspaceAwareAgent
 from codemie.core.errors import ErrorResponse
 from codemie.enterprise.litellm.proxy_router import handle_agent_exception
 from codemie_tools.base.file_object import FileObject
@@ -168,7 +168,7 @@ def _compose_pre_model_hooks(*hooks) -> Any | None:
     return composed_pre_model_hook
 
 
-class LangGraphAgent(AbstractAgent):
+class LangGraphAgent(WorkspaceAwareAgent):
     # When this agent is run as part of a workflow (instead of natively within LangGraph),
     # LangGraph overrides the max_concurrency of all subgraphs.
     # This is problematic because the agent's execution
@@ -502,6 +502,12 @@ class LangGraphAgent(AbstractAgent):
             set_llm_context(self.assistant, None, self.user)
             response = self._invoke_agent(self._get_inputs())
             output = response.generated
+            self._persist_generated_workspace_files(
+                response=output,
+                conversation_id=self.conversation_id,
+                user=self.user,
+                request_file_names=self.request.file_names,
+            )
 
             token_used = calculate_tokens(json.dumps(output))
 
@@ -804,7 +810,7 @@ class LangGraphAgent(AbstractAgent):
 
         # Get assistant version if available
         assistant_version = None
-        if self.assistant and hasattr(self.assistant, 'version'):
+        if self.assistant and hasattr(self.assistant, "version"):
             assistant_version = self.assistant.version
 
         run_config = get_run_config(

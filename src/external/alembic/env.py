@@ -23,7 +23,6 @@ from codemie.rest_api.models.base import PydanticListType, PydanticType
 from sqlmodel import SQLModel
 from codemie.clients.postgres import PostgresClient
 
-
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
@@ -113,6 +112,7 @@ from codemie.rest_api.models.user_kata_progress import UserKataProgress
 from codemie.rest_api.models.usage.kata_user_interaction import KataUserInteractionSQL
 from codemie.rest_api.models.mcp_config import MCPConfig
 from codemie.rest_api.models.dynamic_config import DynamicConfig
+from codemie.rest_api.models.agent_workspace import AgentWorkspace, AgentWorkspaceFile
 from codemie.rest_api.a2a.types import Task
 
 target_metadata = SQLModel.metadata

@@ -46,6 +46,7 @@ from codemie.rest_api.models.feedback import FeedbackRequest, FeedbackDeleteRequ
 from codemie.rest_api.models.share.shared_conversation import SharedConversation
 from codemie.rest_api.models.standard import AuthorEnum
 from codemie.rest_api.security.user import User
+from codemie.service.agent_workspace_service import AgentWorkspaceService
 from codemie.service.conversation.history_materializer import materialize_workflow_conversation
 from codemie.service.llm_service.llm_service import LLMService
 from codemie.service.monitoring.conversation_monitoring_service import ConversationMonitoringService
@@ -164,6 +165,11 @@ class ConversationService:
             input_tokens=tokens_usage.input_tokens,
             output_tokens=tokens_usage.output_tokens,
             money_spent=tokens_usage.money_spent,
+        )
+        AgentWorkspaceService().sync_uploaded_files(
+            conversation_id=request.conversation_id,
+            file_urls=request.file_names or [],
+            user=user,
         )
         ConversationMonitoringService.send_conversation_metric(
             user, assistant, tokens_usage, time_elapsed, conversation.conversation_id, llm_model, status

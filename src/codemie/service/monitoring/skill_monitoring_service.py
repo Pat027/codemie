@@ -21,6 +21,7 @@ from codemie.service.monitoring.base_monitoring_service import BaseMonitoringSer
 from codemie.service.monitoring.metrics_constants import (
     SKILL_MANAGEMENT_METRIC,
     SKILL_ATTACHED_METRIC,
+    SKILL_TOOL_COMPANION_FILE_INVOKED_METRIC,
     SKILL_TOOL_INVOKED_METRIC,
     SKILL_EXPORTED_METRIC,
     MetricsAttributes,
@@ -171,6 +172,57 @@ class SkillMonitoringService(BaseMonitoringService):
         else:
             cls.send_count_metric(
                 name=f"{SKILL_TOOL_INVOKED_METRIC}_error",
+                attributes=attributes,
+            )
+
+    @classmethod
+    def send_skill_tool_companion_file_invoked_metric(
+        cls,
+        skill_id: str,
+        skill_name: str,
+        companion_file_name: str,
+        assistant_id: str,
+        user_id: str,
+        user_name: str,
+        project: str,
+        success: bool,
+        additional_attributes: dict | None = None,
+    ):
+        """
+        Send metrics when SkillCompanionFileTool loads a companion file during agent execution.
+
+        Args:
+            skill_id: ID of the skill being loaded
+            skill_name: Name of the skill
+            companion_file_name: Name of the companion file
+            assistant_id: ID of the assistant using the skill
+            user_id: ID of the user
+            user_name: Name of the user
+            project: Project context
+            success: Whether the skill was loaded successfully
+            additional_attributes: Any additional attributes to include
+        """
+        attributes = {
+            MetricsAttributes.SKILL_ID: skill_id,
+            MetricsAttributes.SKILL_NAME: skill_name,
+            MetricsAttributes.SKILL_COMPANION_FILE: companion_file_name,
+            MetricsAttributes.ASSISTANT_ID: assistant_id,
+            MetricsAttributes.PROJECT: get_current_project(fallback=project),
+            MetricsAttributes.USER_ID: user_id,
+            MetricsAttributes.USER_NAME: user_name,
+        }
+
+        if additional_attributes:
+            attributes.update(additional_attributes)
+
+        if success:
+            cls.send_count_metric(
+                name=SKILL_TOOL_COMPANION_FILE_INVOKED_METRIC,
+                attributes=attributes,
+            )
+        else:
+            cls.send_count_metric(
+                name=f"{SKILL_TOOL_COMPANION_FILE_INVOKED_METRIC}_error",
                 attributes=attributes,
             )
 

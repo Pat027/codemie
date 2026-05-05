@@ -56,11 +56,11 @@ from codemie.service.conversation.history_projection_service import (
 )
 from codemie.service.background_tasks_service import BackgroundTasksService
 from codemie.service.constants import AI_AGENT_CONVERSATION_REPLAY_V2_ENABLED_KEY
+from codemie.service.agent_workspace_service import AgentWorkspaceService
 from codemie.service.conversation_service import ConversationService
 from codemie.service.dynamic_config_service import DynamicConfigService
 from codemie.service.llm_service.llm_service import llm_service
 from codemie.service.request_summary_manager import request_summary_manager
-
 
 # Constants
 NDJSON_MEDIA_TYPE = "application/x-ndjson"
@@ -176,6 +176,16 @@ class AssistantRequestHandler(ABC):
                 details=f"An error occurred while processing conversation history: {str(e)}",
                 help="Please try again or contact support if the issue persists.",
             ) from e
+
+    def _sync_uploaded_files_to_workspace(self, request: AssistantChatRequest) -> None:
+        if not request.conversation_id or not request.file_names:
+            return
+
+        AgentWorkspaceService().sync_uploaded_files(
+            conversation_id=request.conversation_id,
+            file_urls=request.file_names,
+            user=self.user,
+        )
 
     def _populate_conversation_history_legacy(self, request: AssistantChatRequest) -> None:
         if request.history or not request.conversation_id:
@@ -362,6 +372,8 @@ class StandardAssistantHandler(AssistantRequestHandler):
         """
         Process assistant request with error handling options.
         """
+        self._sync_uploaded_files_to_workspace(request)
+
         # Populate conversation history if conversation_id is provided
         self._populate_conversation_history(request)
 
@@ -815,6 +827,8 @@ class A2AAssistantHandler(AssistantRequestHandler):
 
         Note: Error handling parameters not yet implemented for A2A.
         """
+        self._sync_uploaded_files_to_workspace(request)
+
         # Populate conversation history if conversation_id is provided
         self._populate_conversation_history(request)
 

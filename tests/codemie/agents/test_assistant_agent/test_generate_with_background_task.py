@@ -47,7 +47,7 @@ def mock_request():
     mock_request.system_prompt = "example_system_prompt"
     mock_request.conversation_id = "example_conversation_id"
     mock_request.text = "example task text"
-    mock_request.file_name = None
+    mock_request.file_names = []
     mock_request.history = []
     return mock_request
 

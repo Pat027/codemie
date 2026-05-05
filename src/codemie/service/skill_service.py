@@ -17,7 +17,12 @@ Service layer for skill management.
 """
 
 import base64
+import binascii
+import io
+import mimetypes
+import posixpath
 import re
+import zipfile
 from datetime import UTC, datetime
 from typing import Any, NamedTuple
 
@@ -32,6 +37,10 @@ from codemie.rest_api.models.skill import (
     MarketplaceFilter,
     Skill,
     SkillCategory,
+    SkillBundlePreviewResponse,
+    SkillCompanionFileMetadata,
+    SkillCompanionFilePayload,
+    SkillCompanionFileResponse,
     SkillCreateRequest,
     SkillDetailResponse,
     SkillListPaginatedResponse,
@@ -43,6 +52,8 @@ from codemie.rest_api.models.skill import (
 from codemie.rest_api.security.user import User
 from codemie.service.monitoring.skill_monitoring_service import SkillMonitoringService
 from fastapi import status
+
+INVALID_SKILL_BUNDLE_MESSAGE = "Invalid skill bundle"
 
 
 class FrontmatterResult(NamedTuple):
@@ -103,6 +114,7 @@ class SkillService:
     # Validation constants
     MIN_CONTENT_LENGTH = 100
     MIN_INSTRUCTION_LENGTH = 500
+    PRIMARY_BUNDLE_FILE_NAME = "skill.md"
 
     # ============================================================================
     # Access Control Helpers
@@ -126,6 +138,225 @@ class SkillService:
                 details=f"User does not have {action.value} access to skill '{skill.name}'",
                 help="Contact the skill owner or project manager to request access",
             )
+
+    @staticmethod
+    def _get_skill_or_raise(skill_id: str) -> Skill:
+        """Load a skill or raise a standard not-found error."""
+        skill = SkillRepository.get_by_id(skill_id)
+        if not skill:
+            raise ExtendedHTTPException(
+                code=status.HTTP_404_NOT_FOUND,
+                message=SkillErrors.MSG_SKILL_NOT_FOUND,
+                details=SkillErrors.SKILL_NOT_FOUND.format(skill_id=skill_id),
+                help=SkillErrors.HELP_VERIFY_SKILL_ID,
+            )
+        return skill
+
+    @staticmethod
+    def _normalize_companion_file_path(path: str) -> str:
+        """Normalize a bundle-relative companion file path."""
+        raw_path = path.strip().replace("\\", "/")
+        normalized_path = posixpath.normpath(raw_path)
+
+        if (
+            not raw_path
+            or raw_path.startswith("/")
+            or normalized_path in {"", ".", ".."}
+            or normalized_path.startswith("../")
+            or re.match(r"^[A-Za-z]:", raw_path)
+        ):
+            raise ExtendedHTTPException(
+                code=status.HTTP_400_BAD_REQUEST,
+                message="Invalid companion file path",
+                details=f"Companion file path '{path}' must be a safe relative file path",
+                help="Provide a relative bundle path such as 'references/foo.md'",
+            )
+        return normalized_path
+
+    @staticmethod
+    def _encode_companion_file_record(
+        path: str,
+        raw_content: bytes,
+    ) -> dict[str, str | int]:
+        """Serialize companion file bytes into the storage format used by skill bundles."""
+        normalized_path = SkillService._normalize_companion_file_path(path)
+        mime_type = mimetypes.guess_type(normalized_path)[0] or "application/octet-stream"
+
+        try:
+            content = raw_content.decode("utf-8")
+            encoding = "text"
+        except UnicodeDecodeError:
+            content = base64.b64encode(raw_content).decode("ascii")
+            encoding = "base64"
+
+        return {
+            "path": normalized_path,
+            "mime_type": mime_type,
+            "encoding": encoding,
+            "size_bytes": len(raw_content),
+            "content": content,
+        }
+
+    @staticmethod
+    def _decode_companion_file_payload(
+        file_payload: SkillCompanionFilePayload,
+    ) -> bytes:
+        """Decode a companion file payload into raw bytes before normalizing storage."""
+        if file_payload.encoding == "base64":
+            try:
+                return base64.b64decode(file_payload.content, validate=True)
+            except (ValueError, binascii.Error) as exc:
+                raise ExtendedHTTPException(
+                    code=status.HTTP_400_BAD_REQUEST,
+                    message="Invalid companion file payload",
+                    details=f"Companion file '{file_payload.path}' is not valid base64: {exc}",
+                    help="Ensure binary companion files are base64-encoded before sending them",
+                )
+
+        if file_payload.encoding != "text":
+            raise ExtendedHTTPException(
+                code=status.HTTP_400_BAD_REQUEST,
+                message="Invalid companion file payload",
+                details=f"Companion file '{file_payload.path}' has unsupported encoding '{file_payload.encoding}'",
+                help="Use 'text' for UTF-8 files or 'base64' for binary payloads",
+            )
+
+        return file_payload.content.encode("utf-8")
+
+    @staticmethod
+    def _normalize_companion_files(
+        companion_files: list[SkillCompanionFilePayload] | None,
+    ) -> list[dict[str, str | int]]:
+        """Normalize companion file payloads into the persisted bundle format."""
+        normalized_files: list[dict[str, str | int]] = []
+        seen_paths: set[str] = set()
+
+        for file_payload in companion_files or []:
+            normalized_path = SkillService._normalize_companion_file_path(file_payload.path)
+            if normalized_path.lower() == SkillService.PRIMARY_BUNDLE_FILE_NAME:
+                raise ExtendedHTTPException(
+                    code=status.HTTP_400_BAD_REQUEST,
+                    message="Invalid companion file path",
+                    details="Companion files cannot use the reserved path 'SKILL.md'",
+                    help=(
+                        "Keep the main skill instructions in the skill content field"
+                        " and store only supporting files here"
+                    ),
+                )
+
+            if normalized_path in seen_paths:
+                raise ExtendedHTTPException(
+                    code=status.HTTP_400_BAD_REQUEST,
+                    message="Duplicate companion file path",
+                    details=f"Companion file path '{normalized_path}' was provided more than once",
+                    help="Ensure each bundled file path is unique within the skill",
+                )
+
+            seen_paths.add(normalized_path)
+            raw_content = SkillService._decode_companion_file_payload(file_payload)
+            normalized_files.append(
+                SkillService._encode_companion_file_record(
+                    path=normalized_path,
+                    raw_content=raw_content,
+                )
+            )
+
+        return normalized_files
+
+    @staticmethod
+    def _strip_bundle_wrapper(paths: list[str]) -> dict[str, str]:
+        """Strip an optional single top-level wrapper directory from zip member paths."""
+        if not paths:
+            return {}
+
+        first_segments = {path.split("/", 1)[0] for path in paths if "/" in path}
+        has_root_level_file = any("/" not in path for path in paths)
+
+        if len(first_segments) == 1 and not has_root_level_file:
+            wrapper = next(iter(first_segments))
+            prefix = f"{wrapper}/"
+            return {path: path[len(prefix) :] for path in paths}
+
+        return {path: path for path in paths}
+
+    @staticmethod
+    def preview_skill_bundle(file_name: str, archive_content: bytes) -> SkillBundlePreviewResponse:
+        """Parse a skill zip bundle and return UI-friendly preview data without persisting it."""
+        try:
+            with zipfile.ZipFile(io.BytesIO(archive_content)) as bundle_zip:
+                file_entries = [entry for entry in bundle_zip.infolist() if not entry.is_dir()]
+                normalized_paths = [
+                    SkillService._normalize_companion_file_path(entry.filename) for entry in file_entries
+                ]
+                stripped_paths = SkillService._strip_bundle_wrapper(normalized_paths)
+
+                skill_paths = [
+                    path for path in stripped_paths.values() if posixpath.basename(path).lower() == "skill.md"
+                ]
+                if len(skill_paths) != 1:
+                    raise ExtendedHTTPException(
+                        code=status.HTTP_400_BAD_REQUEST,
+                        message=INVALID_SKILL_BUNDLE_MESSAGE,
+                        details="Skill bundle zip must contain exactly one SKILL.md file",
+                        help="Add a single SKILL.md file with YAML frontmatter to the root of the bundle",
+                    )
+
+                bundle_records: list[SkillCompanionFilePayload] = []
+                skill_file_path = skill_paths[0]
+                skill_file_content: str | None = None
+
+                for entry, original_path in zip(file_entries, normalized_paths, strict=False):
+                    relative_path = stripped_paths[original_path]
+                    raw_content = bundle_zip.read(entry)
+
+                    if relative_path == skill_file_path:
+                        try:
+                            skill_file_content = raw_content.decode("utf-8")
+                        except UnicodeDecodeError as exc:
+                            raise ExtendedHTTPException(
+                                code=status.HTTP_400_BAD_REQUEST,
+                                message=INVALID_SKILL_BUNDLE_MESSAGE,
+                                details=f"SKILL.md must be UTF-8 text: {exc}",
+                                help="Save SKILL.md as a UTF-8 markdown file and try again",
+                            )
+                        continue
+
+                    bundle_records.append(
+                        SkillCompanionFilePayload.model_validate(
+                            SkillService._encode_companion_file_record(relative_path, raw_content)
+                        )
+                    )
+        except zipfile.BadZipFile as exc:
+            raise ExtendedHTTPException(
+                code=status.HTTP_400_BAD_REQUEST,
+                message=INVALID_SKILL_BUNDLE_MESSAGE,
+                details=f"Uploaded file '{file_name}' is not a valid zip archive: {exc}",
+                help="Upload a valid .zip file containing SKILL.md and any companion files",
+            )
+
+        if skill_file_content is None:
+            raise ExtendedHTTPException(
+                code=status.HTTP_400_BAD_REQUEST,
+                message=INVALID_SKILL_BUNDLE_MESSAGE,
+                details="Could not load SKILL.md from the uploaded zip archive",
+                help="Ensure the uploaded archive contains a readable SKILL.md file",
+            )
+
+        parsed_skill = SkillService._parse_frontmatter(skill_file_content)
+        if not parsed_skill.name or not parsed_skill.description:
+            raise ExtendedHTTPException(
+                code=status.HTTP_400_BAD_REQUEST,
+                message=SkillErrors.INVALID_SKILL_FORMAT,
+                details=SkillErrors.MISSING_FRONTMATTER_FIELDS,
+                help="Add 'name' and 'description' fields to the YAML frontmatter in SKILL.md",
+            )
+
+        return SkillBundlePreviewResponse(
+            name=parsed_skill.name,
+            description=parsed_skill.description,
+            content=parsed_skill.content,
+            companion_files=bundle_records,
+        )
 
     # ============================================================================
     # CRUD Operations
@@ -219,14 +450,7 @@ class SkillService:
         Get skill details by ID.
         Validates user has read access based on visibility.
         """
-        skill = SkillRepository.get_by_id(skill_id)
-        if not skill:
-            raise ExtendedHTTPException(
-                code=status.HTTP_404_NOT_FOUND,
-                message=SkillErrors.MSG_SKILL_NOT_FOUND,
-                details=SkillErrors.SKILL_NOT_FOUND.format(skill_id=skill_id),
-                help=SkillErrors.HELP_VERIFY_SKILL_ID,
-            )
+        skill = SkillService._get_skill_or_raise(skill_id)
 
         SkillService._raise_if_no_access(user, skill, Action.READ)
 
@@ -237,6 +461,31 @@ class SkillService:
         return skill.to_detail_response(
             assistants_count=assistants_count,
             user_abilities=user_abilities,
+        )
+
+    @staticmethod
+    def list_companion_files(skill_id: str, user: User) -> list[SkillCompanionFileMetadata]:
+        """List bundle companion files for a skill without returning payload content."""
+        skill = SkillService._get_skill_or_raise(skill_id)
+        SkillService._raise_if_no_access(user, skill, Action.READ)
+        return skill.get_companion_file_metadata()
+
+    @staticmethod
+    def get_companion_file(skill_id: str, path: str, user: User) -> SkillCompanionFileResponse:
+        """Return a single companion file payload for a skill."""
+        skill = SkillService._get_skill_or_raise(skill_id)
+        SkillService._raise_if_no_access(user, skill, Action.READ)
+
+        normalized_path = SkillService._normalize_companion_file_path(path)
+        for file_data in skill.companion_files or []:
+            if file_data.get("path") == normalized_path:
+                return SkillCompanionFileResponse.model_validate(file_data)
+
+        raise ExtendedHTTPException(
+            code=status.HTTP_404_NOT_FOUND,
+            message="Companion file not found",
+            details=f"No companion file found at path '{normalized_path}' for skill '{skill.name}'",
+            help="List available companion files for this skill and retry with one of those paths",
         )
 
     @staticmethod
@@ -290,6 +539,7 @@ class SkillService:
             "categories": [c.value for c in request.categories],
             "toolkits": request.toolkits,
             "mcp_servers": request.mcp_servers,
+            "companion_files": SkillService._normalize_companion_files(request.companion_files),
             "created_by": CreatedByUser(
                 id=user.id,
                 name=user.name or user.username,
@@ -379,6 +629,8 @@ class SkillService:
             updates["toolkits"] = request.toolkits
         if request.mcp_servers is not None:
             updates["mcp_servers"] = request.mcp_servers
+        if request.companion_files is not None:
+            updates["companion_files"] = SkillService._normalize_companion_files(request.companion_files)
 
         return updates
 
@@ -1359,8 +1611,7 @@ description: {skill.description}
 
                 important: str | None = PydanticField(
                     description=(
-                        "Critical rules or must-follow guidelines. "
-                        "Only include if truly critical. Use bullet points."
+                        "Critical rules or must-follow guidelines. Only include if truly critical. Use bullet points."
                     ),
                     default=None,
                     min_length=50,

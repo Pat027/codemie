@@ -179,7 +179,9 @@ def test_conversation_service_create(
 @patch("codemie.rest_api.models.conversation.Conversation.update")
 @patch("codemie.rest_api.models.conversation.Conversation.find_by_id")
 @patch("codemie.rest_api.models.conversation.ConversationMetrics.get_by_conversation_id")
+@patch("codemie.service.conversation_service.AgentWorkspaceService.sync_uploaded_files")
 def test_index_service_run_visible_to_admin_user(
+    mock_sync_uploaded_files,
     mock_metrics_get,
     mock_conv_find,
     mock_conv_update,
@@ -209,6 +211,11 @@ def test_index_service_run_visible_to_admin_user(
 
     mock_conv_update.assert_called()
     mock_metrics_save.assert_called()
+    mock_sync_uploaded_files.assert_called_once_with(
+        conversation_id=mock_request.conversation_id,
+        file_urls=mock_request.file_names,
+        user=mock_admin_user,
+    )
 
 
 @patch(

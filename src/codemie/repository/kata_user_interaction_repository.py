@@ -357,7 +357,7 @@ class SQLKataUserInteractionRepository(KataUserInteractionRepository):
             results = session.exec(query).all()
 
             # Build map with all kata_ids defaulting to None
-            reaction_map = {kata_id: None for kata_id in kata_ids}
+            reaction_map = dict.fromkeys(kata_ids)
 
             # Update with actual reactions
             for kata_id, reaction in results:

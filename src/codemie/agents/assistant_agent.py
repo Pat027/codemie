@@ -44,7 +44,7 @@ from codemie.agents.callbacks.agent_streaming_callback import AgentStreamingCall
 from codemie.agents.callbacks.monitoring_callback import MonitoringCallback
 from codemie.agents.callbacks.tool_error_capture_callback import ToolErrorCaptureCallback
 from codemie.agents.structured_tool_agent import create_structured_tool_calling_agent
-from codemie.agents.tools.agent import AbstractAgent
+from codemie.agents.tools.agent import WorkspaceAwareAgent
 from codemie.agents.utils import (
     render_text_description_and_args,
     validate_json_schema,
@@ -133,7 +133,7 @@ def get_react_json_prompt_template(system_prompt):
     return ChatPromptTemplate.from_messages(messages)
 
 
-class AIToolsAgent(AbstractAgent):
+class AIToolsAgent(WorkspaceAwareAgent):
     @staticmethod
     def _is_conversation_replay_v2_enabled() -> bool:
         return DynamicConfigService.get_bool_value_safe(
@@ -407,7 +407,14 @@ class AIToolsAgent(AbstractAgent):
         try:
             inputs = self._get_inputs(input, history)
             inputs.update(args)
-            return self._invoke_agent(inputs).get('output', '')
+            response = self._invoke_agent(inputs)
+            self._persist_generated_workspace_files(
+                response=response,
+                conversation_id=self.conversation_id,
+                user=self.user,
+                request_file_names=self.request.file_names,
+            )
+            return response.get("output", "")
         except Exception:
             stacktrace = traceback.format_exc()
             logger.error(f"AI Agent run failed with error: {stacktrace}", exc_info=True)
@@ -431,7 +438,14 @@ class AIToolsAgent(AbstractAgent):
                 inputs = {"input": workflow_input, "chat_history": filtered_history}
                 inputs.update(args)
 
-            return TaskResult.from_agent_response(self._invoke_agent(inputs))
+            response = self._invoke_agent(inputs)
+            self._persist_generated_workspace_files(
+                response=response,
+                conversation_id=self.conversation_id,
+                user=self.user,
+                request_file_names=self.request.file_names,
+            )
+            return TaskResult.from_agent_response(response)
         except Exception as e:
             error_message = f"Invoking workflow task. Agent={self.agent_name}. Result=Failed"
             logger.error(error_message, exc_info=True)
@@ -549,6 +563,13 @@ class AIToolsAgent(AbstractAgent):
                 BackgroundTasksService().update(
                     task_id=background_task_id, status=BackgroundTaskStatus.COMPLETED, final_output=output
                 )
+
+            self._persist_generated_workspace_files(
+                response=output,
+                conversation_id=self.conversation_id,
+                user=self.user,
+                request_file_names=self.request.file_names,
+            )
 
             return GenerationResult(
                 generated=output,

@@ -16,15 +16,24 @@
 This module provides base agent abstraction.
 """
 
+import re
 from time import time
+from typing import Any
+
+from pydantic import BaseModel
 
 from codemie.chains import StreamedGenerationResult
 from codemie.configs import config
+from codemie.configs.logger import logger
 
 from codemie.core.error_constants import BUDGET_MESSAGE_KEY, CURRENT_COST_KEY, MAX_BUDGET_KEY, ErrorCategory, ErrorCode
 from codemie.core.errors import ErrorResponse, InternalError
 from codemie.core.thread import ThreadedGenerator
 from codemie.enterprise.litellm.proxy_router import handle_agent_exception
+from codemie.service.agent_workspace_service import AgentWorkspaceService
+
+
+SANDBOX_FILE_RE = re.compile(r"sandbox:/v1/files/[^\s)\]>\"']+")
 
 
 class AbstractAgent:
@@ -95,3 +104,65 @@ class AbstractAgent:
                 error_details=error_details,
             ).model_dump_json()
         )
+
+
+class WorkspaceAwareAgent(AbstractAgent):
+    """Base agent with shared generated-workspace file persistence helpers.
+
+    Callers pass conversation and workspace context explicitly.
+    """
+
+    def _persist_generated_workspace_files(
+        self,
+        response: Any,
+        conversation_id: str | None,
+        user: Any,
+        request_file_names: list[str] | None = None,
+    ) -> None:
+        if not conversation_id:
+            return
+
+        generated_file_urls = self._extract_generated_file_urls(response)
+        if not generated_file_urls:
+            return
+
+        try:
+            AgentWorkspaceService().register_generated_files(
+                conversation_id=conversation_id,
+                generated_file_urls=generated_file_urls,
+                user=user,
+                request_file_urls=request_file_names or [],
+            )
+        except Exception as exc:
+            logger.warning(f"Failed to register generated files in workspace for conversation {conversation_id}: {exc}")
+
+    @classmethod
+    def _extract_generated_file_urls(cls, response: Any) -> list[str]:
+        urls = dict.fromkeys(cls._extract_sandbox_urls(response))
+        return list(urls)
+
+    @classmethod
+    def _extract_sandbox_urls(cls, value: Any) -> list[str]:
+        if isinstance(value, str):
+            return SANDBOX_FILE_RE.findall(value)
+
+        if isinstance(value, BaseModel):
+            return cls._extract_sandbox_urls(value.model_dump(mode="json"))
+
+        if isinstance(value, dict):
+            urls: list[str] = []
+            for item in value.values():
+                urls.extend(cls._extract_sandbox_urls(item))
+            return urls
+
+        if isinstance(value, (list, tuple, set)):
+            urls: list[str] = []
+            for item in value:
+                urls.extend(cls._extract_sandbox_urls(item))
+            return urls
+
+        content = getattr(value, "content", None)
+        if content is not None:
+            return cls._extract_sandbox_urls(content)
+
+        return []

@@ -1753,6 +1753,7 @@ class TestSkillToolkits:
         request.categories = None
         request.toolkits = [toolkit_details]
         request.mcp_servers = None
+        request.companion_files = None
 
         # Act
         updates = SkillService._build_skill_updates(request, sample_skill)
@@ -1771,6 +1772,7 @@ class TestSkillToolkits:
         request.categories = None
         request.toolkits = None
         request.mcp_servers = None
+        request.companion_files = None
 
         # Act
         updates = SkillService._build_skill_updates(request, sample_skill)
@@ -1791,6 +1793,7 @@ class TestSkillToolkits:
         request.categories = None
         request.toolkits = None
         request.mcp_servers = [mcp_server]
+        request.companion_files = None
 
         # Act
         updates = SkillService._build_skill_updates(request, sample_skill)
@@ -1809,6 +1812,7 @@ class TestSkillToolkits:
         request.categories = None
         request.toolkits = None
         request.mcp_servers = None
+        request.companion_files = None
 
         # Act
         updates = SkillService._build_skill_updates(request, sample_skill)

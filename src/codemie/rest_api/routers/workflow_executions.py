@@ -50,6 +50,7 @@ from codemie.rest_api.security.user import User
 from codemie.rest_api.utils.request_utils import extract_custom_headers
 from codemie.service.aws_bedrock.bedrock_flow_service import BedrockFlowService
 from codemie.service.request_summary_manager import request_summary_manager as request_summary_manager_module
+from codemie.service.agent_workspace_service import AgentWorkspaceService
 from codemie.service.workflow_execution import (
     WorkflowExecutionService,
     WorkflowThoughtsListService,
@@ -253,6 +254,13 @@ def create_workflow_execution(
     _validate_remote_entities_and_raise(workflow_config)
     file_names = request.file_names or ([request.file_name] if request.file_name else [])
     _validate_workflow_supports_files_and_raise(workflow_config, file_names)
+
+    if request.conversation_id and file_names:
+        AgentWorkspaceService().sync_uploaded_files(
+            conversation_id=request.conversation_id,
+            file_urls=file_names,
+            user=user,
+        )
 
     user_model = user.as_user_model()
 

@@ -18,7 +18,7 @@ REST API endpoints for Skills management.
 
 import json
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -26,8 +26,11 @@ from codemie.rest_api.models.skill import (
     MarketplaceFilter,
     PublishToMarketplaceRequest,
     SkillAttachRequest,
+    SkillBundlePreviewResponse,
     SkillBulkAttachRequest,
     SkillCategory,
+    SkillCompanionFileMetadata,
+    SkillCompanionFileResponse,
     SkillCreateRequest,
     SkillDetailResponse,
     SkillImportRequest,
@@ -363,6 +366,38 @@ def get_skill_by_id(
     return SkillService.get_skill_by_id(skill_id, user)
 
 
+@router.get(
+    "/skills/{skill_id}/companion-files",
+    status_code=status.HTTP_200_OK,
+    response_model=list[SkillCompanionFileMetadata],
+    response_model_by_alias=True,
+)
+def list_skill_companion_files(
+    skill_id: str,
+    user: User = Depends(authenticate),
+):
+    """List metadata for bundled companion files attached to a skill."""
+    return SkillService.list_companion_files(skill_id, user)
+
+
+@router.get(
+    "/skills/{skill_id}/companion-files/content",
+    status_code=status.HTTP_200_OK,
+    response_model=SkillCompanionFileResponse,
+    response_model_by_alias=True,
+)
+def get_skill_companion_file(
+    skill_id: str,
+    path: str = Query(
+        ...,
+        description="Relative companion file path, e.g. references/writing-guidelines.md",
+    ),
+    user: User = Depends(authenticate),
+):
+    """Get one bundled companion file payload by relative path."""
+    return SkillService.get_companion_file(skill_id, path, user)
+
+
 @router.post(
     "/skills",
     status_code=status.HTTP_201_CREATED,
@@ -459,6 +494,27 @@ def import_skill(
         user=user,
         visibility=request.visibility,
     )
+
+
+@router.post(
+    "/skills/import-bundle-preview",
+    status_code=status.HTTP_200_OK,
+    response_model=SkillBundlePreviewResponse,
+    response_model_by_alias=True,
+)
+async def import_skill_bundle_preview(
+    file: UploadFile = File(..., description="Zip archive containing SKILL.md and optional bundled files"),
+    user: User = Depends(authenticate),
+):
+    """
+    Parse a bundled skill zip and return UI-ready values without persisting anything.
+
+    The archive must contain exactly one SKILL.md file with YAML frontmatter.
+    Any other files are returned as companion file payloads with preserved relative paths.
+    """
+    _ = user
+    archive_content = await file.read()
+    return SkillService.preview_skill_bundle(file.filename or "skill-bundle.zip", archive_content)
 
 
 @router.get(

@@ -41,6 +41,7 @@ from codemie.repository.repository_factory import FileRepositoryFactory
 from codemie.rest_api.models.conversation import GeneratedMessage
 from codemie.rest_api.security.user import User
 from codemie.rest_api.utils.default_applications import ensure_application_exists
+from codemie.service.agent_workspace_service import AgentWorkspaceService
 from codemie.service.monitoring.workflow_monitoring_service import WorkflowMonitoringService
 
 MAX_ITEMS_PER_PAGE = 10_000
@@ -373,6 +374,11 @@ class WorkflowService:
                 # Append to conversation history
                 conversation.history = [*(conversation.history or []), user_message, assistant_message_ref]
                 conversation.update()
+                AgentWorkspaceService().sync_uploaded_files(
+                    conversation_id=conversation_id,
+                    file_urls=file_names or [],
+                    user=user,
+                )
 
                 logger.info(
                     "Created workflow execution with conversation reference",

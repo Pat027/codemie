@@ -952,7 +952,7 @@ class BudgetService:
                 f"budget_event=budget_assignment_batch_resolve_failed component=budget_service "
                 f"user_id={user_id!r} error={exc}"
             )
-            return {cat: None for cat in categories}
+            return dict.fromkeys(categories)
 
     def get_all_category_budget_ids_for_request_sync(self, user_id: str) -> dict[str, str | None]:
         """Sync version of batch category→budget_id lookup with shared cache reuse."""
@@ -994,7 +994,7 @@ class BudgetService:
                 f"budget_event=budget_assignment_batch_resolve_failed component=budget_service path=sync "
                 f"user_id={user_id!r} error={exc}"
             )
-            return {cat: None for cat in categories}
+            return dict.fromkeys(categories)
 
     async def validate_assignment_budget_categories(
         self,
@@ -1060,8 +1060,7 @@ class BudgetService:
                     )
                 except Exception as exc:
                     logger.warning(
-                        f"Failed to propagate budget assignment for user {user_id!r} "
-                        f"category {category.value!r}: {exc}"
+                        f"Failed to propagate budget assignment for user {user_id!r} category {category.value!r}: {exc}"
                     )
             else:
                 await budget_repository.delete_user_category_assignment(session, user_id, category)
@@ -1319,8 +1318,7 @@ class BudgetService:
                 )
             except Exception as exc:
                 logger.warning(
-                    f"Member allocation sync failed for user {alloc.user_id!r} "
-                    f"in {project_name!r}/{category}: {exc}"
+                    f"Member allocation sync failed for user {alloc.user_id!r} in {project_name!r}/{category}: {exc}"
                 )
 
     async def _create_backfilled_project_budget(
