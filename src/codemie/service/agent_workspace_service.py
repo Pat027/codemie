@@ -654,7 +654,7 @@ class AgentWorkspaceService:
 
     @staticmethod
     def _get_blob_owner(workspace_id: str) -> str:
-        return f"workspace/{workspace_id}"
+        return f"workspace-{workspace_id}"
 
     @staticmethod
     def _to_text_content(content: str | bytes) -> str:
