@@ -26,6 +26,7 @@ def create_redis_client():
         db=config.REDIS_DB,
         password=config.REDIS_PASSWORD or None,
         ssl=config.REDIS_SSL,
+        ssl_cert_reqs=config.REDIS_SSL_CERT_REQS if config.REDIS_SSL else None,
         decode_responses=False,
         socket_connect_timeout=config.REDIS_CONNECT_TIMEOUT_SECONDS,
         socket_timeout=config.REDIS_TIMEOUT_SECONDS,

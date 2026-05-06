@@ -373,6 +373,8 @@ class Config(BaseSettings):
     REDIS_DB: int = 0
     REDIS_PASSWORD: str = ""
     REDIS_SSL: bool = False
+    # SSL certificate verification mode: "required", "optional", or "none".
+    REDIS_SSL_CERT_REQS: str = "none"
     REDIS_CONNECT_TIMEOUT_SECONDS: float = 5.0
     REDIS_TIMEOUT_SECONDS: float = 5.0
 
