@@ -23,6 +23,7 @@ from codemie_tools.base.codemie_tool import CodeMieTool
 from pydantic import BaseModel, Field
 
 from codemie.configs import logger
+from codemie.core.exceptions import ExtendedHTTPException
 from codemie.rest_api.security.user import User
 from codemie.service.monitoring.skill_monitoring_service import SkillMonitoringService
 
@@ -203,34 +204,131 @@ class SkillCompanionFileTool(SkillBaseTool):
     description: str = _COMPANION_FILE_TOOL_DESCRIPTION
     args_schema: Type[BaseModel] = SkillCompanionFileInput
 
+    def _load_companion_file(self, skill_info: dict[str, str], skill: str, path: str) -> str:
+        """Load and format a companion file for the provided skill."""
+        from codemie.service.skill_service import SkillService
+
+        companion_file = SkillService.get_companion_file(skill_info["id"], path, self.user)
+        logger.info(f"Loaded companion file '{companion_file.path}' for skill '{skill}' and user '{self.user.name}'")
+        self._send_metric(
+            skill_id=skill_info["id"], skill_name=skill_info["name"], companion_file_name=path, success=True
+        )
+
+        return _SKILL_FILE_OUTPUT_TEMPLATE.format(
+            skill=skill,
+            path=companion_file.path,
+            mime_type=companion_file.mime_type,
+            encoding=companion_file.encoding,
+            content=companion_file.content,
+        )
+
+    def _list_available_companion_files(self, skill_id: str) -> list[str]:
+        """Return the available companion file paths for a skill."""
+        from codemie.service.skill_service import SkillService
+
+        return [file.path for file in SkillService.list_companion_files(skill_id, self.user)]
+
+    def _send_failure_metric_for_companion_file(
+        self,
+        skill: str,
+        path: str,
+        skill_info: dict[str, str] | None,
+        error_message: str,
+    ) -> None:
+        """Send a failure metric for a companion file load attempt."""
+        self._send_metric(
+            skill_id=skill_info["id"] if skill_info else "",
+            skill_name=skill_info["name"] if skill_info else skill,
+            companion_file_name=path,
+            success=False,
+            error=error_message,
+        )
+
+    def _build_missing_companion_file_error(self, skill: str, path: str, skill_info: dict[str, str] | None) -> str:
+        """Build a detailed error message for a missing companion file."""
+        available_files_message = ""
+        if skill_info:
+            available_paths = self._list_available_companion_files(skill_info["id"])
+            if available_paths:
+                available_files_message = f" Available companion files: {', '.join(available_paths)}."
+            else:
+                available_files_message = " This skill has no companion files."
+
+        return f"Error: There is no companion file '{path}' in skill '{skill}'.{available_files_message}"
+
+    def _handle_companion_file_failure(
+        self,
+        skill: str,
+        path: str,
+        skill_info: dict[str, str] | None,
+        error_message: str,
+        *,
+        log_as_warning: bool = False,
+    ) -> str:
+        """Log and report a failed companion file load attempt."""
+        if log_as_warning:
+            logger.warning(error_message)
+        else:
+            logger.error(error_message)
+
+        self._send_failure_metric_for_companion_file(
+            skill=skill,
+            path=path,
+            skill_info=skill_info,
+            error_message=error_message,
+        )
+        return error_message
+
+    def _handle_extended_http_exception(
+        self,
+        skill: str,
+        path: str,
+        skill_info: dict[str, str] | None,
+        error: ExtendedHTTPException,
+    ) -> str:
+        """Handle structured HTTP errors from companion file loading."""
+        if error.code == 404 and error.message == "Companion file not found":
+            error_message = self._build_missing_companion_file_error(skill=skill, path=path, skill_info=skill_info)
+            return self._handle_companion_file_failure(
+                skill=skill,
+                path=path,
+                skill_info=skill_info,
+                error_message=error_message,
+                log_as_warning=True,
+            )
+
+        error_message = f"Error loading companion file '{path}' for skill '{skill}': {error}"
+        return self._handle_companion_file_failure(
+            skill=skill,
+            path=path,
+            skill_info=skill_info,
+            error_message=error_message,
+        )
+
     def execute(self, skill: str, path: str) -> str:
         """Load one bundled companion file by relative path."""
+        skill_info: dict[str, str] | None = None
+        skill_info = self._find_skill(skill)
+        if not skill_info:
+            available = [s["name"] for s in self.available_skills]
+            return f"Error: Skill '{skill}' not found. Available skills: {available}"
+
         try:
-            skill_info = self._find_skill(skill)
-            if not skill_info:
-                available = [s["name"] for s in self.available_skills]
-                return f"Error: Skill '{skill}' not found. Available skills: {available}"
-
-            from codemie.service.skill_service import SkillService
-
-            companion_file = SkillService.get_companion_file(skill_info["id"], path, self.user)
-            logger.info(
-                f"Loaded companion file '{companion_file.path}' for skill '{skill}' and user '{self.user.name}'"
-            )
-            self._send_metric(
-                skill_id=skill_info["id"], skill_name=skill_info["name"], companion_file_name=path, success=True
-            )
-
-            return _SKILL_FILE_OUTPUT_TEMPLATE.format(
+            return self._load_companion_file(skill_info=skill_info, skill=skill, path=path)
+        except ExtendedHTTPException as e:
+            return self._handle_extended_http_exception(
                 skill=skill,
-                path=companion_file.path,
-                mime_type=companion_file.mime_type,
-                encoding=companion_file.encoding,
-                content=companion_file.content,
+                path=path,
+                skill_info=skill_info,
+                error=e,
             )
         except Exception as e:
-            logger.error(f"Error loading companion file '{path}' for skill '{skill}': {e}")
-            return f"Error loading companion file '{path}' for skill '{skill}': {e}"
+            return self._handle_companion_file_failure(
+                skill=skill,
+                path=path,
+                skill_info=skill_info,
+                error_message=f"Error loading companion file '{path}' for skill '{skill}': {e}",
+            )
 
     async def _arun(self, skill: str, path: str) -> str:
         """Load one bundled companion file asynchronously (delegates to sync implementation)."""
