@@ -440,6 +440,7 @@ class Config(BaseSettings):
         "elasticsearch-api",
         "opentelemetry.instrumentation.fastapi",
         "opentelemetry.instrumentation.sqlalchemy",
+        "opentelemetry.instrumentation.httpx",
     ]
 
     # ===========================================
