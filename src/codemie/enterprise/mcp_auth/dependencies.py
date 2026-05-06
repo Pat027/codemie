@@ -1589,6 +1589,13 @@ def initialize_mcp_auth() -> None:
     _saml_relay_state_store = saml_relay_state_store
     _redis_encryption = redis_encryption
     _tms_audit_context_provider = audit_context_provider
+
+    from codemie.service.security.token_exchange_service import TokenExchangeService
+    from codemie.service.security.oidc_token_exchange_service import OIDCTokenExchangeService
+
+    TokenExchangeService.set_tms(token_management_system, audit_context_provider)
+    OIDCTokenExchangeService.set_tms(token_management_system, audit_context_provider)
+
     _initialized = True
 
 
@@ -1637,6 +1644,13 @@ async def shutdown_mcp_auth() -> None:
         _saml_relay_state_store = None
         _redis_encryption = None
         _tms_audit_context_provider = None
+
+        from codemie.service.security.token_exchange_service import TokenExchangeService
+        from codemie.service.security.oidc_token_exchange_service import OIDCTokenExchangeService
+
+        TokenExchangeService.clear_tms()
+        OIDCTokenExchangeService.clear_tms()
+
         _registered_resolver_types.clear()
 
 

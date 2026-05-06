@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import threading
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from cachetools import TTLCache
 
@@ -33,6 +33,7 @@ from codemie.service.security.token_providers.broker_token_exchange_provider imp
 from codemie.service.security.token_providers.context_token_provider import (
     ContextTokenProvider,
 )
+from codemie.service.security.jwt_utils import parse_jwt_exp
 
 
 class TokenExchangeService:
@@ -76,6 +77,17 @@ class TokenExchangeService:
 
     _instance: ClassVar[TokenExchangeService | None] = None
     _lock: ClassVar[threading.Lock] = threading.Lock()
+    _store: ClassVar[Any] = None
+
+    @classmethod
+    def set_tms(cls, tms: Any, audit_context_provider: Any) -> None:
+        from codemie.service.security.tms_token_store import TMSTokenStore
+
+        cls._store = TMSTokenStore(tms, audit_context_provider)
+
+    @classmethod
+    def clear_tms(cls) -> None:
+        cls._store = None
 
     def __new__(cls) -> TokenExchangeService:
         """
@@ -117,89 +129,59 @@ class TokenExchangeService:
         logger.info(f"TokenExchangeService initialized with cache_ttl={config.TOKEN_CACHE_TTL}s")
 
     def get_token_for_current_user(self) -> str | None:
-        """
-        Get authentication token for current user with caching.
-
-        This is the primary method for retrieving user tokens. It implements
-        a cache-first strategy with user-scoped isolation.
-
-        Flow:
-            1. Get current user from ContextVar
-            2. Check cache using key: f"auth_token:{user_id}"
-            3. On cache hit: Return cached token immediately
-            4. On cache miss: Fetch from provider
-            5. Cache the token
-            6. Return token
-
-        Returns:
-            JWT authentication token if available, None otherwise
-
-        Raises:
-            TokenProviderException: If provider fails to retrieve token
-
-        Security:
-            - NEVER logs the token value
-            - Only logs user_id and cache hit/miss status
-            - Uses user_id in cache key for isolation
-
-        Performance:
-            - Cache hit: <10ms (target)
-            - Cache miss: <50ms (target)
-            - Cache hit rate: >80% (target)
-        """
         current_user = get_current_user()
         if not current_user:
             logger.debug("No current user in context")
             return None
 
         user_id = current_user.id
-        cache_key = f"auth_token:{user_id}"
 
-        # Check cache first
+        if self._store is not None:
+            cached_token = self._store.get(user_id, "__idp_token__")
+            if cached_token is not None:
+                logger.debug(f"Token TMS hit for user_id={user_id}")
+                return cached_token
+
+            logger.debug(f"Token TMS miss for user_id={user_id}")
+            try:
+                token = self._default_provider.get_token()
+            except BrokerAuthRequiredException:
+                raise
+            except TokenProviderException as e:
+                logger.exception(f"Token provider failed for user_id={user_id}: {e.message}")
+                raise
+
+            if token:
+                expires_at = parse_jwt_exp(token)
+                self._store.put(user_id, "__idp_token__", access_token=token, expires_at=expires_at)
+                logger.debug(f"Stored token in TMS for user_id={user_id}")
+
+            return token
+
+        cache_key = f"auth_token:{user_id}"
         cached_token = self._cache.get(cache_key)
         if cached_token is not None:
             logger.debug(f"Token cache hit for user_id={user_id}")
             return cached_token
 
-        # Cache miss - fetch from provider
         logger.debug(f"Token cache miss for user_id={user_id}")
-
         try:
             token = self._default_provider.get_token()
-
             if token:
                 self._cache[cache_key] = token
                 logger.debug(f"Cached token for user_id={user_id}")
-            else:
-                logger.debug(f"No token available for user_id={user_id}")
-
             return token
-
         except BrokerAuthRequiredException:
             logger.debug(f"Broker re-authentication required for user_id={user_id}")
             raise
-
         except TokenProviderException as e:
             logger.exception(f"Token provider failed for user_id={user_id}: {e.message}")
             raise
 
     def clear_cache(self, user_id: str | None = None) -> None:
-        """
-        Clear token cache for specific user or all users.
-
-        This method is useful for:
-        - Logout: Clear specific user's cached token
-        - Token rotation: Force fresh token fetch
-        - Testing: Reset cache state
-
-        Args:
-            user_id: User ID to clear cache for. If None, clears all cache entries.
-
-        Security:
-            - Safe to call multiple times (idempotent)
-            - Does not log token values
-        """
         if user_id:
+            if self._store is not None:
+                self._store.invalidate(user_id, "__idp_token__")
             cache_key = f"auth_token:{user_id}"
             self._cache.pop(cache_key, None)
             logger.info(f"Cleared token cache for user_id={user_id}")

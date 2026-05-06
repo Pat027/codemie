@@ -181,3 +181,103 @@ async def test_aexchange_token_network_error(mock_client_cls, service):
             await service._aexchange_token("idp-token", _AUDIENCE)
 
     assert "request failed" in exc.value.message
+
+
+# ---------------------------------------------------------------------------
+# TMS integration tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mock_tms_store():
+    return MagicMock()
+
+
+@pytest.fixture
+def service_with_tms(service, mock_tms_store):
+    OIDCTokenExchangeService._store = mock_tms_store
+    yield service
+    OIDCTokenExchangeService._store = None
+
+
+def test_get_exchanged_token_returns_tms_cached(service_with_tms, mock_tms_store, mock_user):
+    mock_tms_store.get.return_value = "tms-exchanged-token"
+
+    with patch(
+        "codemie.service.security.oidc_token_exchange_service.get_current_user",
+        return_value=mock_user,
+    ):
+        result = service_with_tms.get_exchanged_token(_AUDIENCE)
+
+    assert result == "tms-exchanged-token"
+    mock_tms_store.get.assert_called_once_with("user-123", f"oidc_exchange:{_AUDIENCE}")
+
+
+def test_get_exchanged_token_tms_miss_exchanges_and_stores(service_with_tms, mock_tms_store, mock_user):
+    mock_tms_store.get.return_value = None
+
+    with patch(
+        "codemie.service.security.oidc_token_exchange_service.get_current_user",
+        return_value=mock_user,
+    ):
+        with patch("codemie.service.security.token_exchange_service.token_exchange_service") as mock_tes:
+            mock_tes.get_token_for_current_user.return_value = "idp-token"
+            with patch.object(
+                service_with_tms,
+                "_run_async",
+                return_value=(
+                    "new-exchanged-tok",
+                    {
+                        "access_token": "new-exchanged-tok",
+                        "expires_in": 3600,
+                        "refresh_token": "rt-1",
+                        "scope": "openid",
+                    },
+                ),
+            ):
+                result = service_with_tms.get_exchanged_token(_AUDIENCE)
+
+    assert result == "new-exchanged-tok"
+    mock_tms_store.put.assert_called_once()
+    put_kwargs = mock_tms_store.put.call_args
+    assert put_kwargs[0][0] == "user-123"
+    assert put_kwargs[0][1] == f"oidc_exchange:{_AUDIENCE}"
+    assert put_kwargs[1]["access_token"] == "new-exchanged-tok"
+    assert put_kwargs[1]["refresh_token"] == "rt-1"
+    assert put_kwargs[1]["refresh_metadata_kwargs"] is not None
+    assert put_kwargs[1]["scope"] == "openid"
+
+
+def test_get_exchanged_token_tms_miss_no_refresh_token(service_with_tms, mock_tms_store, mock_user):
+    mock_tms_store.get.return_value = None
+
+    with patch(
+        "codemie.service.security.oidc_token_exchange_service.get_current_user",
+        return_value=mock_user,
+    ):
+        with patch("codemie.service.security.token_exchange_service.token_exchange_service") as mock_tes:
+            mock_tes.get_token_for_current_user.return_value = "idp-token"
+            with patch.object(
+                service_with_tms,
+                "_run_async",
+                return_value=("exchanged-tok", {"access_token": "exchanged-tok", "expires_in": 1800}),
+            ):
+                result = service_with_tms.get_exchanged_token(_AUDIENCE)
+
+    assert result == "exchanged-tok"
+    put_kwargs = mock_tms_store.put.call_args[1]
+    assert put_kwargs["refresh_token"] is None
+    assert put_kwargs["refresh_metadata_kwargs"] is None
+
+
+def test_get_exchanged_token_no_store_uses_legacy(service, mock_cache, mock_user):
+    OIDCTokenExchangeService._store = None
+    mock_cache.get.return_value = "legacy-exchange"
+
+    with patch(
+        "codemie.service.security.oidc_token_exchange_service.get_current_user",
+        return_value=mock_user,
+    ):
+        result = service.get_exchanged_token(_AUDIENCE)
+
+    assert result == "legacy-exchange"
