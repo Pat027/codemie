@@ -356,12 +356,16 @@ async function main() {
         );
     }
 
-    log('Generating coverage.xml...');
-    await runCommand(
-        'poetry',
-        ['run', 'pytest', 'tests/', '-W', 'ignore::DeprecationWarning', '--cov', '--cov-report=xml:coverage.xml'],
-        { description: 'coverage generation' },
-    );
+    if (process.env.SONAR_SKIP_TESTS?.trim()) {
+        log('Skipping test run (SONAR_SKIP_TESTS is set). Using existing coverage.xml.');
+    } else {
+        log('Generating coverage.xml...');
+        await runCommand(
+            'poetry',
+            ['run', 'pytest', 'tests/', '-W', 'ignore::DeprecationWarning', '--cov', '--cov-report=xml:coverage.xml'],
+            { description: 'coverage generation' },
+        );
+    }
 
     const scannerCommand = resolveScannerCommand();
     log(`Running sonar-scanner against ${sonarHostUrl}.`);

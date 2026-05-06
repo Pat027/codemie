@@ -87,9 +87,16 @@ glab mr create \
 - [ ] No breaking changes (or documented)"
 ```
 
-After the MR is created, hand off to the `babysit-mr` skill to monitor it:
-- Invoke `babysit-mr` with the MR URL returned by `glab mr create`
-- It will watch for CI failures, reviewer comments, and merge conflicts, fixing them autonomously until the MR merges
+After the MR is created, output the MR URL and suggest babysit-mr:
+
+```
+MR created: <MR URL>
+
+Want me to watch it with babysit-mr? It will monitor CI failures, reviewer comments, and merge
+conflicts until the MR merges. Run /babysit-mr <MR URL> to start monitoring.
+```
+
+The user decides whether to invoke babysit-mr — do not invoke it automatically.
 
 ## Commit Format
 
