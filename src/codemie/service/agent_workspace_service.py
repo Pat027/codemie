@@ -393,6 +393,7 @@ class AgentWorkspaceService:
             file_repository=self.file_repository,
             user_id=user.id,
             input_files=input_files,
+            conversation_id=workspace.conversation_id,
         )
         output = executor.execute_script(script_path=script_path, export_files=export_files)
         synced_files = self._sync_execution_files(workspace.id, executor.last_execution_files)

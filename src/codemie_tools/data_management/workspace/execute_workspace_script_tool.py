@@ -197,7 +197,32 @@ class WorkspaceLocalScriptExecutionEngine(LocalExecutionEngine):
 
 
 class WorkspaceScriptRunner(CodeExecutorTool):
+    conversation_id: str | None = Field(default=None, exclude=True)
     last_execution_files: list[FileObject] = Field(default_factory=list, exclude=True)
+
+    def __init__(
+        self,
+        file_repository,
+        user_id: str | None = "",
+        input_files: list[FileObject] | None = None,
+        execution_mode: ExecutionMode | None = None,
+        conversation_id: str | None = None,
+    ):
+        super().__init__(
+            file_repository=file_repository,
+            user_id=user_id,
+            input_files=input_files,
+            execution_mode=execution_mode,
+        )
+        self.conversation_id = conversation_id
+
+    def _get_user_workdir(self) -> str:
+        base_workdir = super()._get_user_workdir()
+        if not self.conversation_id:
+            return base_workdir
+
+        safe_conversation_id = self.conversation_id.replace("/", "_").replace("\\", "_")
+        return f"{base_workdir}/{safe_conversation_id}"
 
     def execute_script(self, script_path: str, export_files: Optional[list[str]] = None) -> str:
         self.last_execution_files = []
