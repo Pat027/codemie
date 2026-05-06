@@ -292,6 +292,18 @@ def _configure_direct_runtime_overrides(
             f"user_id={user_id!r} username={user_email!r} "
             f"mode={RuntimeBudgetMode.USER_CREDENTIALS_BYPASS.value!r} reason=own_credentials"
         )
+        # Even in bypass mode, resolve project member runtime to inject end_user for
+        # override-customer spending tracking. Only model_kwargs["user"] is taken from
+        # project runtime; api_key/base_url are intentionally ignored — creds from
+        # litellm_context take precedence.
+        (project_runtime_user, _, _, _) = _resolve_direct_project_budget_runtime(
+            llm_model_details=llm_model_details,
+            litellm_context=litellm_context,
+            user_id=user_id,
+            user_email=user_email,
+        )
+        if project_runtime_user:
+            request_params["model_kwargs"] = {"user": project_runtime_user}
         return
 
     (

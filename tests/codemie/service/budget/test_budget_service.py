@@ -687,7 +687,11 @@ async def test_propagate_bulk_budget_assignments_calls_assign_and_clear():
         BudgetCategory.PLATFORM: None,
     }
 
-    with patch("codemie.service.budget.budget_service.get_active_provider") as mock_get_provider:
+    with (
+        patch("codemie.service.budget.budget_service.get_active_provider") as mock_get_provider,
+        patch("codemie.service.budget.budget_service.budget_config") as mock_budget_config,
+    ):
+        mock_budget_config.predefined_budgets = []
         mock_provider = MagicMock()
         mock_provider.assign_user_budget = AsyncMock()
         mock_provider.clear_user_budget = AsyncMock()
@@ -714,8 +718,10 @@ async def test_propagate_bulk_budget_assignments_continues_when_clear_fails():
 
     with (
         patch("codemie.service.budget.budget_service.get_active_provider") as mock_get_provider,
+        patch("codemie.service.budget.budget_service.budget_config") as mock_budget_config,
         patch("codemie.service.budget.budget_service.logger") as mock_logger,
     ):
+        mock_budget_config.predefined_budgets = []
         mock_provider = MagicMock()
         mock_provider.clear_user_budget = AsyncMock(side_effect=RuntimeError("provider unavailable"))
         mock_get_provider.return_value = mock_provider
@@ -723,6 +729,43 @@ async def test_propagate_bulk_budget_assignments_continues_when_clear_fails():
         await service._propagate_bulk_budget_assignments(db_users, assignments)
 
     mock_logger.warning.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_propagate_bulk_budget_assignments_reassigns_default_when_none_and_default_exists():
+    """When a budget_id is None and a predefined default exists, assign_user_budget is called."""
+    from codemie.configs.budget_config import PredefinedBudgetConfig
+
+    service = _make_service()
+    db_users = {"user-1": SimpleNamespace(email="user1@example.com")}
+    assignments = {BudgetCategory.PLATFORM: None}
+    predefined = PredefinedBudgetConfig(
+        budget_id="platform-default",
+        name="Platform Default",
+        budget_category=BudgetCategory.PLATFORM.value,
+        soft_budget=10.0,
+        max_budget=100.0,
+        budget_duration="30d",
+    )
+
+    with (
+        patch("codemie.service.budget.budget_service.get_active_provider") as mock_get_provider,
+        patch("codemie.service.budget.budget_service.budget_config") as mock_budget_config,
+    ):
+        mock_budget_config.predefined_budgets = [predefined]
+        mock_provider = MagicMock()
+        mock_provider.assign_user_budget = AsyncMock()
+        mock_provider.clear_user_budget = AsyncMock()
+        mock_get_provider.return_value = mock_provider
+
+        await service._propagate_bulk_budget_assignments(db_users, assignments)
+
+    mock_provider.assign_user_budget.assert_awaited_once_with(
+        user_email="user1@example.com",
+        budget_category=BudgetCategory.PLATFORM,
+        budget_id="platform-default",
+    )
+    mock_provider.clear_user_budget.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -37,6 +37,7 @@ OUTPUT_FORMAT = "output_format"
 CODEMIE_CLI = "codemie_cli"
 BRANCH = "branch"
 REPOSITORY = "repository"
+INTEGRATION = "integration_id"
 
 # HTTP Header names
 HEADER_CODEMIE_CLI = "X-CodeMie-CLI"

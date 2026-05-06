@@ -25,12 +25,14 @@ def _setting(
     api_key: str,
     default: bool = False,
     project_name: str = "project-a",
+    setting_type: str = "user",
 ) -> MagicMock:
     setting = MagicMock()
     setting.id = setting_id
     setting.alias = alias
     setting.default = default
     setting.project_name = project_name
+    setting.setting_type = setting_type
     setting.normalize_values.return_value = {"api_key": api_key, "url": "https://litellm.local"}
     setting.credential.side_effect = {"api_key": api_key, "url": "https://litellm.local"}.get
     return setting
@@ -553,3 +555,69 @@ class TestResolveLiteLLMUserCredentials:
             delete_user_setting(setting_id="setting-1", user=user)
 
         mock_delete.assert_called_once_with(credential_id="setting-1", user_id="user-1")
+
+    def test_returns_none_when_retrieved_setting_is_project_scoped(self):
+        """Project-scoped keys (e.g. platform budget key) must not activate user_credentials_bypass."""
+        from codemie.enterprise.litellm.credentials import resolve_litellm_user_credentials
+        from codemie.rest_api.models.settings import LiteLLMCredentials
+
+        credentials = LiteLLMCredentials(api_key="sk-platform", url="https://litellm.local")
+        project_setting = _setting(
+            setting_id="s-platform",
+            alias="codemie:project:project-a:category:platform",
+            api_key="sk-platform",
+            setting_type="project",
+        )
+
+        with (
+            patch(
+                "codemie.service.settings.settings.SettingsService.get_litellm_creds",
+                return_value=credentials,
+            ),
+            patch(
+                "codemie.service.settings.settings.SettingsService.retrieve_setting",
+                return_value=project_setting,
+            ),
+        ):
+            result = resolve_litellm_user_credentials(
+                user_id="user-1",
+                username="user@example.com",
+                project_name="project-a",
+            )
+
+        assert result is None
+
+    def test_resolves_credentials_via_explicit_integration_id(self):
+        """When integration_id is supplied it takes precedence over the project fallback."""
+        from codemie.enterprise.litellm.credentials import resolve_litellm_user_credentials
+        from codemie.rest_api.models.settings import LiteLLMCredentials
+
+        integration_creds = LiteLLMCredentials(api_key="sk-integration", url="https://litellm.local")
+        integration_setting = _setting(
+            setting_id="integration-1",
+            alias="personal-integration",
+            api_key="sk-integration",
+            setting_type="user",
+        )
+
+        with (
+            patch(
+                "codemie.service.settings.settings.SettingsService.get_credentials",
+                return_value=integration_creds,
+            ),
+            patch(
+                "codemie.service.settings.settings.SettingsService.retrieve_setting",
+                return_value=integration_setting,
+            ),
+        ):
+            result = resolve_litellm_user_credentials(
+                user_id="user-1",
+                username="user@example.com",
+                project_name="project-a",
+                integration_id="integration-1",
+            )
+
+        assert result is not None
+        assert result.credentials.api_key == "sk-integration"
+        assert result.alias == "personal-integration"
+        assert result.setting_id == "integration-1"

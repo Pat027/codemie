@@ -1688,8 +1688,12 @@ class TestGetUserSpending:
             "budget_reset_at": "2026-03-01T00:00:00Z",
         }
 
-        # Patch at the source where it's defined, not where it's imported
-        with patch("codemie.enterprise.litellm.dependencies.get_customer_spending") as mock_get_spending:
+        with (
+            patch("codemie.enterprise.litellm.dependencies.get_customer_spending") as mock_get_spending,
+            patch("codemie.enterprise.litellm.dependencies.get_proxy_customer_spending", return_value=None),
+            patch("codemie.enterprise.litellm.dependencies.get_premium_customer_spending", return_value=None),
+            patch("codemie.enterprise.litellm.dependencies.is_premium_models_enabled", return_value=False),
+        ):
             mock_get_spending.return_value = mock_spending_data
 
             response = await get_user_spending(user=mock_user)

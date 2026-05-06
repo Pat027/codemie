@@ -1182,6 +1182,81 @@ class TestCreateBodyStreamWithOptionalInjection:
         assert collected == [b"{}"]
         mock_inject.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_bypass_mode_with_member_tracking_injects_end_user_and_clears_project_keys(self):
+        """In bypass mode with project member tracking, end_user is injected and project api_key is cleared."""
+        from codemie.enterprise.litellm.proxy_router import _create_body_stream_with_optional_injection
+        from codemie.enterprise.litellm.runtime_budget_selection import RuntimeBudgetMode
+
+        user = MagicMock()
+        user.id = "user-1"
+        user.username = "user@example.com"
+        request_info = {
+            "llm_model": "gpt-4",
+            "project": "my-project",
+            "budget_provider_api_key": "sk-project-key-should-be-cleared",
+            "budget_provider_base_url": "https://proxy.should-be-cleared.com",
+        }
+        user_credentials = ResolvedLiteLLMUserCredentials(
+            credentials=LiteLLMCredentials(api_key="sk-user", url=""),
+            setting_id="setting-1",
+            alias="personal-key",
+        )
+
+        mock_provider_result = MagicMock()
+        mock_provider_result.body_overrides = {"user": "project-member-ref"}
+        mock_provider_result.headers = {}
+        mock_provider_result.api_key = "sk-project-key-should-be-cleared"
+        mock_provider_result.base_url = "https://proxy.should-be-cleared.com"
+
+        mock_selection = MagicMock()
+        mock_selection.mode = RuntimeBudgetMode.PROJECT_BUDGET_WITH_MEMBER_TRACKING
+
+        with (
+            patch(
+                "codemie.enterprise.litellm.proxy_router._resolve_budget_availability",
+                new_callable=AsyncMock,
+            ) as mock_availability,
+            patch(
+                "codemie.enterprise.litellm.proxy_router._resolve_tracking_identity",
+                return_value=(BudgetCategory.PLATFORM, "user@example.com", None, "gpt-4"),
+            ),
+            patch(
+                "codemie.enterprise.litellm.proxy_router._resolve_project_budget_runtime",
+                new_callable=AsyncMock,
+                return_value=mock_provider_result,
+            ),
+            patch(
+                "codemie.service.settings.settings.SettingsService.get_project_member_budget_tracking_enabled",
+                return_value=True,
+            ),
+            patch(
+                "codemie.enterprise.litellm.proxy_router.select_runtime_budget_mode",
+                return_value=mock_selection,
+            ),
+            patch(
+                "codemie.enterprise.litellm.proxy_router._inject_user_into_request_body_from_bytes",
+            ) as mock_inject,
+        ):
+            mock_availability.return_value = MagicMock()
+            mock_inject.return_value = iter([b'{"user":"project-member-ref"}'])
+
+            await _create_body_stream_with_optional_injection(
+                body_bytes=b"{}",
+                user=user,
+                request_info=request_info,
+                user_credentials=user_credentials,
+            )
+
+        assert "budget_provider_api_key" not in request_info
+        assert "budget_provider_base_url" not in request_info
+        assert request_info.get("litellm_customer_id") == "project-member-ref"
+        mock_inject.assert_called_once_with(
+            body_bytes=b"{}",
+            user_id="project-member-ref",
+            request_info=request_info,
+        )
+
 
 class TestParseUsageWithCost:
     """Test _parse_usage_with_cost function."""
@@ -1487,6 +1562,8 @@ class TestProxyToLLMProxy:
             user_id="user-123",
             username="user@example.com",
             project_name="user@example.com",
+            llm_model="gpt-4",
+            integration_id=None,
         )
         mock_body.assert_called_once()
         assert mock_body.call_args.kwargs["user_credentials"] is user_credentials

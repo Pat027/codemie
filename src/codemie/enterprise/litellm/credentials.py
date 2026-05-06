@@ -36,8 +36,13 @@ _NO_USER_CREDENTIALS = object()
 _user_credentials_cache: TTLCache = TTLCache(maxsize=4096, ttl=config.LITELLM_USER_CREDENTIALS_CACHE_TTL)
 
 
-def _build_cache_key(user_id: str, project_name: str | None) -> tuple[str, str]:
-    return user_id, project_name or ""
+def _build_cache_key(
+    user_id: str,
+    project_name: str | None,
+    llm_model: str | None = None,
+    integration_id: str | None = None,
+) -> tuple[str, str, str, str]:
+    return user_id, project_name or "", llm_model or "", integration_id or ""
 
 
 def clear_litellm_user_credentials_cache(user_id: str | None = None) -> None:
@@ -54,11 +59,13 @@ def resolve_litellm_user_credentials(
     user_id: str,
     username: str,
     project_name: str | None = None,
+    llm_model: str | None = None,
+    integration_id: str | None = None,
 ) -> ResolvedLiteLLMUserCredentials | None:
     if not user_id:
         return None
 
-    cache_key = _build_cache_key(user_id, project_name)
+    cache_key = _build_cache_key(user_id, project_name, llm_model, integration_id)
     if cache_key in _user_credentials_cache:
         cached = _user_credentials_cache[cache_key]
         return None if cached is _NO_USER_CREDENTIALS else cached
@@ -68,6 +75,8 @@ def resolve_litellm_user_credentials(
             user_id=user_id,
             username=username,
             project_name=project_name,
+            llm_model=llm_model,
+            integration_id=integration_id,
         )
     except Exception as exc:
         logger.warning(
@@ -86,10 +95,36 @@ def _resolve_litellm_user_credentials_uncached(
     user_id: str,
     username: str,
     project_name: str | None,
+    llm_model: str | None = None,
+    integration_id: str | None = None,
 ) -> ResolvedLiteLLMUserCredentials | None:
+    from codemie.rest_api.models.settings import SettingType
     from codemie.service.settings.base_settings import SearchFields
     from codemie.service.settings.settings import SettingsService
     from codemie_tools.base.models import CredentialTypes
+
+    # When the caller explicitly names an integration, use it directly — personal key takes
+    # precedence over any system-managed project budget key.
+    if integration_id:
+        from codemie.rest_api.models.settings import LiteLLMCredentials
+
+        integration_credentials = SettingsService.get_credentials(
+            credential_type=CredentialTypes.LITE_LLM,
+            integration_id=integration_id,
+            required_fields=SettingsService.LITELLM_FIELDS,
+            credential_class=LiteLLMCredentials,
+        )
+        if integration_credentials and integration_credentials.api_key:
+            integration_setting = SettingsService.retrieve_setting(
+                {SearchFields.CREDENTIAL_TYPE: CredentialTypes.LITE_LLM},
+                setting_id=integration_id,
+            )
+            return _build_resolved(integration_setting, integration_credentials)
+
+    if project_name and llm_model:
+        result = _try_resolve_premium_credentials(project_name, llm_model)
+        if result is not None:
+            return result
 
     credentials = SettingsService.get_litellm_creds(project_name=project_name, user_id=user_id)
     if not credentials or not credentials.api_key:
@@ -106,7 +141,44 @@ def _resolve_litellm_user_credentials_uncached(
             SearchFields.USER_ID: user_id,
         }
     )
+    # A project-scoped key (e.g. platform budget key) must never qualify as a personal user
+    # credential — returning it would incorrectly activate user_credentials_bypass mode.
+    if getattr(setting, "setting_type", None) == SettingType.PROJECT.value:
+        logger.debug(
+            f"credential_event=skipped_project_scoped_setting username={username!r} "
+            f"user_id={user_id!r} project_name={project_name!r} "
+            f"alias={getattr(setting, 'alias', None)!r}"
+        )
+        return None
     return _build_resolved(setting, credentials)
+
+
+def _try_resolve_premium_credentials(
+    project_name: str,
+    llm_model: str,
+) -> ResolvedLiteLLMUserCredentials | None:
+    from codemie.enterprise.litellm.budget_categories import BudgetCategory
+    from codemie.enterprise.litellm.dependencies import is_premium_model
+    from codemie.service.settings.base_settings import SearchFields
+    from codemie.service.settings.settings import SettingsService
+    from codemie_tools.base.models import CredentialTypes
+
+    if not is_premium_model(llm_model):
+        return None
+    premium_alias = f"codemie:project:{project_name}:category:{BudgetCategory.PREMIUM_MODELS.value}"
+    premium_setting = SettingsService.retrieve_setting(
+        {
+            SearchFields.ALIAS: premium_alias,
+            SearchFields.PROJECT_NAME: project_name,
+            SearchFields.CREDENTIAL_TYPE: CredentialTypes.LITE_LLM,
+        }
+    )
+    if not premium_setting:
+        return None
+    premium_credentials = SettingsService.get_project_litellm_creds_by_alias(project_name, premium_alias)
+    if premium_credentials and premium_credentials.api_key:
+        return _build_resolved(premium_setting, premium_credentials)
+    return None
 
 
 def _build_resolved(setting: object, credentials: LiteLLMCredentials) -> ResolvedLiteLLMUserCredentials:

@@ -49,6 +49,7 @@ from codemie.core.constants import (
     BRANCH,
     REPOSITORY,
     PROJECT,
+    INTEGRATION,
     HEADER_CODEMIE_CLI,
     HEADER_CODEMIE_CLIENT,
     HEADER_CODEMIE_SESSION_ID,
@@ -290,6 +291,7 @@ def _extract_request_info(headers: Headers | httpx.Headers | dict, user: User | 
         BRANCH: headers.get(HEADER_CODEMIE_CLI_BRANCH, ""),
         REPOSITORY: headers.get(HEADER_CODEMIE_CLI_REPOSITORY, ""),
         PROJECT: project,
+        INTEGRATION: headers.get(HEADER_CODEMIE_INTEGRATION) or None,
     }
 
 
@@ -484,7 +486,7 @@ def _resolve_tracking_identity(
     if not availability.project_scopes:
         premium_budget_id = premium_budget_id or get_category_budget_id(BudgetCategory.PREMIUM_MODELS)
 
-    if username is not None and premium_budget_id:
+    if username is not None and premium_budget_id and not availability.project_scopes:
         logger.debug(
             f"budget_event=runtime_category_selected component=proxy_router user_id={user.id!r} "
             f"username={user.username!r} project_name={request_info.get(PROJECT)!r} "
@@ -520,7 +522,10 @@ def _resolve_cli_tracking_identity(
     project_has_budget = bool(availability.project_scopes)
     cli_budget_id = availability.user_budget_ids.get(BudgetCategory.CLI.value)
     configured_cli_budget_id = None if project_has_budget else get_category_budget_id(BudgetCategory.CLI)
-    cli_available = BudgetCategory.CLI in availability.project_scopes or cli_budget_id or configured_cli_budget_id
+    if project_has_budget:
+        cli_available = BudgetCategory.CLI in availability.project_scopes
+    else:
+        cli_available = bool(cli_budget_id or configured_cli_budget_id)
     if not cli_available:
         return None
 
@@ -577,6 +582,52 @@ def _resolve_non_premium_tracking_identity(
     )
 
 
+async def _resolve_bypass_mode_stream(
+    body_bytes: bytes,
+    user: User,
+    request_info: dict,
+):
+    # Even in bypass mode, resolve project member runtime to inject end_user for
+    # override-customer spending tracking. api_key/base_url from project runtime are
+    # intentionally ignored — user_credentials take precedence.
+    availability = await _resolve_budget_availability(user, request_info)
+    category, _username, _tracking_budget_id, _llm_model = _resolve_tracking_identity(
+        user=user,
+        request_info=request_info,
+        availability=availability,
+    )
+    bypass_project_runtime = await _resolve_project_budget_runtime(
+        user=user,
+        category=category,
+        request_info=request_info,
+    )
+    # _resolve_project_budget_runtime writes api_key/base_url into request_info, but in
+    # bypass mode user_credentials take precedence — clear them so _apply_proxy_auth_header
+    # falls through to the user_credentials branch.
+    request_info.pop("budget_provider_api_key", None)
+    request_info.pop("budget_provider_base_url", None)
+    if bypass_project_runtime is not None:
+        from codemie.service.settings.settings import SettingsService
+
+        bypass_project_name = request_info.get(PROJECT) or None
+        member_tracking_enabled = SettingsService.get_project_member_budget_tracking_enabled(bypass_project_name)
+        bypass_selection = select_runtime_budget_mode(
+            has_user_litellm_credentials=False,
+            project_name=bypass_project_name,
+            project_member_tracking_enabled=member_tracking_enabled,
+            resolved_project_budget=True,
+        )
+        bypass_runtime_username = bypass_project_runtime.body_overrides.get("user")
+        if bypass_selection.mode == RuntimeBudgetMode.PROJECT_BUDGET_WITH_MEMBER_TRACKING and bypass_runtime_username:
+            request_info["litellm_customer_id"] = bypass_runtime_username
+            return _inject_user_into_request_body_from_bytes(
+                body_bytes=body_bytes,
+                user_id=bypass_runtime_username,
+                request_info=request_info,
+            )
+    return _stream_body_bytes(body_bytes)
+
+
 async def _create_body_stream_with_optional_injection(
     body_bytes: bytes,
     user: User,
@@ -607,7 +658,7 @@ async def _create_body_stream_with_optional_injection(
             f"mode={RuntimeBudgetMode.USER_CREDENTIALS_BYPASS.value!r} "
             f"reason=user_credentials setting_alias={user_credentials.alias!r}"
         )
-        return _stream_body_bytes(body_bytes)
+        return await _resolve_bypass_mode_stream(body_bytes, user, request_info)
 
     availability = await _resolve_budget_availability(user, request_info)
     category, username, tracking_budget_id, llm_model = _resolve_tracking_identity(
@@ -1232,6 +1283,8 @@ async def _proxy_to_llm_proxy(
         user_id=user.id,
         username=user.username,
         project_name=request_info.get(PROJECT),
+        llm_model=request_info.get(LLM_MODEL),
+        integration_id=request_info.get(INTEGRATION),
     )
 
     # Create body stream (with or without user injection)

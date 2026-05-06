@@ -219,7 +219,7 @@ class Config(BaseSettings):
     AUTH_TOKEN_CACHE_TTL: int = 30  # seconds
 
     # Budget assignment cache — skips DB for user→category→budget_id lookups
-    BUDGET_ASSIGNMENT_CACHE_TTL: int = 120  # seconds
+    BUDGET_ASSIGNMENT_CACHE_TTL: int = 60  # seconds
     BUDGET_ASSIGNMENT_CACHE_MAX_SIZE: int = 50000
 
     # Budget resolution cache — skips DB for project scope resolution per (project, category, user)
