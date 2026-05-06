@@ -444,7 +444,10 @@ class LiteLLMBudgetEnforcementProvider:
                 budget_reset_at=budget_reset_at,
                 models=models,
             )
-        elif existing_key.get("key_hash"):
+        elif key_hash := (existing_key.get("key_hash") or existing_key.get("token")):
+            # LiteLLM's /key/list response uses "token" for the hash, not "key_hash".
+            # Back-fill "key_hash" so _update_project_key can find the updatable reference.
+            existing_key = {**existing_key, "key_hash": key_hash}
             logger.debug(
                 f"budget_event=provider_project_key_update_started component=litellm_budget_provider "
                 f"provider={_PROVIDER_NAME!r} project_name={project_name!r} budget_id={budget_id!r} "

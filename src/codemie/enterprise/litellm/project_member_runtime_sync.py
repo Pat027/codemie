@@ -31,6 +31,14 @@ from codemie.service.budget.budget_resolution_service import _resolution_cache, 
 from codemie.service.budget.provider import BudgetProviderMemberState
 from codemie.service.budget.provider_registry import get_active_provider
 
+_main_event_loop: asyncio.AbstractEventLoop | None = None
+
+
+def set_main_event_loop(loop: asyncio.AbstractEventLoop) -> None:
+    global _main_event_loop
+    _main_event_loop = loop
+
+
 _ALLOWED_SYNC_STATUSES = {SyncStatus.OK.value, SyncStatus.NOOP.value}
 
 
@@ -233,9 +241,10 @@ async def ensure_project_member_runtime_ready(
                 f"budget_category={budget_category.value!r}, user_id={user_id!r}"
             )
 
+        allocation_id = allocation.id
         await project_member_budget_assignment_repository.update_provider_metadata(
             session,
-            allocation_id=allocation.id,
+            allocation_id=allocation_id,
             provider_metadata=_build_member_provider_metadata(member_state),
             sync_status=sync_status,
             budget_reset_at=member_state.budget_reset_at,
@@ -247,7 +256,7 @@ async def ensure_project_member_runtime_ready(
             f"budget_event=runtime_member_sync_completed component=project_member_runtime_sync "
             f"user_id={user_id!r} username={user_email!r} project_name={project_name!r} "
             f"budget_id={resolved.budget_id!r} effective_budget_id={effective_budget_id!r} "
-            f"budget_category={budget_category.value!r} allocation_id={allocation.id!r} "
+            f"budget_category={budget_category.value!r} allocation_id={allocation_id!r} "
             f"provider={member_state.provider!r} provider_member_ref={member_state.provider_member_ref!r} "
             f"provider_budget_id={member_state.provider_budget_id!r} sync_status={sync_status!r} "
             f"cache_invalidated=true"
@@ -261,32 +270,31 @@ def ensure_project_member_runtime_ready_sync(
     project_name: str,
     budget_category: BudgetCategory,
 ) -> None:
-    _ = user_email
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        asyncio.run(
-            ensure_project_member_runtime_ready(
-                user_id=user_id,
-                user_email=user_email,
-                project_name=project_name,
-                budget_category=budget_category,
-            )
-        )
+    coro = ensure_project_member_runtime_ready(
+        user_id=user_id,
+        user_email=user_email,
+        project_name=project_name,
+        budget_category=budget_category,
+    )
+
+    # Preferred path: dispatch to the main FastAPI event loop so that async DB
+    # operations reuse the pool connections that are bound to that loop.  This
+    # is necessary when called from a thread (e.g. asyncio.to_thread worker)
+    # because asyncio.run() would create a *new* loop that cannot reuse the
+    # pool's existing asyncpg connections.
+    loop = _main_event_loop
+    if loop is not None and loop.is_running():
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        future.result()
         return
 
+    # Fallback (e.g. unit tests, or main loop not yet registered): run in a
+    # fresh isolated thread so asyncio.run() starts with a clean loop context.
     thread_error: list[Exception] = []
 
     def _run_in_thread() -> None:
         try:
-            asyncio.run(
-                ensure_project_member_runtime_ready(
-                    user_id=user_id,
-                    user_email=user_email,
-                    project_name=project_name,
-                    budget_category=budget_category,
-                )
-            )
+            asyncio.run(coro)
         except Exception as exc:  # pragma: no cover - covered via caller propagation.
             thread_error.append(exc)
 

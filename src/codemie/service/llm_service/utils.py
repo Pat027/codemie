@@ -47,10 +47,26 @@ def _resolve_effective_project(
 
 
 def set_llm_context(assistant: AssistantBase | None, fallback_project_name: str | None, user: User):
+    from codemie.rest_api.models.settings import SettingType
+    from codemie.service.settings.base_settings import SearchFields
+    from codemie_tools.base.models import CredentialTypes
+
     effective_project = _resolve_effective_project(assistant, fallback_project_name, user)
 
     try:
         litellm_creds = SettingsService.get_litellm_creds(project_name=effective_project, user_id=user.id)
+        if litellm_creds:
+            setting = SettingsService.retrieve_setting(
+                {
+                    SearchFields.CREDENTIAL_TYPE: CredentialTypes.LITE_LLM,
+                    SearchFields.PROJECT_NAME: effective_project,
+                    SearchFields.USER_ID: user.id,
+                }
+            )
+            # Project-scoped keys (e.g. platform/CLI budget keys) must not set litellm_context.credentials —
+            # doing so would trigger USER_CREDENTIALS_BYPASS mode in llm_factory and skip override customer injection.
+            if getattr(setting, "setting_type", None) == SettingType.PROJECT.value:
+                litellm_creds = None
         litellm_context = LiteLLMContext(credentials=litellm_creds, current_project=effective_project)
         set_litellm_context(litellm_context)
         dial_creds = SettingsService.get_dial_creds(effective_project)

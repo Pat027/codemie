@@ -30,6 +30,7 @@ class ResolvedLiteLLMUserCredentials:
     credentials: LiteLLMCredentials
     setting_id: str
     alias: str | None = None
+    is_personal: bool = True
 
 
 _NO_USER_CREDENTIALS = object()
@@ -121,36 +122,35 @@ def _resolve_litellm_user_credentials_uncached(
             )
             return _build_resolved(integration_setting, integration_credentials)
 
-    if project_name and llm_model:
-        result = _try_resolve_premium_credentials(project_name, llm_model)
-        if result is not None:
-            return result
-
     credentials = SettingsService.get_litellm_creds(project_name=project_name, user_id=user_id)
-    if not credentials or not credentials.api_key:
-        logger.debug(
-            f"credential_event=no_user_litellm_credentials username={username!r} "
-            f"user_id={user_id!r} project_name={project_name!r}"
+    if credentials and credentials.api_key:
+        setting = SettingsService.retrieve_setting(
+            {
+                SearchFields.CREDENTIAL_TYPE: CredentialTypes.LITE_LLM,
+                SearchFields.PROJECT_NAME: project_name,
+                SearchFields.USER_ID: user_id,
+            }
         )
-        return None
-
-    setting = SettingsService.retrieve_setting(
-        {
-            SearchFields.CREDENTIAL_TYPE: CredentialTypes.LITE_LLM,
-            SearchFields.PROJECT_NAME: project_name,
-            SearchFields.USER_ID: user_id,
-        }
-    )
-    # A project-scoped key (e.g. platform budget key) must never qualify as a personal user
-    # credential — returning it would incorrectly activate user_credentials_bypass mode.
-    if getattr(setting, "setting_type", None) == SettingType.PROJECT.value:
+        # A project-scoped key (e.g. platform budget key) must never qualify as a personal user
+        # credential — returning it would incorrectly activate user_credentials_bypass mode.
+        if getattr(setting, "setting_type", None) != SettingType.PROJECT.value:
+            return _build_resolved(setting, credentials)
         logger.debug(
             f"credential_event=skipped_project_scoped_setting username={username!r} "
             f"user_id={user_id!r} project_name={project_name!r} "
             f"alias={getattr(setting, 'alias', None)!r}"
         )
-        return None
-    return _build_resolved(setting, credentials)
+    else:
+        logger.debug(
+            f"credential_event=no_user_litellm_credentials username={username!r} "
+            f"user_id={user_id!r} project_name={project_name!r}"
+        )
+
+    # No personal key found — fall back to project premium key for premium models.
+    if project_name and llm_model:
+        return _try_resolve_premium_credentials(project_name, llm_model)
+
+    return None
 
 
 def _try_resolve_premium_credentials(
@@ -177,15 +177,18 @@ def _try_resolve_premium_credentials(
         return None
     premium_credentials = SettingsService.get_project_litellm_creds_by_alias(project_name, premium_alias)
     if premium_credentials and premium_credentials.api_key:
-        return _build_resolved(premium_setting, premium_credentials)
+        return _build_resolved(premium_setting, premium_credentials, is_personal=False)
     return None
 
 
-def _build_resolved(setting: object, credentials: LiteLLMCredentials) -> ResolvedLiteLLMUserCredentials:
+def _build_resolved(
+    setting: object, credentials: LiteLLMCredentials, *, is_personal: bool = True
+) -> ResolvedLiteLLMUserCredentials:
     return ResolvedLiteLLMUserCredentials(
         credentials=credentials,
         setting_id=getattr(setting, "id", ""),
         alias=getattr(setting, "alias", None),
+        is_personal=is_personal,
     )
 
 

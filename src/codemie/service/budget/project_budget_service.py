@@ -1063,6 +1063,7 @@ class ProjectBudgetService:
         if changed_fields:
             budget = await budget_repository.update(session, budget_id, changed_fields)
 
+        _assignment = None
         if amounts_changed or data.models is not None:
             budget, _assignment, provider = await self._sync_updated_project_budget(
                 session=session,
