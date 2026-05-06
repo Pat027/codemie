@@ -1405,6 +1405,8 @@ def _normalize_tms_environment(environment: str) -> str:
         "develop": "dev",
         "prod": "production",
         "tests": "test",
+        "preview": "staging",
+        "prod-preview": "staging",
     }.get(normalized_environment, normalized_environment)
 
 
