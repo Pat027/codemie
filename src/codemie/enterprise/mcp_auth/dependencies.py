@@ -79,7 +79,7 @@ encryption_service: BaseEncryptionService = EncryptionFactory().get_current_encr
 
 _OAUTH2_CALLBACK_PATH = "/v1/mcp-auth/oauth2/callback"
 _OAUTH2_CALLBACK_PAGE_SCRIPT_PATH = (
-    f"{config.API_ROOT_PATH.strip('/')}/" if config.API_ROOT_PATH else "/"
+    f"/{config.API_ROOT_PATH.strip('/')}/" if config.API_ROOT_PATH else "/"
 ) + "v1/mcp-auth/oauth2/callback-page.js"
 _SAML_ACS_PATH = "/v1/mcp-auth/saml/acs"
 _LOCALHOST_HOSTS = {"localhost", "127.0.0.1", "::1"}
