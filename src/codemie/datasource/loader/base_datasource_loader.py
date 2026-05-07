@@ -22,6 +22,8 @@ class BaseDatasourceLoader(ABC):
     DOCUMENTS_COUNT_KEY = 'documents_count_key'
     TOTAL_DOCUMENTS_KEY = 'total_documents'
     SKIPPED_DOCUMENTS_KEY = 'skipped_documents'
+    FAILED_DOCUMENTS_KEY = 'failed_documents'
+    SECTIONS_FAILED_KEY = 'sections_failed'
 
     @abstractmethod
     def fetch_remote_stats(self) -> dict[str, Any]:
@@ -40,3 +42,7 @@ class BaseDatasourceLoader(ABC):
     @abstractmethod
     def lazy_load(self) -> Iterator[Document]:
         pass
+
+    def get_load_stats(self) -> dict[str, Any] | None:
+        """Return actual post-load statistics. Override in subclasses that track loading counters."""
+        return None

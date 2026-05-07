@@ -105,6 +105,12 @@ class IndexStatusService:
         content += f"#### Imported Chunks Count: {datasource.current__chunks_state}\n"
         skipped_docs = datasource.processing_info.get(BaseDatasourceLoader.SKIPPED_DOCUMENTS_KEY, 0)
         content += f"#### Skipped Documents Count: {skipped_docs}\n"
+        failed_docs = datasource.processing_info.get(BaseDatasourceLoader.FAILED_DOCUMENTS_KEY, 0)
+        if failed_docs:
+            content += f"#### Failed Documents Count: {failed_docs}\n"
+        sections_failed = datasource.processing_info.get(BaseDatasourceLoader.SECTIONS_FAILED_KEY, 0)
+        if sections_failed:
+            content += f"#### Failed Sections Count: {sections_failed}\n"
 
         if datasource.is_code_index():
             content += f"#### Total Size (KB): {datasource.processing_info[GitBatchLoader.TOTAL_SIZE_KB_KEY]}\n"

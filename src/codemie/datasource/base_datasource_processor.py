@@ -162,10 +162,11 @@ class BaseDatasourceProcessor(ABC):
             {"codemie.datasource_name": self.datasource_name},
         ):
             try:
+                self._load_stats_persisted = False
                 self._init_index()
 
                 # Ensure Application exists for the project_name
-                if self.index and self.index.project_name:
+                if self.index.project_name:
                     ensure_application_exists(self.index.project_name)
 
                 self.callbacks.append(
@@ -177,7 +178,7 @@ class BaseDatasourceProcessor(ABC):
                         self.request_uuid,
                     )
                 )
-                if self.index and self.user:
+                if self.user:
                     set_llm_context(None, self.index.project_name, self.user)
                     set_logging_info(uuid=self.request_uuid, user_id=self.user.id, user_email=self.user.username)
                 self.index.start_fetching(is_incremental=self.is_incremental_reindex)
@@ -201,11 +202,14 @@ class BaseDatasourceProcessor(ABC):
                 )
                 result = self._process()
                 execution_time = time.time() - start_time
+                load_stats = self._persist_load_stats()
+                self._load_stats_persisted = True
                 self._on_process_end()
                 logger.info(
                     f"IndexDatasource. Finished. "
                     f"Datasource={self.datasource_name}. "
                     f"ProcessingStats={result}. "
+                    f"LoadStats={load_stats}. "
                     f"ExecutionTimeSeconds={execution_time}"
                 )
                 self._validate_indexing_result()
@@ -243,12 +247,49 @@ class BaseDatasourceProcessor(ABC):
             except Exception as ex:
                 record_exception_on_span(ex)
                 logger.error(f"Error occurred while indexing repo {self.index.repo_name}", exc_info=True)
+                if not self._load_stats_persisted:
+                    self._persist_load_stats()
                 self.index.set_error(str(ex))
                 self._on_process_end()
                 # Call the on_error method of each callback
                 for callback in self.callbacks:
                     callback.on_error(ex)
                 raise
+
+    def _update_complete_state_estimate(
+        self, index: IndexInfo, initial_complete_state: int, total_raw_docs: int, total_source_docs: int
+    ) -> None:
+        if total_raw_docs == 0 or initial_complete_state == 0:
+            return
+        ratio = total_source_docs / total_raw_docs
+        new_complete_state = max(index.complete_state, round(initial_complete_state * ratio))
+        index.complete_state = new_complete_state
+
+    def _persist_load_stats(self) -> dict | None:
+        if self.loader is None:
+            return None
+        load_stats = self.loader.get_load_stats()
+        if load_stats is None:
+            return None
+        skipped = load_stats.get(BaseDatasourceLoader.SKIPPED_DOCUMENTS_KEY, 0)
+        failed = load_stats.get(BaseDatasourceLoader.FAILED_DOCUMENTS_KEY, 0)
+        load_stats[BaseDatasourceLoader.TOTAL_DOCUMENTS_KEY] = self.index.current_state + skipped + failed
+        load_stats[BaseDatasourceLoader.DOCUMENTS_COUNT_KEY] = self.index.current_state
+        existing = self.index.processing_info or {}
+        if self.is_incremental_reindex:
+            additive_keys = {
+                BaseDatasourceLoader.SKIPPED_DOCUMENTS_KEY,
+                BaseDatasourceLoader.FAILED_DOCUMENTS_KEY,
+                BaseDatasourceLoader.SECTIONS_FAILED_KEY,
+            }
+            merged = {**existing, **load_stats}
+            for k in additive_keys:
+                merged[k] = existing.get(k, 0) + load_stats.get(k, 0)
+            self.index.processing_info = merged
+        else:
+            self.index.processing_info = {**existing, **load_stats}
+        self.index.update()
+        return load_stats
 
     def _create_or_update_scheduler(self, cron_expression: Optional[str] = None):
         """
@@ -586,14 +627,25 @@ class BaseDatasourceProcessor(ABC):
         store._store._create_index_if_not_exists()
         docs_batch = []
         loaded_docs = 0
+        initial_complete_state = index.complete_state
+        total_raw_docs = 0
+        total_source_docs = 0
         for doc in loader.lazy_load():
             docs_batch.append(doc)
             if len(docs_batch) >= batch_size:
-                loaded_docs += self._process_batch(docs=docs_batch, index=index, store=store)
+                batch_source_count = self._process_batch(docs=docs_batch, index=index, store=store)
+                loaded_docs += batch_source_count
+                total_raw_docs += len(docs_batch)
+                total_source_docs += batch_source_count
+                self._update_complete_state_estimate(index, initial_complete_state, total_raw_docs, total_source_docs)
                 docs_batch.clear()
 
         if docs_batch:
-            loaded_docs += self._process_batch(docs=docs_batch, index=index, store=store)
+            batch_source_count = self._process_batch(docs=docs_batch, index=index, store=store)
+            loaded_docs += batch_source_count
+            total_raw_docs += len(docs_batch)
+            total_source_docs += batch_source_count
+            self._update_complete_state_estimate(index, initial_complete_state, total_raw_docs, total_source_docs)
         return loaded_docs
 
     def _process_batch(self, docs: list[Document], index: IndexInfo, store) -> int:

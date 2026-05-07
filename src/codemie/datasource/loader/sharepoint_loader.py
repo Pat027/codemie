@@ -95,10 +95,6 @@ class SharePointLoader(BaseLoader, BaseDatasourceLoader):
         documents = list(loader.lazy_load())
     """
 
-    DOCUMENTS_COUNT_KEY = "documents_count_key"
-    TOTAL_DOCUMENTS_KEY = "total_documents"
-    SKIPPED_DOCUMENTS_KEY = "skipped_documents"
-
     # Constants for Microsoft Graph API
     ODATA_NEXT_LINK = "@odata.nextLink"
     FORM_TEMPLATES_FOLDER = "Form Templates"
@@ -216,6 +212,10 @@ class SharePointLoader(BaseLoader, BaseDatasourceLoader):
         self._total_files_found = 0
         self._total_files_processed = 0
         self._total_files_skipped = 0
+        self._total_files_failed = 0
+        self._total_pages_loaded = 0
+        self._total_lists_loaded = 0
+        self._sections_failed = 0
 
         # Parse site URL
         self._parse_site_url()
@@ -985,7 +985,7 @@ class SharePointLoader(BaseLoader, BaseDatasourceLoader):
                 }
         else:
             logger.warning(f"Failed to extract content from file: {file_name}")
-            self._total_files_skipped += 1
+            self._total_files_failed += 1
 
     def _load_documents_recursive(self, drive_id: str, folder_path: str = "root") -> Iterator[dict]:
         """
@@ -1263,12 +1263,11 @@ class SharePointLoader(BaseLoader, BaseDatasourceLoader):
 
     def _load_and_yield_pages(self) -> Iterator[Document]:
         """Load SharePoint pages and yield as documents."""
-        pages_count = 0
         for page in self._load_site_pages():
             if page.get("content"):
                 yield self._transform_to_doc(page)
-                pages_count += 1
-        logger.info(f"Loaded {pages_count} SharePoint pages")
+                self._total_pages_loaded += 1
+        logger.info(f"Loaded {self._total_pages_loaded} SharePoint pages")
 
     def _load_and_yield_documents_from_drive(
         self, drive_id: str, drive_name: str, start_folder: str = "root"
@@ -1312,17 +1311,17 @@ class SharePointLoader(BaseLoader, BaseDatasourceLoader):
 
         logger.info(
             f"Documents summary: Found {self._total_files_found} files, "
-            f"Processed {self._total_files_processed}, Skipped {self._total_files_skipped}"
+            f"Processed {self._total_files_processed}, Skipped {self._total_files_skipped}, "
+            f"Failed {self._total_files_failed}"
         )
 
     def _load_and_yield_lists(self) -> Iterator[Document]:
         """Load SharePoint list items and yield as documents."""
-        lists_count = 0
         for list_item in self._load_lists():
             if list_item.get("content"):
                 yield self._transform_to_doc(list_item)
-                lists_count += 1
-        logger.info(f"Loaded {lists_count} SharePoint list items")
+                self._total_lists_loaded += 1
+        logger.info(f"Loaded {self._total_lists_loaded} SharePoint list items")
 
     def lazy_load(self) -> Iterator[Document]:
         """
@@ -1337,6 +1336,10 @@ class SharePointLoader(BaseLoader, BaseDatasourceLoader):
         self._total_files_found = 0
         self._total_files_processed = 0
         self._total_files_skipped = 0
+        self._total_files_failed = 0
+        self._total_pages_loaded = 0
+        self._total_lists_loaded = 0
+        self._sections_failed = 0
 
         # Load site pages
         if self.include_pages:
@@ -1344,6 +1347,7 @@ class SharePointLoader(BaseLoader, BaseDatasourceLoader):
             try:
                 yield from self._load_and_yield_pages()
             except Exception as e:
+                self._sections_failed += 1
                 logger.error(f"Failed to load site pages: {e}", exc_info=True)
 
         # Load documents from all document libraries
@@ -1352,6 +1356,7 @@ class SharePointLoader(BaseLoader, BaseDatasourceLoader):
             try:
                 yield from self._load_and_yield_all_documents()
             except Exception as e:
+                self._sections_failed += 1
                 logger.error(f"Failed to load documents: {e}", exc_info=True)
 
         # Load lists
@@ -1360,9 +1365,27 @@ class SharePointLoader(BaseLoader, BaseDatasourceLoader):
             try:
                 yield from self._load_and_yield_lists()
             except Exception as e:
+                self._sections_failed += 1
                 logger.error(f"Failed to load lists: {e}", exc_info=True)
 
-        logger.info("SharePoint loader completed successfully")
+        logger.info(
+            f"SharePoint loader completed. "
+            f"Files: found={self._total_files_found}, processed={self._total_files_processed}, "
+            f"skipped={self._total_files_skipped}, failed={self._total_files_failed}, "
+            f"sections_failed={self._sections_failed}"
+        )
+
+    def get_load_stats(self) -> dict[str, Any]:
+        files_total = self._total_files_skipped + self._total_files_processed + self._total_files_failed
+        total = files_total + self._total_pages_loaded + self._total_lists_loaded
+        processed = self._total_files_processed + self._total_pages_loaded + self._total_lists_loaded
+        return {
+            self.TOTAL_DOCUMENTS_KEY: total,
+            self.DOCUMENTS_COUNT_KEY: processed,
+            self.SKIPPED_DOCUMENTS_KEY: self._total_files_skipped,
+            self.FAILED_DOCUMENTS_KEY: self._total_files_failed,
+            self.SECTIONS_FAILED_KEY: self._sections_failed,
+        }
 
     def _would_skip_file_for_count(self, item: dict) -> bool:
         """Check if file would be skipped during processing (excluding modified_since)."""
@@ -1523,14 +1546,16 @@ class SharePointLoader(BaseLoader, BaseDatasourceLoader):
 
         total_count = 0
         skipped_count = 0
+        pages_count = 0
 
-        # Count pages
+        # Count pages — excluded from processable_count because content existence
+        # can only be verified with a per-page API call (done during actual loading).
         if self.include_pages:
             try:
                 site_id = self._get_site_id()
                 pages_count = self._count_pages(site_id)
                 total_count += pages_count
-                logger.info(f"Found {pages_count} SharePoint pages")
+                logger.info(f"Found {pages_count} SharePoint pages (excluded from expected count)")
             except Exception as e:
                 logger.error(f"Failed to count pages: {e}")
 
@@ -1554,10 +1579,11 @@ class SharePointLoader(BaseLoader, BaseDatasourceLoader):
             except Exception as e:
                 logger.error(f"Failed to count lists: {e}")
 
-        processable_count = total_count - skipped_count
+        processable_count = total_count - skipped_count - pages_count
         logger.info(
             f"SharePoint stats: {total_count} total items, "
-            f"{processable_count} will be processed, {skipped_count} will be skipped"
+            f"{processable_count} will be processed, {skipped_count} will be skipped, "
+            f"{pages_count} pages (actual count determined during loading)"
         )
 
         return {

@@ -1925,7 +1925,7 @@ class TestFetchRemoteStats:
 
         assert result["total_documents"] == 18  # 5 + 10 + 3
         assert result["skipped_documents"] == 2
-        assert result["documents_count_key"] == 16  # 18 - 2
+        assert result["documents_count_key"] == 11  # 18 - 2 - 5 (pages excluded from processable count)
 
     def test_pages_skipped_when_include_pages_false(self, loader):
         """_count_pages not called when include_pages=False."""

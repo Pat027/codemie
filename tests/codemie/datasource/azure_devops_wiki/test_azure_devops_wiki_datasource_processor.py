@@ -58,6 +58,7 @@ def azure_devops_wiki_processor_fixture():
     index_info.project_space_visible = True
     index_info.index_type = index_type
     index_info.current_state = 0
+    index_info.complete_state = 0
     index_info.error = False
     index_info.completed = False
     index_info.created_by = created_by

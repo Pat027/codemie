@@ -923,6 +923,7 @@ class TestSharePointLoaderFileProcessingEdgeCases:
         sharepoint_loader._total_files_found = 0
         sharepoint_loader._total_files_skipped = 0
         sharepoint_loader._total_files_processed = 0
+        sharepoint_loader._total_files_failed = 0
 
         # Return empty list (no documents extracted)
         mock_download.return_value = []
@@ -940,7 +941,8 @@ class TestSharePointLoaderFileProcessingEdgeCases:
 
         assert len(result) == 0
         assert sharepoint_loader._total_files_found == 1
-        assert sharepoint_loader._total_files_skipped == 1
+        assert sharepoint_loader._total_files_skipped == 0
+        assert sharepoint_loader._total_files_failed == 1
         assert sharepoint_loader._total_files_processed == 0
 
     @patch("codemie.datasource.loader.sharepoint_loader.SharePointLoader._download_and_extract_file")

@@ -58,6 +58,7 @@ def jira_processor_fixture():
         project_space_visible=True,
         index_type=index_type,
         current_state=0,
+        complete_state=0,
         error=False,
         completed=False,
         created_by=created_by,

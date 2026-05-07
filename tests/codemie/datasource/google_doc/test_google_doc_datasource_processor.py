@@ -54,6 +54,7 @@ def mock_loader():
     loader = Mock()
     attrs = {
         "load_with_extra.return_value": (DOCS, TITLES, DOC_ID),
+        "get_load_stats.return_value": None,
     }
     loader.configure_mock(**attrs)
     return loader
