@@ -1177,6 +1177,7 @@ class LiteLLMBudgetEnforcementProvider:
 
         result = await asyncio.to_thread(
             service.sync_project_member_budget_assignment,
+            project_budget_id=allocation.project_budget_id,
             project_name=allocation.project_name,
             budget_category=allocation.budget_category,
             user_id=allocation.user_id,
