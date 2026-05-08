@@ -837,7 +837,6 @@ class LiteLLMBudgetEnforcementProvider:
         Called at new-user creation time (SSO first login, admin create).
         Fail-open: callers log the exception and continue.
         """
-        _ = user_email
         from codemie.enterprise.litellm.dependencies import get_litellm_service_or_none
 
         logger.debug(
@@ -852,7 +851,7 @@ class LiteLLMBudgetEnforcementProvider:
                 f"reason=provider_unavailable"
             )
             return
-        await asyncio.to_thread(service.get_or_create_customer_with_budget, user_id)
+        await asyncio.to_thread(service.get_or_create_customer_with_budget, user_email)
         logger.debug(
             f"budget_event=provider_customer_provision_completed component=litellm_budget_provider "
             f"provider={_PROVIDER_NAME!r} user_id={user_id!r} username={user_email!r}"
