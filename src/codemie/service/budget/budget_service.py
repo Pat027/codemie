@@ -1389,6 +1389,19 @@ class BudgetService:
                 allocation_mode=AllocationMode.EQUAL.value,
                 assigned_by=actor_id,
             )
+            shared_budget = await project_budget_service._ensure_shared_child_budget(
+                session,
+                main_budget=budget,
+                project_name=project_name,
+                actor_id=actor_id,
+                per_member_soft_budget=allocation_rows[0].allocated_soft_budget
+                if allocation_rows
+                else state.soft_budget,
+                per_member_max_budget=allocation_rows[0].allocated_max_budget if allocation_rows else state.max_budget,
+            )
+            for row in allocation_rows:
+                row.shared_budget_id = shared_budget.budget_id
+                row.effective_budget_id = shared_budget.budget_id
             allocations = await project_member_budget_assignment_repository.insert_many(session, allocation_rows)
             await self._sync_backfilled_member_allocations(
                 session=session,
