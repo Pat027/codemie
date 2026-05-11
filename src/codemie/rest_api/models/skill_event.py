@@ -49,6 +49,7 @@ from codemie.rest_api.models.base import BaseModelWithSQLSupport
 # wrapper does not emit it; backend support is forward-looking so the
 # UI/catalog can record discovery events without a backend change.
 SkillCommand = Literal["add", "update", "remove", "list", "find"]
+SkillInstallCommand = Literal["add", "remove"]
 SkillStatus = Literal["started", "completed", "failed"]
 SkillScope = Literal["global", "project", "unknown"]
 AgentSelectionMode = Literal["explicit", "auto_detected", "prompted", "upstream"]
@@ -116,6 +117,37 @@ class SkillEventResponse(BaseModel):
     id: str
     success: bool = True
     message: str = "Skill event recorded"
+
+
+class SkillEventLogItem(BaseModel):
+    """One item in the paginated event-log response (GET /v1/skills/events)."""
+
+    skill_slug: Optional[str] = None
+    source: Optional[str] = None
+    target_agents: List[str] = []
+    date: datetime  # maps to SkillEvent.created_at; serialized as ISO 8601
+    command: SkillInstallCommand
+    user_id: str
+    user_email: Optional[str] = None
+
+
+class SkillStatsResponse(BaseModel):
+    """Per-skill aggregated install / removal stats (GET /v1/skills/events/{slug}/stats)."""
+
+    installs: int
+    removals: int
+    by_agent: Dict[str, int]
+    by_source: Dict[str, int] = {}
+
+
+class SkillStatsListItem(BaseModel):
+    """One item in the paginated all-skills aggregated stats response (GET /v1/skills/events/stats)."""
+
+    skill_slug: Optional[str] = None
+    installs: int
+    removals: int
+    by_agent: Dict[str, int]
+    by_source: Dict[str, int] = {}
 
 
 # ---------------------------------------------------------------------------

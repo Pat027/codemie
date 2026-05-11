@@ -26,6 +26,7 @@ Responsibilities:
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional, Tuple
 
 from codemie.configs import logger
@@ -167,11 +168,7 @@ class SkillEventService:
         try:
             self._mirror_to_metrics(persisted)
         except Exception as exc:  # noqa: BLE001 — mirror is best-effort
-            logger.warning(
-                "[skill_events] mirror to legacy metrics failed (id=%s): %s",
-                persisted.id,
-                exc,
-            )
+            logger.warning(f"[skill_events] mirror to legacy metrics failed (id={persisted.id!r}): {exc}")
 
         return persisted
 
@@ -206,6 +203,59 @@ class SkillEventService:
         # the codebase already treat missing keys as "unknown".
         attrs = {k: v for k, v in attrs.items() if v is not None}
         send_log_metric(SKILL_COMMAND_METRIC, attrs)
+
+    def get_event_log(
+        self,
+        *,
+        user: User,
+        from_dt: datetime | None = None,
+        to_dt: datetime | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[SkillEvent], int]:
+        """Return paginated raw install/remove events visible to *user*.
+
+        Admins receive events for all users; regular users see only their own.
+        """
+        resolved_user_id: str | None = None if user.is_admin else user.id
+        return self._repository.get_events(
+            user_id=resolved_user_id,
+            from_dt=from_dt,
+            to_dt=to_dt,
+            limit=limit,
+            offset=offset,
+        )
+
+    def get_all_skills_stats(
+        self,
+        *,
+        user: User,
+        from_dt: datetime | None = None,
+        to_dt: datetime | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        """Return paginated per-skill aggregated install/remove stats visible to *user*.
+
+        Admins receive stats across all users (``user_id=None``); regular users
+        see only their own events aggregated.
+        """
+        resolved_user_id: str | None = None if user.is_admin else user.id
+        return self._repository.get_all_skills_aggregated_stats(
+            user_id=resolved_user_id,
+            from_dt=from_dt,
+            to_dt=to_dt,
+            limit=limit,
+            offset=offset,
+        )
+
+    def get_skill_stats(self, *, skill_slug: str) -> dict | None:
+        """Return aggregated install/removal stats for *skill_slug*.
+
+        Delegates directly to the repository. Returns ``None`` when no
+        matching rows exist — the caller is expected to raise a 404.
+        """
+        return self._repository.get_skill_aggregated_stats(skill_slug=skill_slug)
 
 
 # Module-level singleton mirrors `skill_user_interaction_service` style.

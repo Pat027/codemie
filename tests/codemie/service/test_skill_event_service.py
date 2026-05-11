@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import patch
 
 import pytest
@@ -25,13 +26,19 @@ from codemie.service.skill_event_service import (
     SKILL_COMMAND_METRIC,
     SkillEventService,
     derive_skill_identity,
-    to_skill_slug,
+    to_skill_slug,  # noqa: F401  (used in test below)
 )
 
 
 class FakeSkillEventRepository:
     def __init__(self) -> None:
         self.inserted: SkillEvent | None = None
+        self.get_events_calls: list[dict] = []
+        self.get_all_skills_stats_calls: list[dict] = []
+        self.get_skill_aggregated_stats_calls: list[str] = []
+        self._events_result: tuple[list[SkillEvent], int] = ([], 0)
+        self._all_skills_stats_result: tuple[list[dict], int] = ([], 0)
+        self._stats_result: dict | None = None
 
     def insert(self, event: SkillEvent) -> SkillEvent:
         self.inserted = event
@@ -41,6 +48,38 @@ class FakeSkillEventRepository:
     def find_by_id(self, event_id: str) -> SkillEvent | None:
         return self.inserted if self.inserted and self.inserted.id == event_id else None
 
+    def get_events(
+        self,
+        *,
+        user_id: str | None,
+        from_dt: datetime | None,
+        to_dt: datetime | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[SkillEvent], int]:
+        self.get_events_calls.append(
+            {"user_id": user_id, "from_dt": from_dt, "to_dt": to_dt, "limit": limit, "offset": offset}
+        )
+        return self._events_result
+
+    def get_all_skills_aggregated_stats(
+        self,
+        *,
+        user_id: str | None,
+        from_dt: datetime | None,
+        to_dt: datetime | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[dict], int]:
+        self.get_all_skills_stats_calls.append(
+            {"user_id": user_id, "from_dt": from_dt, "to_dt": to_dt, "limit": limit, "offset": offset}
+        )
+        return self._all_skills_stats_result
+
+    def get_skill_aggregated_stats(self, *, skill_slug: str) -> dict | None:
+        self.get_skill_aggregated_stats_calls.append(skill_slug)
+        return self._stats_result
+
 
 def _user(email: str = "user@example.com") -> User:
     return User(id="user-1", username="user", email=email)
@@ -48,6 +87,10 @@ def _user(email: str = "user@example.com") -> User:
 
 def test_to_skill_slug_matches_cli_normalization_rules() -> None:
     assert to_skill_slug("  Team_SKILL: v2!!  ") == "team-skill-v2"
+
+
+def test_to_skill_slug_empty_string_returns_empty() -> None:
+    assert to_skill_slug("") == ""
 
 
 @pytest.mark.parametrize(
@@ -178,3 +221,70 @@ def test_record_returns_persisted_event_when_metric_mirror_fails() -> None:
     assert event.user_email is None
     assert event.skill_slug == "missing-skill"
     assert event.skill_id == "missing-skill"
+
+
+def test_get_event_log_admin_passes_none_user_id_to_repository() -> None:
+    repository = FakeSkillEventRepository()
+    service = SkillEventService(repository=repository)
+    admin = User.model_construct(id="admin-1", username="admin", email="admin@example.com", is_admin=True)
+
+    service.get_event_log(user=admin)
+
+    assert len(repository.get_events_calls) == 1
+    assert repository.get_events_calls[0]["user_id"] is None
+
+
+def test_get_event_log_regular_user_passes_own_user_id_to_repository() -> None:
+    repository = FakeSkillEventRepository()
+    service = SkillEventService(repository=repository)
+    user = User.model_construct(id="user-1", username="user", email="user@example.com", is_admin=False)
+
+    service.get_event_log(user=user)
+
+    assert len(repository.get_events_calls) == 1
+    assert repository.get_events_calls[0]["user_id"] == "user-1"
+
+
+def test_get_all_skills_stats_admin_passes_none_user_id_to_repository() -> None:
+    repository = FakeSkillEventRepository()
+    service = SkillEventService(repository=repository)
+    admin = User.model_construct(id="admin-1", username="admin", email="admin@example.com", is_admin=True)
+
+    service.get_all_skills_stats(user=admin)
+
+    assert len(repository.get_all_skills_stats_calls) == 1
+    assert repository.get_all_skills_stats_calls[0]["user_id"] is None
+
+
+def test_get_all_skills_stats_regular_user_passes_own_user_id_to_repository() -> None:
+    repository = FakeSkillEventRepository()
+    service = SkillEventService(repository=repository)
+    user = User.model_construct(id="user-1", username="user", email="user@example.com", is_admin=False)
+
+    service.get_all_skills_stats(user=user)
+
+    assert len(repository.get_all_skills_stats_calls) == 1
+    assert repository.get_all_skills_stats_calls[0]["user_id"] == "user-1"
+
+
+def test_get_skill_stats_returns_none_when_repository_returns_none() -> None:
+    repository = FakeSkillEventRepository()
+    repository._stats_result = None
+    service = SkillEventService(repository=repository)
+
+    result = service.get_skill_stats(skill_slug="my-skill")
+
+    assert result is None
+    assert repository.get_skill_aggregated_stats_calls == ["my-skill"]
+
+
+def test_get_skill_stats_returns_dict_when_repository_returns_one() -> None:
+    expected = {"installs": 5, "removals": 2, "by_agent": {"codex": 3, "claude": 2}}
+    repository = FakeSkillEventRepository()
+    repository._stats_result = expected
+    service = SkillEventService(repository=repository)
+
+    result = service.get_skill_stats(skill_slug="my-skill")
+
+    assert result == expected
+    assert repository.get_skill_aggregated_stats_calls == ["my-skill"]
