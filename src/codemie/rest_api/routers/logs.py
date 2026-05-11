@@ -14,12 +14,11 @@
 
 from fastapi import APIRouter, Depends, status
 from codemie.rest_api.models.logs import LogEntry, LogRetrieveRequest
-from codemie.rest_api.security.authentication import authenticate
-from codemie.rest_api.security.user import User
+from codemie.rest_api.security.authentication import authenticate, admin_access_only
 from codemie.service.logs import LogService
 from codemie.core.exceptions import ExtendedHTTPException
 
-router = APIRouter(tags=["Logs"], prefix="/v1", dependencies=[Depends(authenticate)])
+router = APIRouter(tags=["Logs"], prefix="/v1", dependencies=[Depends(authenticate), Depends(admin_access_only)])
 
 
 @router.post(
@@ -28,7 +27,7 @@ router = APIRouter(tags=["Logs"], prefix="/v1", dependencies=[Depends(authentica
     response_model=list[LogEntry],
     response_model_by_alias=True,
 )
-def get_logs_by_target_field(target_field: LogRetrieveRequest, user: User = Depends(authenticate)):
+def get_logs_by_target_field(target_field: LogRetrieveRequest):
     """
     Retrieve log entries by field and value from the Elasticsearch index.
 
