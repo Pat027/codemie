@@ -548,3 +548,46 @@ async def test_get_allocations_resetting_within_window_uses_window_bounds():
     assert "budgets" in sql_text
     assert "budget_reset_at" in sql_text
     assert params == {"window_start": window_start, "window_end": window_end}
+
+
+class TestProjectMemberBudgetAssignmentRepositoryGetActiveByUser:
+    """Tests for ProjectMemberBudgetAssignmentRepository.get_active_by_user."""
+
+    @pytest.mark.asyncio
+    async def test_returns_active_assignments_for_user(self):
+        repo = ProjectMemberBudgetAssignmentRepository()
+        session = AsyncMock()
+        mock_row = MagicMock()
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.all.return_value = [mock_row]
+        session.execute = AsyncMock(return_value=result_mock)
+
+        result = await repo.get_active_by_user(session, "user-1")
+
+        assert result == [mock_row]
+        session.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_list_when_no_assignments(self):
+        repo = ProjectMemberBudgetAssignmentRepository()
+        session = AsyncMock()
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.all.return_value = []
+        session.execute = AsyncMock(return_value=result_mock)
+
+        result = await repo.get_active_by_user(session, "user-with-no-allocations")
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_returns_multiple_assignments_across_projects(self):
+        repo = ProjectMemberBudgetAssignmentRepository()
+        session = AsyncMock()
+        rows = [MagicMock(), MagicMock(), MagicMock()]
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.all.return_value = rows
+        session.execute = AsyncMock(return_value=result_mock)
+
+        result = await repo.get_active_by_user(session, "user-with-many-projects")
+
+        assert len(result) == 3

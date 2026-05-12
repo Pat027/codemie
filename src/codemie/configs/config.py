@@ -639,6 +639,7 @@ class Config(BaseSettings):
         "10 0 * * *"  # Cron schedule (UTC) for reset reconciliation — daily at 12:10 AM
     )
     LITELLM_BUDGET_RESET_RECONCILIATION_WINDOW_MINUTES: int = 10  # Allowed midnight UTC execution window
+    BUDGET_USAGE_STALENESS_THRESHOLD_MS: int = 600000  # 10 minutes — lazy-refresh threshold for /budget_usage
 
     model_config = SettingsConfigDict(env_file=find_dotenv(".env", raise_error_if_not_found=False), extra="ignore")
 

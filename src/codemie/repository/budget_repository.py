@@ -187,6 +187,13 @@ class BudgetRepository:
         await session.refresh(budget)
         return budget
 
+    async def get_by_ids(self, session: AsyncSession, budget_ids: list[str]) -> dict[str, Budget]:
+        """SELECT rows matching budget_ids, return dict keyed by budget_id."""
+        if not budget_ids:
+            return {}
+        result = await session.execute(select(Budget).where(Budget.budget_id.in_(budget_ids)))
+        return {b.budget_id: b for b in result.scalars().all()}
+
     async def upsert_from_provider(
         self,
         session: AsyncSession,

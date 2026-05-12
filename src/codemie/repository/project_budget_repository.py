@@ -740,6 +740,29 @@ class ProjectMemberBudgetAssignmentRepository:
         await session.refresh(row)
         return row
 
+    async def get_active_by_user(
+        self,
+        session: AsyncSession,
+        user_id: str,
+    ) -> list[ProjectMemberBudgetAssignment]:
+        """Return all active member budget allocations for a user across all projects.
+
+        Used by the /budget_usage endpoint to build the per-project allocation rows.
+
+        Args:
+            session: Async database session
+            user_id: User whose active allocations to retrieve
+
+        Returns:
+            List of active ProjectMemberBudgetAssignment rows (deleted_at IS NULL).
+        """
+        stmt = select(ProjectMemberBudgetAssignment).where(
+            ProjectMemberBudgetAssignment.user_id == user_id,
+            ProjectMemberBudgetAssignment.deleted_at.is_(None),
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
     async def soft_delete_missing_members(
         self,
         session: AsyncSession,
