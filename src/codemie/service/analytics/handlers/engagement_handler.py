@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 
 from codemie.repository.metrics_elastic_repository import MetricsElasticRepository
 from codemie.rest_api.security.user import User
+from codemie.service.analytics.handlers.field_constants import PLACEHOLDER_USER_IDS
 from codemie.service.analytics.metric_names import MetricName
 from codemie.service.analytics.query_pipeline import AnalyticsQueryPipeline
 from codemie.service.analytics.response_formatter import ResponseFormatter
@@ -93,7 +94,12 @@ class EngagementHandler:
     def _build_dau_aggregation(self, query: dict) -> dict:
         """Build cardinality aggregation for DAU — distinct users over the query window."""
         return {
-            "query": query,
+            "query": {
+                "bool": {
+                    "must": [query],
+                    "must_not": [{"terms": {USER_ID_KEYWORD_FIELD: PLACEHOLDER_USER_IDS}}],
+                }
+            },
             "size": 0,
             "aggs": {
                 "unique_users": {
@@ -159,7 +165,12 @@ class EngagementHandler:
     def _build_mau_aggregation(self, query: dict) -> dict:
         """Build cardinality aggregation for MAU — distinct users over last 30 days."""
         return {
-            "query": query,
+            "query": {
+                "bool": {
+                    "must": [query],
+                    "must_not": [{"terms": {USER_ID_KEYWORD_FIELD: PLACEHOLDER_USER_IDS}}],
+                }
+            },
             "size": 0,
             "aggs": {
                 "unique_users": {

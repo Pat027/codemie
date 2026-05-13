@@ -21,3 +21,20 @@ METRIC_NAME_KEYWORD_FIELD = "metric_name.keyword"
 USER_NAME_KEYWORD_FIELD = "attributes.user_name.keyword"
 USER_EMAIL_KEYWORD_FIELD = "attributes.user_email.keyword"
 PROJECT_KEYWORD_FIELD = "attributes.project.keyword"
+
+# Placeholder user IDs that carry no real user context and always have zero spending.
+# "unknown"  — emitted by webhook binding when webhook_id is not found (no auth context).
+# SYSTEM_USER UUID — emitted by background datasource indexing and platform budget checks.
+# Verified via ES query 2026-05-11: money_spent = 0 on all 60 203 affected documents.
+PLACEHOLDER_USER_IDS: list[str] = [
+    "unknown",
+    "00000000-0000-0000-0000-000000000000",
+]
+
+# Placeholder user emails/usernames that correspond to system or unresolved actors.
+# "system"  — SYSTEM_USER username used for background datasource indexing and budget checks.
+# "unknown" — webhook binding fallback when no user context is available.
+PLACEHOLDER_USER_EMAILS: list[str] = [
+    "system",
+    "unknown",
+]

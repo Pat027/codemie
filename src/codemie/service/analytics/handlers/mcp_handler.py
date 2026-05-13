@@ -22,6 +22,7 @@ from datetime import datetime
 from codemie.repository.metrics_elastic_repository import MetricsElasticRepository
 from codemie.rest_api.security.user import User
 from codemie.service.analytics.handlers.field_constants import METRIC_NAME_KEYWORD_FIELD, USER_NAME_KEYWORD_FIELD
+from codemie.service.analytics.handlers.user_identity_resolver import UserIdentityResolver
 from codemie.service.analytics.metric_names import MetricName
 from codemie.service.analytics.query_pipeline import AnalyticsQueryPipeline
 
@@ -154,7 +155,7 @@ class MCPHandler:
         logger.info("Requesting mcp-servers-by-users analytics")
 
         # Use specialized method for nested/flattened aggregations to ensure accurate row-level pagination
-        return await self._pipeline.execute_tabular_query_with_flattened_rows(
+        result = await self._pipeline.execute_tabular_query_with_flattened_rows(
             agg_builder=lambda query, fetch_size: self._build_mcp_servers_by_users_aggregation(query, fetch_size),
             result_parser=self._parse_mcp_servers_by_users_result,
             columns=self._get_mcp_servers_by_users_columns(),
@@ -172,6 +173,8 @@ class MCPHandler:
             page=page,
             per_page=per_page,
         )
+        await UserIdentityResolver.resolve_rows(result.get("data", {}).get("rows", []), "user_name", target="name")
+        return result
 
     def _build_mcp_servers_by_users_aggregation(self, query: dict, fetch_size: int) -> dict:
         """Build nested terms aggregation for users and MCP servers with fetch-and-slice."""

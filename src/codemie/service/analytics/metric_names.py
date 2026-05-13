@@ -164,3 +164,11 @@ MetricName.SPENDING_METRICS = [
     MetricName.WORKFLOW_EXECUTION_TOTAL,
     MetricName.DATASOURCE_TOKENS_USAGE,
 ]
+
+# CLI-only metrics - used to scope user/project aggregations to CLI documents only,
+# preventing non-CLI metric documents (webhook, datasource, budget) from polluting results.
+MetricName.CLI_METRICS = [
+    MetricName.CLI_SESSION_TOTAL,
+    MetricName.CLI_TOOL_USAGE_TOTAL,
+    MetricName.CLI_LLM_USAGE_TOTAL,
+]

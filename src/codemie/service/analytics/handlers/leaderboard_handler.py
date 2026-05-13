@@ -33,6 +33,7 @@ from codemie.configs import logger
 from codemie.repository.leaderboard_repository import leaderboard_repository
 from codemie.rest_api.models.leaderboard import LeaderboardEntry, LeaderboardSnapshot
 from codemie.rest_api.security.user import User
+from codemie.service.analytics.handlers.user_identity_resolver import UserIdentityResolver
 from codemie.service.leaderboard.config import (
     DIMENSIONS,
     SNAPSHOT_TYPE_ROLLING,
@@ -287,6 +288,7 @@ class LeaderboardHandler:
 
             rows = [self._entry_to_row(e, comparison_map.get(e.user_id)) for e in entries]
 
+        await UserIdentityResolver.resolve_rows(rows, target_map={"user_name": "name", "user_email": "email"})
         elapsed = (monotonic() - start) * 1000
         return {
             "data": {"columns": columns, "rows": rows},
@@ -527,6 +529,7 @@ class LeaderboardHandler:
                 for e in entries
             ]
 
+        await UserIdentityResolver.resolve_rows(rows, "user_name", target="name")
         elapsed = (monotonic() - start) * 1000
         return {
             "data": {"columns": columns, "rows": rows},

@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from codemie.clients.postgres import PostgresClient
 from codemie.rest_api.security.user import User
+from codemie.service.analytics.handlers.user_identity_resolver import UserIdentityResolver
 from codemie.service.analytics.queries.ai_adoption_framework.config import AIAdoptionConfig
 
 logger = logging.getLogger(__name__)
@@ -540,6 +541,8 @@ class AIAdoptionHandler:
                         "engagement_score": float(row.engagement_score) if row.engagement_score else 0.0,
                     }
                 )
+
+        await UserIdentityResolver.resolve_rows(rows, "user_name", target="name")
 
         # Build response with column definitions
         columns = self._get_user_engagement_users_columns()

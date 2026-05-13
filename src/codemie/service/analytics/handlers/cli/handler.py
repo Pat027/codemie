@@ -28,6 +28,7 @@ from codemie.service.analytics.handlers.field_constants import (
     USER_EMAIL_KEYWORD_FIELD,
 )
 from codemie.service.analytics.handlers.llm_handler import _combine_model_names
+from codemie.service.analytics.handlers.user_identity_resolver import UserIdentityResolver
 from codemie.service.analytics.metric_names import MetricName
 from codemie.service.analytics.time_parser import TimeParser
 
@@ -535,7 +536,7 @@ class CLIHandler(CLIBaseHandler):
         """Get CLI users activity analytics."""
         logger.info("Requesting cli-users analytics")
 
-        return await self._pipeline.execute_tabular_query(
+        result = await self._pipeline.execute_tabular_query(
             agg_builder=lambda query, fetch_size: self._build_cli_users_aggregation(query, fetch_size),
             result_parser=self._parse_cli_users_result,
             columns=self._get_cli_users_columns(),
@@ -549,6 +550,8 @@ class CLIHandler(CLIBaseHandler):
             page=page,
             per_page=per_page,
         )
+        await UserIdentityResolver.resolve_rows(result.get("data", {}).get("rows", []), "user_name", target="name")
+        return result
 
     def _build_cli_users_aggregation(self, query: dict, fetch_size: int) -> dict:
         """Build terms aggregation for CLI users activity with top_metrics for last project/repo."""
@@ -729,7 +732,7 @@ class CLIHandler(CLIBaseHandler):
         logger.info("Requesting cli-repositories analytics")
 
         # Use specialized method for nested/flattened aggregations to ensure accurate row-level pagination
-        return await self._pipeline.execute_tabular_query_with_flattened_rows(
+        result = await self._pipeline.execute_tabular_query_with_flattened_rows(
             agg_builder=lambda query, fetch_size: self._build_cli_repositories_aggregation(query, fetch_size),
             result_parser=self._parse_cli_repositories_result,
             columns=self._get_cli_repositories_columns(),
@@ -751,6 +754,8 @@ class CLIHandler(CLIBaseHandler):
             page=page,
             per_page=per_page,
         )
+        await UserIdentityResolver.resolve_rows(result.get("data", {}).get("rows", []), "user_name", target="name")
+        return result
 
     def _build_cli_repositories_aggregation(self, query: dict, fetch_size: int) -> dict:
         """Build 3-level nested terms aggregation (repo→branch→user) with 6 metrics per user.
@@ -907,7 +912,7 @@ class CLIHandler(CLIBaseHandler):
         """Get top CLI performers ranked by total lines added."""
         logger.info("Requesting cli-top-performers analytics")
 
-        return await self._pipeline.execute_tabular_query(
+        result = await self._pipeline.execute_tabular_query(
             agg_builder=lambda query, fetch_size: self._build_cli_top_performers_aggregation(query, fetch_size),
             result_parser=self._parse_cli_top_performers_result,
             columns=self._get_cli_top_performers_columns(),
@@ -921,6 +926,8 @@ class CLIHandler(CLIBaseHandler):
             page=page,
             per_page=per_page,
         )
+        await UserIdentityResolver.resolve_rows(result.get("data", {}).get("rows", []), "user_name", target="name")
+        return result
 
     def _build_cli_top_performers_aggregation(self, query: dict, fetch_size: int) -> dict:
         """Build terms aggregation for top performers with total lines added."""

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, UTC
 from typing import Optional
 
@@ -29,6 +30,14 @@ from codemie.rest_api.models.user_management import (
     UserKnowledgeBase,
 )
 from codemie.service.spend_tracking.spend_models import ProjectSpendTracking
+
+
+@dataclass(frozen=True)
+class _UserFields:
+    id: str
+    email: str
+    username: str
+    name: str | None
 
 
 class UserRepository:
@@ -441,30 +450,45 @@ class UserRepository:
     # Async methods (AsyncSession)
     # ===========================================
 
-    async def afind_emails_by_identifiers(self, session: AsyncSession, identifiers: set[str]) -> dict[str, str]:
-        """Bulk-lookup email addresses for a set of raw user identifiers (UUIDs, usernames, display names).
+    async def afind_users_by_identifiers(
+        self, session: AsyncSession, identifiers: set[str]
+    ) -> dict[str, "_UserFields"]:
+        """Bulk-lookup full user records for a set of raw identifiers (UUIDs, usernames, display names).
 
-        Returns a mapping from each input identifier to the corresponding email address.
+        Returns a mapping from each input identifier to a _UserFields record.
         Identifiers that cannot be resolved are omitted from the result.
         """
         uuids = {v for v in identifiers if self._is_uuid(v)}
         names = identifiers - uuids
-        mapping: dict[str, str] = {}
+        mapping: dict[str, _UserFields] = {}
 
         if uuids:
-            rows = await session.execute(select(UserDB.id, UserDB.email).where(UserDB.id.in_(uuids)))
-            mapping.update({r.id: r.email for r in rows})
-        if names:
             rows = await session.execute(
-                select(UserDB.username, UserDB.name, UserDB.email).where(
-                    or_(UserDB.username.in_(names), UserDB.name.in_(names))
+                select(UserDB.id, UserDB.email, UserDB.username, UserDB.name).where(UserDB.id.in_(uuids))
+            )
+            for r in rows:
+                rec = _UserFields(id=r.id, email=r.email, username=r.username, name=r.name)
+                mapping[r.id] = rec
+        if names:
+            lower_names = {n.lower() for n in names}
+            rows = await session.execute(
+                select(UserDB.id, UserDB.email, UserDB.username, UserDB.name).where(
+                    or_(
+                        UserDB.username.in_(names),
+                        UserDB.name.in_(names),
+                        func.lower(UserDB.email).in_(lower_names),
+                    )
                 )
             )
             for r in rows:
+                rec = _UserFields(id=r.id, email=r.email, username=r.username, name=r.name)
                 if r.username in names:
-                    mapping[r.username] = r.email
-                if r.name and r.name in names:
-                    mapping[r.name] = r.email
+                    mapping[r.username] = rec
+                if r.name in names:
+                    mapping[r.name] = rec
+                matched_email = next((n for n in names if n.lower() == r.email.lower()), None)
+                if matched_email:
+                    mapping[matched_email] = rec
 
         return mapping
 

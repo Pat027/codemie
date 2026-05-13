@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -56,20 +56,23 @@ class TestGetUsersSpending:
     """Tests for get_users_spending method."""
 
     def test_get_users_spending_aggregates_by_user_email(self, handler):
-        """Verify users are grouped by email."""
+        """Verify users are grouped by user_id and placeholder users are filtered out."""
         # Arrange
         query = {"bool": {"filter": []}}
 
         # Act
         agg_body = handler._build_users_spending_aggregation(query, fetch_size=20)
 
-        # Assert
-        assert agg_body["query"] == query
+        # Assert — query is wrapped with placeholder filter
+        assert agg_body["query"]["bool"]["must"] == [query]
+        assert agg_body["query"]["bool"]["must_not"] == [
+            {"terms": {"attributes.user_id.keyword": ["unknown", "00000000-0000-0000-0000-000000000000"]}}
+        ]
         assert agg_body["size"] == 0
 
         # Verify paginated_results structure
         users_agg = agg_body["aggs"]["paginated_results"]
-        assert users_agg["terms"]["field"] == "attributes.user_email.keyword"
+        assert users_agg["terms"]["field"] == "attributes.user_id.keyword"
         assert users_agg["terms"]["size"] == 20
         # Verify ordered by total_cost descending
         assert users_agg["terms"]["order"] == {"total_cost": "desc"}
@@ -129,8 +132,8 @@ class TestGetUsersSpending:
         assert len(rows) == 1
         assert rows[0]["total_cost_usd"] == 0
 
-    def test_parse_users_spending_result_maps_empty_emails_to_unknown(self, handler):
-        """Verify empty user emails are mapped to 'unknown' in results."""
+    def test_parse_users_spending_result_skips_empty_keys(self, handler):
+        """Verify empty user keys are skipped (not mapped to 'unknown')."""
         # Arrange
         result = {
             "aggregations": {
@@ -157,14 +160,12 @@ class TestGetUsersSpending:
         # Act
         rows = handler._parse_users_spending_result(result, cli_costs_by_user={})
 
-        # Assert
-        assert len(rows) == 3
+        # Assert — empty key bucket is skipped entirely
+        assert len(rows) == 2
         assert rows[0]["user_email"] == "user1@example.com"
         assert rows[0]["total_cost_usd"] == 10.50
-        assert rows[1]["user_email"] == "unknown"
-        assert rows[1]["total_cost_usd"] == 0.01
-        assert rows[2]["user_email"] == "user2@example.com"
-        assert rows[2]["total_cost_usd"] == 5.25
+        assert rows[1]["user_email"] == "user2@example.com"
+        assert rows[1]["total_cost_usd"] == 5.25
 
 
 class TestGetUsersActivity:
@@ -284,8 +285,11 @@ class TestGetUsersActivity:
         # Act
         agg_body = handler._build_users_activity_aggregation(query, fetch_size=20)
 
-        # Assert
-        assert agg_body["query"] == query
+        # Assert — query is wrapped with placeholder filter
+        assert agg_body["query"]["bool"]["must"] == [query]
+        assert agg_body["query"]["bool"]["must_not"] == [
+            {"terms": {"attributes.user_email.keyword": ["system", "unknown"]}}
+        ]
         assert agg_body["size"] == 0
 
         # Verify paginated_results structure
@@ -467,8 +471,15 @@ class TestGetUsersList:
         mock_repository.execute_aggregation_query.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_get_users_list_non_admin_returns_correct_response_shape(self, handler, mock_repository, mock_user):
+    @patch(
+        "codemie.service.analytics.handlers.user_identity_resolver.UserIdentityResolver.resolve_and_merge",
+        new_callable=AsyncMock,
+    )
+    async def test_get_users_list_non_admin_returns_correct_response_shape(
+        self, mock_resolve_and_merge, handler, mock_repository, mock_user
+    ):
         """Non-admin get_users_list uses single-page query and returns correct response shape."""
+        mock_resolve_and_merge.side_effect = lambda users: users
         mock_user.is_admin_or_maintainer = False
         mock_repository.execute_aggregation_query = AsyncMock(return_value=_make_es_page(["alice", "bob"]))
 
@@ -482,8 +493,15 @@ class TestGetUsersList:
         mock_repository.execute_aggregation_query.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_get_users_list_superadmin_uses_after_key_pagination(self, handler, mock_repository, mock_user):
+    @patch(
+        "codemie.service.analytics.handlers.user_identity_resolver.UserIdentityResolver.resolve_and_merge",
+        new_callable=AsyncMock,
+    )
+    async def test_get_users_list_superadmin_uses_after_key_pagination(
+        self, mock_resolve_and_merge, handler, mock_repository, mock_user
+    ):
         """Superadmin get_users_list uses after_key pagination to fetch beyond 10,000 users."""
+        mock_resolve_and_merge.side_effect = lambda users: users
         mock_user.is_admin_or_maintainer = True
         page1_ids = [f"u{i}" for i in range(10000)]
         page2_ids = ["u10000", "u10001"]
@@ -501,8 +519,15 @@ class TestGetUsersList:
         assert mock_repository.execute_aggregation_query.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_get_users_list_non_admin_uses_single_query(self, handler, mock_repository, mock_user):
+    @patch(
+        "codemie.service.analytics.handlers.user_identity_resolver.UserIdentityResolver.resolve_and_merge",
+        new_callable=AsyncMock,
+    )
+    async def test_get_users_list_non_admin_uses_single_query(
+        self, mock_resolve_and_merge, handler, mock_repository, mock_user
+    ):
         """Non-admin get_users_list executes exactly one ES query (no pagination loop)."""
+        mock_resolve_and_merge.side_effect = lambda users: users
         mock_user.is_admin_or_maintainer = False
         mock_repository.execute_aggregation_query = AsyncMock(
             return_value=_make_es_page([f"u{i}" for i in range(10000)])

@@ -163,7 +163,9 @@ class CLIInsightsHandler(CLIBaseHandler):
     ) -> dict:
         """Get aggregated user classification metrics for CLI insights."""
         start_dt, end_dt = TimeParser.parse(time_period, start_date, end_date)
-        query = self._pipeline._build_query(start_dt, end_dt, users, projects, None)
+        query = self._pipeline._build_query(
+            start_dt, end_dt, users, projects, MetricName.to_list_from_group(MetricName.CLI_METRICS)
+        )
         result = await self.repository.execute_aggregation_query(
             self._build_cli_insights_classification_aggregation(query)
         )
@@ -214,13 +216,17 @@ class CLIInsightsHandler(CLIBaseHandler):
     ) -> dict:
         """Get top CLI users ranked by cost."""
         start_dt, end_dt = TimeParser.parse(time_period, start_date, end_date)
-        query = self._pipeline._build_query(start_dt, end_dt, users, projects, None)
+        query = self._pipeline._build_query(
+            start_dt, end_dt, users, projects, MetricName.to_list_from_group(MetricName.CLI_METRICS)
+        )
         result = await self.repository.execute_aggregation_query(self._build_cli_insights_top_users_aggregation(query))
         rows = []
         for b in result.get("aggregations", {}).get("users", {}).get("buckets", []):
             user_id = b["key"]
-            user_name = self._extract_top_metric(b, "user_name", USER_NAME_KEYWORD_FIELD) or user_id
-            user_email = self._extract_top_metric(b, "user_email", USER_EMAIL_KEYWORD_FIELD) or user_name
+            raw_user_name = self._extract_top_metric(b, "user_name", USER_NAME_KEYWORD_FIELD)
+            raw_user_email = self._extract_top_metric(b, "user_email", USER_EMAIL_KEYWORD_FIELD)
+            user_name = raw_user_email or raw_user_name or user_id
+            user_email = raw_user_email or user_name
             total_cost = round(b.get("cost_bucket", {}).get("total_cost", {}).get("value", 0) or 0, 2)
             repositories = [r["key"] for r in b.get("repositories", {}).get("buckets", {}).get("buckets", [])]
             branches = [r["key"] for r in b.get("branches", {}).get("buckets", {}).get("buckets", [])]
@@ -241,6 +247,7 @@ class CLIInsightsHandler(CLIBaseHandler):
                 }
             )
         rows.sort(key=lambda row: row["total_cost"], reverse=True)
+        await UserIdentityResolver.resolve_rows(rows, target_map={"user_name": "name", "user_email": "email"})
         return self._format_custom_tabular_response(
             rows=rows,
             columns=self._get_cli_insights_top_users_by_cost_columns(),
@@ -501,7 +508,9 @@ class CLIInsightsHandler(CLIBaseHandler):
             return None
 
         start_dt, end_dt = TimeParser.parse(time_period, start_date, end_date)
-        query = self._pipeline._build_query(start_dt, end_dt, users, projects, None)
+        query = self._pipeline._build_query(
+            start_dt, end_dt, users, projects, MetricName.to_list_from_group(MetricName.CLI_METRICS)
+        )
         result = await self.repository.execute_aggregation_query(self._build_cli_insights_identity_aggregation(query))
         for b in result.get("aggregations", {}).get("users", {}).get("buckets", []):
             user_id = b["key"]
@@ -684,7 +693,9 @@ class CLIInsightsHandler(CLIBaseHandler):
     ) -> list[dict]:
         """Build user-level CLI insight rows used by multiple widgets."""
         start_dt, end_dt = TimeParser.parse(time_period, start_date, end_date)
-        query = self._pipeline._build_query(start_dt, end_dt, users, projects, None)
+        query = self._pipeline._build_query(
+            start_dt, end_dt, users, projects, MetricName.to_list_from_group(MetricName.CLI_METRICS)
+        )
         result = await self.repository.execute_aggregation_query(self._build_cli_insights_user_aggregation(query))
         rows = []
         for bucket in result.get("aggregations", {}).get("users", {}).get("buckets", []):
@@ -723,7 +734,7 @@ class CLIInsightsHandler(CLIBaseHandler):
                     "total_cost": total_cost,
                 }
             )
-        await UserIdentityResolver.resolve_rows(rows, "user_name", "user_email")
+        await UserIdentityResolver.resolve_rows(rows, target_map={"user_name": "name", "user_email": "email"})
         return rows
 
     async def _get_cli_insights_project_rows(
@@ -736,7 +747,9 @@ class CLIInsightsHandler(CLIBaseHandler):
     ) -> list[dict]:
         """Build project-level CLI insight rows used by multiple widgets."""
         start_dt, end_dt = TimeParser.parse(time_period, start_date, end_date)
-        query = self._pipeline._build_query(start_dt, end_dt, users, projects, None)
+        query = self._pipeline._build_query(
+            start_dt, end_dt, users, projects, MetricName.to_list_from_group(MetricName.CLI_METRICS)
+        )
         result = await self.repository.execute_aggregation_query(self._build_cli_insights_project_aggregation(query))
         rows = []
         for bucket in result.get("aggregations", {}).get("projects", {}).get("buckets", []):
@@ -1006,7 +1019,9 @@ class CLIInsightsHandler(CLIBaseHandler):
         entity_id: str | None = None,
     ) -> dict:
         """Build base query scoped to one CLI user by name or email."""
-        query = self._pipeline._build_query(start_dt, end_dt, users, projects, None)
+        query = self._pipeline._build_query(
+            start_dt, end_dt, users, projects, MetricName.to_list_from_group(MetricName.CLI_METRICS)
+        )
         should_filters = [
             {"term": {USER_NAME_KEYWORD_FIELD: entity_name}},
             {"term": {USER_EMAIL_KEYWORD_FIELD: entity_name}},
@@ -1648,7 +1663,9 @@ class CLIInsightsHandler(CLIBaseHandler):
            enrichment record land in the "No HR Data" bucket.
         """
         start_dt, end_dt = TimeParser.parse(time_period, start_date, end_date)
-        query = self._pipeline._build_query(start_dt, end_dt, users, projects, None)
+        query = self._pipeline._build_query(
+            start_dt, end_dt, users, projects, MetricName.to_list_from_group(MetricName.CLI_METRICS)
+        )
         result = await self.repository.execute_aggregation_query(self._build_cli_insights_enrichment_aggregation(query))
         user_rows = [
             {

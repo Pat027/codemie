@@ -974,11 +974,21 @@ class TestGetUserEngagementUsers:
     """Tests for get_user_engagement_users drill-down method."""
 
     @pytest.mark.asyncio
+    @patch(
+        "codemie.service.analytics.handlers.user_identity_resolver.UserIdentityResolver.resolve_rows",
+        new_callable=AsyncMock,
+    )
     @patch("codemie.service.analytics.handlers.ai_adoption_handler.PostgresClient")
     @patch("codemie.service.analytics.handlers.ai_adoption_handler.AsyncSession")
     @patch("codemie.service.analytics.queries.ai_adoption_framework.query_builder")
     async def test_user_engagement_users_returns_tabular_response(
-        self, mock_query_builder, mock_session_class, mock_postgres_client, handler_admin, mock_config
+        self,
+        mock_query_builder,
+        mock_session_class,
+        mock_postgres_client,
+        mock_resolve_rows,
+        handler_admin,
+        mock_config,
     ):
         """Verify user engagement users returns tabular response with user data."""
         # Arrange

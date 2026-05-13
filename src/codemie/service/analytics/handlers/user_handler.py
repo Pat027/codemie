@@ -24,6 +24,8 @@ from codemie.repository.metrics_elastic_repository import MetricsElasticReposito
 from codemie.rest_api.security.user import User
 from codemie.service.analytics.handlers.field_constants import (
     METRIC_NAME_KEYWORD_FIELD,
+    PLACEHOLDER_USER_EMAILS,
+    PLACEHOLDER_USER_IDS,
     PROJECT_KEYWORD_FIELD,
     USER_NAME_KEYWORD_FIELD,
 )
@@ -44,7 +46,6 @@ INPUT_TOKENS_FIELD = "attributes.input_tokens"
 OUTPUT_TOKENS_FIELD = "attributes.output_tokens"
 CLI_REQUEST_FIELD = "attributes.cli_request"
 USER_EMAIL_LABEL = "User Email"
-UNKNOWN_USER = "unknown"
 
 
 class UserHandler(CLICostAdjustmentMixin):
@@ -94,11 +95,12 @@ class UserHandler(CLICostAdjustmentMixin):
             metadata = ResponseFormatter.create_metadata(filters_applied, execution_time_ms)
 
             users_list = [{"id": b["key"]["user_id"], "name": b["key"]["user_name"]} for b in all_buckets]
+            users_list = await UserIdentityResolver.resolve_and_merge(users_list)
             total_count = len(users_list)
             logger.info(f"Parsed users-list result: total_users={total_count}")
             return {"data": {"users": users_list, "total_count": total_count}, "metadata": metadata}
 
-        return await self._pipeline.execute_composite_query(
+        result = await self._pipeline.execute_composite_query(
             agg_builder=self._build_users_list_aggregation,
             result_parser=self._parse_users_list_result,
             metric_filters=None,
@@ -108,11 +110,20 @@ class UserHandler(CLICostAdjustmentMixin):
             users=users,
             projects=projects,
         )
+        merged = await UserIdentityResolver.resolve_and_merge(result.get("data", {}).get("users", []))
+        result["data"]["users"] = merged
+        result["data"]["total_count"] = len(merged)
+        return result
 
     def _build_users_list_aggregation(self, query: dict) -> dict:
         """Build composite aggregation for unique (user_id, user_name) pairs."""
         return {
-            "query": query,
+            "query": {
+                "bool": {
+                    "must": [query],
+                    "must_not": [{"terms": {USER_ID_KEYWORD_FIELD: PLACEHOLDER_USER_IDS}}],
+                }
+            },
             "size": 0,
             "aggs": {
                 "unique_users": {
@@ -160,7 +171,12 @@ class UserHandler(CLICostAdjustmentMixin):
                 composite["after"] = after_key
 
             agg_body = {
-                "query": query,
+                "query": {
+                    "bool": {
+                        "must": [query],
+                        "must_not": [{"terms": {USER_ID_KEYWORD_FIELD: PLACEHOLDER_USER_IDS}}],
+                    }
+                },
                 "size": 0,
                 "aggs": {"unique_users": {"composite": composite}},
             }
@@ -211,7 +227,7 @@ class UserHandler(CLICostAdjustmentMixin):
 
         # Query 1: Get CLI costs per user with ADJUSTED dates (before main query)
         cli_costs_by_user = await self.get_cli_costs_grouped_by(
-            start_dt, end_dt, USER_EMAIL_KEYWORD_FIELD, "user", users, projects
+            start_dt, end_dt, USER_ID_KEYWORD_FIELD, "user", users, projects
         )
 
         # Query 2: Get all costs (including CLI) with ORIGINAL dates
@@ -223,7 +239,7 @@ class UserHandler(CLICostAdjustmentMixin):
             agg_builder=lambda query, fetch_size: self._build_users_spending_aggregation(query, fetch_size),
             result_parser=parse_with_cli_adjustment,
             columns=self._get_users_spending_columns(),
-            group_by_field=USER_EMAIL_KEYWORD_FIELD,
+            group_by_field=USER_ID_KEYWORD_FIELD,
             metric_filters=MetricName.to_list_from_group(MetricName.SPENDING_METRICS),
             time_period=time_period,
             start_date=start_date,
@@ -266,7 +282,7 @@ class UserHandler(CLICostAdjustmentMixin):
 
         # Build terms aggregation using helper
         terms_agg = AggregationBuilder.build_terms_agg(
-            group_by_field=USER_EMAIL_KEYWORD_FIELD,
+            group_by_field=USER_ID_KEYWORD_FIELD,
             fetch_size=fetch_size,
             order={"total_cost": "desc"},
             sub_aggs=sub_aggs,
@@ -274,7 +290,12 @@ class UserHandler(CLICostAdjustmentMixin):
 
         # Construct full aggregation body
         agg_body = {
-            "query": query,
+            "query": {
+                "bool": {
+                    "must": [query],
+                    "must_not": [{"terms": {USER_ID_KEYWORD_FIELD: PLACEHOLDER_USER_IDS}}],
+                }
+            },
             "size": 0,
             "aggs": {
                 "paginated_results": terms_agg,
@@ -296,7 +317,9 @@ class UserHandler(CLICostAdjustmentMixin):
 
         for bucket in buckets:
             raw_key = bucket["key"]
-            user_email = raw_key or UNKNOWN_USER
+            if not raw_key:
+                continue
+            user_email = raw_key
             total_cost_original = bucket.get("total_cost", {}).get("value", 0) or 0
             cli_cost_original = bucket.get("cli_cost", {}).get("sum", {}).get("value", 0) or 0
 
@@ -565,7 +588,7 @@ class UserHandler(CLICostAdjustmentMixin):
         """
         logger.info("Requesting users-activity analytics")
 
-        return await self._pipeline.execute_tabular_query(
+        result = await self._pipeline.execute_tabular_query(
             agg_builder=lambda query, fetch_size: self._build_users_activity_aggregation(query, fetch_size),
             result_parser=self._parse_users_activity_result,
             columns=self._get_users_activity_columns(),
@@ -580,6 +603,8 @@ class UserHandler(CLICostAdjustmentMixin):
             per_page=per_page,
             use_bucket_selector=True,
         )
+        await UserIdentityResolver.resolve_rows(result.get("data", {}).get("rows", []), "user_email")
+        return result
 
     def _build_users_activity_aggregation(self, query: dict, fetch_size: int) -> dict:
         """Build terms aggregation for users activity with fetch-and-slice.
@@ -696,7 +721,12 @@ class UserHandler(CLICostAdjustmentMixin):
 
         # Construct full aggregation body
         agg_body = {
-            "query": query,
+            "query": {
+                "bool": {
+                    "must": [query],
+                    "must_not": [{"terms": {USER_EMAIL_KEYWORD_FIELD: PLACEHOLDER_USER_EMAILS}}],
+                }
+            },
             "size": 0,
             "aggs": {
                 "paginated_results": terms_agg,
@@ -1012,7 +1042,12 @@ class UserHandler(CLICostAdjustmentMixin):
         )
 
         return {
-            "query": query,
+            "query": {
+                "bool": {
+                    "must": [query],
+                    "must_not": [{"terms": {USER_EMAIL_KEYWORD_FIELD: PLACEHOLDER_USER_EMAILS}}],
+                }
+            },
             "size": 0,
             "aggs": {"paginated_results": terms_agg},
         }
@@ -1064,7 +1099,7 @@ class UserHandler(CLICostAdjustmentMixin):
         """Get knowledge sharing analytics: conversation share counts per user."""
         logger.info("Requesting knowledge-sharing analytics")
 
-        return await self._pipeline.execute_tabular_query(
+        result = await self._pipeline.execute_tabular_query(
             agg_builder=self._build_knowledge_sharing_aggregation,
             result_parser=self._parse_knowledge_sharing_result,
             columns=self._get_knowledge_sharing_columns(),
@@ -1078,6 +1113,8 @@ class UserHandler(CLICostAdjustmentMixin):
             page=page,
             per_page=per_page,
         )
+        await UserIdentityResolver.resolve_rows(result.get("data", {}).get("rows", []), "user_email")
+        return result
 
     def _build_knowledge_sharing_aggregation(self, query: dict, fetch_size: int) -> dict:
         """Build terms aggregation for knowledge sharing (conversation shares per user)."""

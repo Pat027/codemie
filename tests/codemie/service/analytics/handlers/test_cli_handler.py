@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -586,7 +586,11 @@ class TestCLIRepositories:
         assert len(rows) == 0
 
     @pytest.mark.asyncio
-    async def test_cli_repositories_pagination_accuracy(self, handler, mock_repository):
+    @patch(
+        "codemie.service.analytics.handlers.user_identity_resolver.UserIdentityResolver.resolve_rows",
+        new_callable=AsyncMock,
+    )
+    async def test_cli_repositories_pagination_accuracy(self, mock_resolve_rows, handler, mock_repository):
         """Verify accurate pagination with flattened 3-level nested results.
 
         Scenario: 2 repos × multiple branches × multiple users = 12 total rows
@@ -784,7 +788,11 @@ class TestCLIRepositories:
         assert rows[0]["user_name"] == "alice@example.com"
 
     @pytest.mark.asyncio
-    async def test_cli_repositories_last_page(self, handler, mock_repository):
+    @patch(
+        "codemie.service.analytics.handlers.user_identity_resolver.UserIdentityResolver.resolve_rows",
+        new_callable=AsyncMock,
+    )
+    async def test_cli_repositories_last_page(self, mock_resolve_rows, handler, mock_repository):
         """Verify last page returns partial rows correctly."""
         # Arrange: Mock 9 total rows (3 repos × 3 rows each)
         mock_repository.execute_aggregation_query.return_value = {
@@ -831,7 +839,11 @@ class TestCLIRepositories:
         assert result["pagination"]["page"] == 2
 
     @pytest.mark.asyncio
-    async def test_cli_repositories_sorting_consistency(self, handler, mock_repository):
+    @patch(
+        "codemie.service.analytics.handlers.user_identity_resolver.UserIdentityResolver.resolve_rows",
+        new_callable=AsyncMock,
+    )
+    async def test_cli_repositories_sorting_consistency(self, mock_resolve_rows, handler, mock_repository):
         """Verify sorting is consistent across pages (alphabetical by repo→branch→user)."""
         # Arrange: Mock data with multiple combinations
         mock_repository.execute_aggregation_query.return_value = {

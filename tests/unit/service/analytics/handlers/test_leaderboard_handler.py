@@ -330,7 +330,11 @@ class TestLeaderboardDistributionEndpoints:
         assert any(row["dimension_id"] == "d1" and row["avg_score"] == 0.75 for row in result["data"]["rows"])
 
     @pytest.mark.asyncio
-    async def test_top_performers_formats_comparison_rows(self, handler, mock_repo):
+    @patch(
+        "codemie.service.analytics.handlers.user_identity_resolver.UserIdentityResolver.resolve_rows",
+        new_callable=AsyncMock,
+    )
+    async def test_top_performers_formats_comparison_rows(self, mock_resolve_rows, handler, mock_repo):
         snapshot = _make_snapshot(comparison_snapshot_id="snap-0")
         entry = _make_entry(rank=1, total_score=80.0, dimensions=[{"id": "d1", "score": 0.4}], summary_metrics={"a": 1})
         comparison = _make_entry(rank=2, total_score=70.0)
