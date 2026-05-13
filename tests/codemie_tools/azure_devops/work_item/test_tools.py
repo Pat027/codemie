@@ -23,6 +23,7 @@ from codemie_tools.azure_devops.work_item.tools import (
     UpdateWorkItemTool,
     GetWorkItemTool,
     GetRelationTypesTool,
+    CreateCommentTool,
 )
 
 
@@ -151,6 +152,33 @@ class TestGetWorkItemTool:
         assert result["id"] == 1
         assert "System.Title" in result
         mock_client.get_work_item.assert_called_once()
+
+
+class TestCreateCommentTool:
+    @pytest.fixture
+    def create_comment_tool(self, mock_config, mock_client):
+        tool = CreateCommentTool(config=mock_config)
+        tool._client = mock_client
+        return tool
+
+    def test_create_comment_success(self, create_comment_tool, mock_client):
+        mock_comment = MagicMock()
+        mock_comment.id = 42
+        mock_client.add_comment.return_value = mock_comment
+
+        result = create_comment_tool.execute(work_item_id=123, text="Test comment")
+
+        assert "42" in result
+        assert "123" in result
+        mock_client.add_comment.assert_called_once()
+
+    def test_create_comment_api_error(self, create_comment_tool, mock_client):
+        from langchain_core.tools import ToolException
+
+        mock_client.add_comment.side_effect = Exception("API error")
+
+        with pytest.raises(ToolException, match="Error creating comment"):
+            create_comment_tool.execute(work_item_id=123, text="Test comment")
 
 
 class TestGetRelationTypesTool:

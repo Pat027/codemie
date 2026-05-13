@@ -249,3 +249,24 @@ GET_COMMENTS_TOOL = ToolMetadata(
         """.strip(),
     config_class=AzureDevOpsWorkItemConfig,
 )
+
+CREATE_COMMENT_TOOL = ToolMetadata(
+    name="create_comment",
+    description="""
+        Add a new comment to a work item in Azure DevOps.
+
+        Arguments:
+        - work_item_id (int): The work item ID to add a comment to
+        - text (str): The text content of the comment
+        """,
+    label="Create Comment",
+    user_description="""
+        Adds a new comment to a specific work item in Azure DevOps.
+        Returns a confirmation message with the work item ID and the new comment ID.
+        Before using it, you need to provide:
+        1. Azure DevOps organization URL
+        2. Project name
+        3. Personal Access Token with appropriate permissions
+        """.strip(),
+    config_class=AzureDevOpsWorkItemConfig,
+)

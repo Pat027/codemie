@@ -21,7 +21,7 @@ class TestAzureDevOpsWorkItemToolkit:
         toolkit_ui = AzureDevOpsWorkItemToolkit.get_definition()
         assert isinstance(toolkit_ui, AzureDevOpsWorkItemToolkitUI)
         assert toolkit_ui.toolkit == ToolSet.AZURE_DEVOPS_WORK_ITEM
-        assert len(toolkit_ui.tools) == 7
+        assert len(toolkit_ui.tools) == 8
         assert toolkit_ui.label == ToolSet.AZURE_DEVOPS_WORK_ITEM.value
 
 
@@ -32,7 +32,7 @@ class TestAzureDevOpsWorkItemToolkitUI:
 
     def test_tools_property(self):
         toolkit_ui = AzureDevOpsWorkItemToolkitUI()
-        assert len(toolkit_ui.tools) == 7
+        assert len(toolkit_ui.tools) == 8
 
         # Check that the tools are correctly defined
         tool_names = [tool.name for tool in toolkit_ui.tools]
@@ -43,3 +43,4 @@ class TestAzureDevOpsWorkItemToolkitUI:
         assert "link_work_items" in tool_names
         assert "get_relation_types" in tool_names
         assert "get_comments" in tool_names
+        assert "create_comment" in tool_names

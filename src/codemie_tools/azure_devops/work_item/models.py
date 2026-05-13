@@ -162,3 +162,8 @@ class GetCommentsInput(BaseModel):
     order: Optional[str] = Field(
         description="Order in which the comments should be returned. Possible options are { asc, desc }", default=None
     )
+
+
+class CreateCommentInput(BaseModel):
+    work_item_id: int = Field(description="The work item ID to add a comment to")
+    text: str = Field(description="The text content of the comment to create")

@@ -18,6 +18,7 @@ from typing import Type, Optional, List, Dict, Any
 
 from azure.devops.connection import Connection
 from azure.devops.v7_1.work_item_tracking import TeamContext, Wiql, WorkItemTrackingClient
+from azure.devops.v7_1.work_item_tracking.models import CommentCreate
 from langchain_core.tools import ToolException
 from msrest.authentication import BasicAuthentication
 from pydantic import BaseModel
@@ -31,6 +32,7 @@ from codemie_tools.azure_devops.work_item.models import (
     LinkWorkItemsInput,
     GetRelationTypesInput,
     GetCommentsInput,
+    CreateCommentInput,
 )
 from codemie_tools.azure_devops.work_item.tools_vars import (
     SEARCH_WORK_ITEMS_TOOL,
@@ -40,6 +42,7 @@ from codemie_tools.azure_devops.work_item.tools_vars import (
     LINK_WORK_ITEMS_TOOL,
     GET_RELATION_TYPES_TOOL,
     GET_COMMENTS_TOOL,
+    CREATE_COMMENT_TOOL,
 )
 from codemie_tools.base.codemie_tool import CodeMieTool, logger
 from codemie_tools.base.file_tool_mixin import FileToolMixin
@@ -540,3 +543,25 @@ class GetCommentsTool(BaseAzureDevOpsWorkItemTool):
         except Exception as e:
             logger.error(f"Error getting work item comments: {e}")
             raise ToolException(f"Error getting work item comments: {str(e)}")
+
+
+class CreateCommentTool(BaseAzureDevOpsWorkItemTool):
+    """Tool to add a new comment to a work item in Azure DevOps."""
+
+    name: str = CREATE_COMMENT_TOOL.name
+    description: str = CREATE_COMMENT_TOOL.description
+    args_schema: Type[BaseModel] = CreateCommentInput
+
+    def execute(self, work_item_id: int, text: str) -> str:
+        """Add a comment to a work item."""
+        try:
+            request = CommentCreate(text=text)
+            comment = self._client.add_comment(
+                request=request,
+                project=self.config.project,
+                work_item_id=work_item_id,
+            )
+            return f"Comment {comment.id} added to work item {work_item_id} successfully."
+        except Exception as e:
+            logger.error(f"Error creating comment for work item {work_item_id}: {e}")
+            raise ToolException(f"Error creating comment for work item {work_item_id}: {str(e)}")
