@@ -1292,7 +1292,7 @@ class LiteLLMBudgetEnforcementProvider:
             credentials = SettingsService.get_project_litellm_creds_by_alias(context.project_name, project_key_alias)
             if credentials:
                 project_api_key = credentials.api_key
-                project_base_url = credentials.url or None
+                project_base_url = None  # budget-managed keys always route through the global LiteLLM proxy
         logger.debug(
             f"budget_event=runtime_project_credentials_resolved component=litellm_budget_provider "
             f"provider={_PROVIDER_NAME!r} user_id={context.user_id!r} username={context.user_email!r} "
