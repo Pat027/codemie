@@ -1,30 +1,30 @@
 # Copyright 2026 EPAM Systems, Inc. (“EPAM”)
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
+# Licensed under the Apache License, Version 2.0 (the “License”);
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
+# distributed under the License is distributed on an “AS IS” BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import io
 import logging
 from typing import Type, Optional, Set
 
-from markitdown import MarkItDown
 from pydantic import BaseModel, Field
 
+from codemie.datasource.loader.file_processor_pool import maybe_pool_submit
 from codemie_tools.base.codemie_tool import CodeMieTool
 from codemie_tools.base.constants import SOURCE_DOCUMENT_KEY, SOURCE_FIELD_KEY, FILE_CONTENT_FIELD_KEY
 from codemie_tools.base.file_object import FileObject
 from codemie_tools.base.file_tool_mixin import FileToolMixin
 from codemie_tools.file_analysis.models import FileAnalysisConfig
 from codemie_tools.file_analysis.tool_vars import FILE_ANALYSIS_TOOL
+from codemie_tools.file_analysis.workers.markdown_workers import convert_file_to_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -158,20 +158,19 @@ class FileAnalysisTool(CodeMieTool, FileToolMixin):
             llm_model = (
                 (getattr(chat_model, "model_name", None) or getattr(chat_model, "model", None) if chat_model else None),
             )
-            md = MarkItDown(
-                enable_builtins=True,
-                llm_client=chat_model.client if chat_model and hasattr(chat_model, "client") else None,
-                llm_model=llm_model,
+            llm_client = chat_model.client if chat_model and hasattr(chat_model, "client") else None
+
+            # Use process pool if enabled, otherwise process inline
+            return maybe_pool_submit(
+                convert_file_to_markdown,
+                file_object.bytes_content(),
+                file_object.name,
+                llm_client,
+                llm_model,
             )
-            # Create a file-like object from bytes content
-            binary_content = io.BytesIO(file_object.bytes_content())
-            result = md.convert(binary_content)
-            return result.text_content
         except FileNotFoundError as e:
-            # Handle the case when a file is not found
             return f"File not found: {str(e)}"
         except Exception as e:
-            # Fallback to direct decoding for text files if markitdown fails
             return self._fallback_decode_text_file(file_object, original_exception=e)
 
     def execute(self, query: str = ""):
@@ -186,8 +185,9 @@ class FileAnalysisTool(CodeMieTool, FileToolMixin):
         for file_object in files:
             file_content = self._process_single_file(file_object)
             # Add file header with metadata
+            logger.debug(file_object)
             result.append(f"\n{SOURCE_DOCUMENT_KEY}\n")
             result.append(f"{SOURCE_FIELD_KEY} {file_object.name}\n")
-            result.append(f"{FILE_CONTENT_FIELD_KEY} \n{file_content}\n")
+            result.append(f"{FILE_CONTENT_FIELD_KEY}\n{file_content}\n")
 
         return "\n".join(result)

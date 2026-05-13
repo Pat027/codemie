@@ -18,10 +18,11 @@ import atexit
 import contextlib
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from codemie.configs import logger
 from codemie.configs import config
+# from codemie.core.exceptions import CodeMieException
 
 
 class FileProcessPoolManager:
@@ -43,14 +44,14 @@ class FileProcessPoolManager:
         return cls._instance
 
     @classmethod
-    def initialize(cls, max_workers: int = 4, max_tasks_per_child: int = 10) -> None:
+    def initialize(cls, max_workers: int = 4, max_tasks_per_child: int = 10, force: bool = False) -> None:
         """
         Initialize shared process pool.
 
         Args:
             max_workers: Number of worker processes
         """
-        if cls._initialized:
+        if cls._initialized and not force:
             return
 
         cls._max_workers = max_workers
@@ -59,7 +60,9 @@ class FileProcessPoolManager:
         with contextlib.suppress(RuntimeError):
             multiprocessing.set_start_method('fork', force=True)
 
-        cls._executor = ProcessPoolExecutor(max_workers=max_workers)
+        if max_tasks_per_child < 0:
+            max_tasks_per_child = None
+        cls._executor = ProcessPoolExecutor(max_workers=max_workers, max_tasks_per_child=max_tasks_per_child)
         cls._initialized = True
 
         # Register shutdown on exit
@@ -93,7 +96,7 @@ class FileProcessPoolManager:
             wait: Wait for pending tasks to complete
         """
         if cls._executor is not None:
-            logger.info("Shutting down file process pool")
+            # logger.info("Shutting down file process pool")
             cls._executor.shutdown(wait=wait)
             cls._executor = None
             cls._initialized = False
@@ -107,4 +110,17 @@ class FileProcessPoolManager:
 # Global singleton instance
 file_process_pool = FileProcessPoolManager()
 if config.ENABLE_FILE_MULTIPROCESSING:
-    file_process_pool.initialize(max_workers=config.FILE_DATASOURCE_MULTIPROCESSING_MAX_WORKERS)
+    file_process_pool.initialize(
+        max_workers=config.FILE_DATASOURCE_MULTIPROCESSING_MAX_WORKERS,
+        max_tasks_per_child=config.FILE_MULTIPROCESSING_MAX_EXECUTED_TASK_PER_WORKER,
+    )
+
+
+def maybe_pool_submit(fn: Callable, *args: Any, **kwargs: Any) -> Any:
+    if config.ENABLE_FILE_MULTIPROCESSING and file_process_pool.is_initialized():
+        try:
+            future = file_process_pool.get_executor().submit(fn, *args, **kwargs)
+            return future.result()
+        except Exception as e:
+            raise e
+    return fn(*args, **kwargs)

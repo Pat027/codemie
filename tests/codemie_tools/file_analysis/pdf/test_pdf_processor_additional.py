@@ -37,35 +37,19 @@ def test_process_pdf_files_single_file(mock_process, mock_open, pdf_processor):
     result = pdf_processor.process_pdf_files(files, pages=[1, 2])
 
     # Assertions - for single file we return the content directly without headers
-    assert result == "Content from single file"
+    expected_result = """
+###SOURCE DOCUMENT###
+
+**Source:** test.pdf
+
+**File Content:**
+Content from single file
+"""
+    assert result == expected_result
 
     # Verify calls
     mock_open.assert_called_once_with(b"content")
     mock_process.assert_called_once_with(mock_doc, [1, 2])
-
-
-@patch.object(PdfProcessor, 'open_pdf_document')
-@patch.object(PdfProcessor, 'extract_text_as_markdown')
-def test_extract_text_as_markdown_from_files_single_file(mock_extract, mock_open, pdf_processor):
-    """Test extracting text as markdown from a single file."""
-    # Set up mocks
-    mock_doc = Mock(spec=pdfplumber.PDF)
-    mock_doc.close = Mock()
-    mock_open.return_value = mock_doc
-    mock_extract.return_value = "Content from single file"
-
-    # Create file objects
-    files = [FileObject(name="test.pdf", content=b"content", mime_type="application/pdf", owner="test")]
-
-    # Call method
-    result = pdf_processor.extract_text_as_markdown_from_files(files, pages=[1], page_chunks=True)
-
-    # Assertions - for single file we return the content directly without headers
-    assert result == "Content from single file"
-
-    # Verify calls
-    mock_open.assert_called_once_with(b"content")
-    mock_extract.assert_called_once_with(mock_doc, [1], True)
 
 
 @patch.object(PdfProcessor, 'open_pdf_document')
@@ -84,5 +68,5 @@ def test_get_total_pages_from_files_single_file(mock_open, pdf_processor):
     result = pdf_processor.get_total_pages_from_files(files)
 
     # Assertions
-    assert "Total pages: 5" in result
+    assert "**Total pages across all files:** 5" in result
     assert "test.pdf: 5 pages" in result

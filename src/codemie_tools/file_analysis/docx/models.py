@@ -14,7 +14,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TypedDict
 
 from pydantic import BaseModel, Field
 
@@ -221,3 +221,12 @@ class DocxToolInput(BaseModel):
             "If not provided or set to 'all', all pages will be processed."
         ),
     )
+
+
+class DocxReaderExtractFlags(TypedDict):
+    extract_text: bool
+    extract_structure: bool
+    extract_formatting: bool
+    extract_metadata: bool
+    extract_tables: bool
+    needs_images: bool

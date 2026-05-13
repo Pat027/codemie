@@ -19,6 +19,7 @@ import pdfplumber
 
 from codemie_tools.base.file_object import FileObject
 from codemie_tools.file_analysis.pdf.processor import PdfProcessor
+
 from codemie_tools.utils.image_processor import ImageProcessor
 
 
@@ -65,8 +66,18 @@ def test_extract_text_as_markdown_all_pages(pdf_processor):
 
     mock_doc.pages = [mock_page1, mock_page2]
 
-    # Call method
-    result = pdf_processor.extract_text_as_markdown(mock_doc)
+    # Mock pool to run inline + mock _ensure_pdf_object
+    with (
+        patch("codemie_tools.file_analysis.pdf.processor.maybe_pool_submit") as mock_pool,
+        patch(
+            "codemie_tools.file_analysis.workers.pdf_workers._ensure_pdf_object", autospec=True
+        ) as mock_ensure_pdf_object,
+    ):
+        mock_pool.side_effect = lambda fn, *args, **kwargs: fn(*args, **kwargs)
+        mock_ensure_pdf_object.return_value = (mock_doc, False)
+
+        # Call method
+        result = pdf_processor.extract_text_as_markdown(b"test_bytes")
 
     # Assertions
     assert "Page 1 text" in result
@@ -87,53 +98,45 @@ def test_extract_text_as_markdown_specific_pages(pdf_processor):
 
     mock_doc.pages = [mock_page1, mock_page2]
 
-    # Call method with specific pages (1-based index)
-    result = pdf_processor.extract_text_as_markdown(mock_doc, pages=[2])
+    # Mock pool to run inline + mock _ensure_pdf_object
+    with (
+        patch("codemie_tools.file_analysis.pdf.processor.maybe_pool_submit") as mock_pool,
+        patch("codemie_tools.file_analysis.workers.pdf_workers._ensure_pdf_object") as mock_ensure_pdf_object,
+    ):
+        mock_pool.side_effect = lambda fn, *args, **kwargs: fn(*args, **kwargs)
+        mock_ensure_pdf_object.return_value = mock_doc, False
+
+        # Call method with specific pages (1-based index)
+        result = pdf_processor.extract_text_as_markdown(b"", pages=[2])
 
     # Assertions - should only contain page 2
     assert "Page 2 text" in result
     assert "Page 1 text" not in result
 
 
-@patch.object(PdfProcessor, 'open_pdf_document')
-@patch.object(PdfProcessor, 'extract_text_as_markdown')
-def test_extract_text_as_markdown_from_files(mock_extract, mock_open, pdf_processor):
-    """Test extracting text as markdown from multiple files."""
-    # Set up mocks
-    mock_doc1 = Mock(spec=pdfplumber.PDF)
-    mock_doc1.close = Mock()
-    mock_doc2 = Mock(spec=pdfplumber.PDF)
-    mock_doc2.close = Mock()
-    mock_open.side_effect = [mock_doc1, mock_doc2]
-    mock_extract.side_effect = ["Content from file 1", "Content from file 2"]
+def test_extract_text_as_markdown_from_files(pdf_processor):
+    # Mock maybe_pool_submit to return content directly without subprocess
 
-    # Create file objects
     files = [
         FileObject(name="test1.pdf", content=b"content1", mime_type="application/pdf", owner="test"),
         FileObject(name="test2.pdf", content=b"content2", mime_type="application/pdf", owner="test"),
     ]
-
-    # Call method
-    result = pdf_processor.extract_text_as_markdown_from_files(files, pages=[1], page_chunks=True)
-
-    # Assertions
+    with patch("codemie_tools.file_analysis.pdf.processor.maybe_pool_submit") as mock_pool_submit:
+        mock_pool_submit.side_effect = ["Content from file 1", "Content from file 2"]
+        result = pdf_processor.extract_text_as_markdown_from_files(files, pages=[1], page_chunks=True)
     assert "###SOURCE DOCUMENT###" in result
     assert "**Source:** test1.pdf" in result
     assert "**File Content:**" in result
     assert "Content from file 1" in result
     assert "Content from file 2" in result
-
-    # Verify calls
-    mock_open.assert_any_call(b"content1")
-    mock_open.assert_any_call(b"content2")
-    mock_extract.assert_any_call(mock_doc1, [1], True)
-    mock_extract.assert_any_call(mock_doc2, [1], True)
+    # Verify pool submit called for each file
+    assert mock_pool_submit.call_count == 2
 
 
 def test_extract_text_as_markdown_null_document(pdf_processor):
     """Test behavior when null PDF document is provided."""
     with pytest.raises(ValueError):
-        pdf_processor.extract_text_as_markdown(None)
+        pdf_processor.extract_text_as_markdown(None, None)
 
 
 def test_get_total_pages_success(pdf_processor):

@@ -199,9 +199,6 @@ class DocxProcessor:
         logger.info(f"Processing {len(files)} files with operation: {operation}")
 
         # If only one file, process it directly
-        if len(files) == 1:
-            return self._process_single_file(files[0], operation, **kwargs)
-
         # Process multiple files
         results = []
         for idx, file_obj in enumerate(files):

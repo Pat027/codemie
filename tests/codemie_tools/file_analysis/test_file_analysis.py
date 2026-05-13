@@ -17,6 +17,7 @@
 import os
 import pathlib
 from unittest import mock
+from unittest.mock import patch
 
 import pytest
 from langchain_experimental.tools import PythonAstREPLTool
@@ -26,6 +27,19 @@ from codemie_tools.file_analysis.csv.tools import CSVTool
 from codemie_tools.file_analysis.file_analysis_tool import FileAnalysisTool
 from codemie_tools.file_analysis.models import FileAnalysisConfig
 from codemie_tools.file_analysis.toolkit import FileAnalysisToolkit
+
+
+@pytest.fixture(autouse=True)
+def mock_maybe_pool_submit():
+    """Mock maybe_pool_submit to run inline instead of subprocess.
+
+    Subprocess execution breaks mocks - this forces inline execution
+    so test mocks work correctly. Applied to all file_analysis tests.
+    """
+    with patch("codemie_tools.file_analysis.file_analysis_tool.maybe_pool_submit") as mock_pool:
+        # Run function directly instead of submitting to pool
+        mock_pool.side_effect = lambda fn, *args, **kwargs: fn(*args, **kwargs)
+        yield mock_pool
 
 
 def is_text_file(filename: str) -> bool:
@@ -116,7 +130,7 @@ class TestFileAnalysisTool:
             filename: Name of the individual sample file being tested
         """
         # Only mock here to test the fallback functionality
-        with mock.patch("codemie_tools.file_analysis.file_analysis_tool.MarkItDown") as mock_markitdown:
+        with mock.patch("codemie_tools.file_analysis.workers.markdown_workers.MarkItDown") as mock_markitdown:
             mock_markitdown.return_value.convert.side_effect = Exception(f"Forced failure for {filename}")
 
             filepath = os.path.join(samples_dir, filename)
@@ -177,7 +191,9 @@ class TestFileAnalysisTool:
         file_obj = MockFileObject(name="empty.txt", content=b"", mime_type="text/plain", owner="test")
         tool = FileAnalysisTool(config=FileAnalysisConfig(input_files=[file_obj]))
 
-        with mock.patch("codemie_tools.file_analysis.file_analysis_tool.MarkItDown") as mock_markitdown:
+        with mock.patch(
+            "codemie_tools.file_analysis.workers.markdown_workers.convert_file_to_markdown"
+        ) as mock_markitdown:
             # Force MarkItDown to fail so we use our fallback mechanism
             mock_markitdown.return_value.convert.side_effect = Exception("Mock failure")
             result = tool.execute(query="non_existent_file.txt")

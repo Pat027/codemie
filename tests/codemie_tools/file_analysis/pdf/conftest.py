@@ -17,7 +17,7 @@ Test fixtures for PDF processor tests.
 """
 
 import os
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -74,3 +74,16 @@ def mock_pdf_document():
     mock_doc.close = Mock()
 
     return mock_doc
+
+
+@pytest.fixture(autouse=True)
+def mock_pool_inline():
+    """Mock maybe_pool_submit to run inline instead of subprocess.
+
+    Subprocess execution breaks mocks - this forces inline execution
+    so test mocks work correctly.
+    """
+    with patch("codemie_tools.file_analysis.pdf.processor.maybe_pool_submit") as mock_pool:
+        # Run function directly instead of submitting to pool
+        mock_pool.side_effect = lambda fn, *args, **kwargs: fn(*args, **kwargs)
+        yield mock_pool

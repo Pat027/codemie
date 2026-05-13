@@ -15,12 +15,14 @@
 import logging
 import os
 import tempfile
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, TypedDict
 
 import docx2txt
 from docx import Document
 from langchain_core.language_models import BaseChatModel
 
+from codemie.configs import config
+from codemie.datasource.loader.file_processor_pool import maybe_pool_submit
 from codemie_tools.file_analysis.docx.exceptions import (
     DocumentReadError,
     CorruptedDocumentError,
@@ -30,18 +32,13 @@ from codemie_tools.file_analysis.docx.exceptions import (
 )
 from codemie_tools.file_analysis.docx.models import (
     DocumentContent,
-    DocumentStructure,
-    HeaderInfo,
-    ParagraphInfo,
-    SectionInfo,
-    StyleInfo,
-    FormattingInfo,
     Position,
     ImageData,
-    TableData,
     QueryType,
+    DocxReaderExtractFlags,
 )
 from codemie_tools.utils.image_processor import ImageProcessor
+from codemie_tools.file_analysis.workers import extract_docx_content, extract_docx_text
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +61,55 @@ class DocxReader:
         self.ocr_enabled = ocr_enabled
         self.image_processor = ImageProcessor(chat_model=chat_model) if chat_model else None
 
-    def read_with_markitdown(self, file_path: str, query: QueryType) -> DocumentContent:
+    def _resolve_extract_flags(self, query: QueryType) -> DocxReaderExtractFlags:
+        extract_text = query in [
+            QueryType.TEXT,
+            QueryType.TEXT_WITH_METADATA,
+            QueryType.TEXT_WITH_IMAGES,
+            QueryType.SUMMARY,
+            QueryType.ANALYZE,
+        ]
+        extract_structure = query in [
+            QueryType.TEXT,
+            QueryType.TEXT_WITH_METADATA,
+            QueryType.TEXT_WITH_IMAGES,
+            QueryType.STRUCTURE_ONLY,
+            QueryType.SUMMARY,
+            QueryType.ANALYZE,
+        ]
+        extract_formatting = query in [
+            QueryType.STRUCTURE_ONLY,
+            QueryType.SUMMARY,
+            QueryType.ANALYZE,
+        ]
+        extract_metadata = query in [
+            QueryType.TEXT_WITH_METADATA,
+            QueryType.SUMMARY,
+            QueryType.ANALYZE,
+        ]
+        extract_tables = query in [
+            QueryType.TABLE_EXTRACTION,
+            QueryType.SUMMARY,
+            QueryType.ANALYZE,
+        ]
+        needs_images = query in [
+            QueryType.TEXT_WITH_IMAGES,
+            QueryType.IMAGE_EXTRACTION,
+        ]
+        return {
+            "extract_text": extract_text,
+            "extract_structure": extract_structure,
+            "extract_formatting": extract_formatting,
+            "extract_metadata": extract_metadata,
+            "extract_tables": extract_tables,
+            "needs_images": needs_images,
+        }
+
+    def read_with_markitdown(
+        self,
+        file_path: str,
+        query: QueryType,
+    ) -> DocumentContent:
         """
         Read a DOCX document using MarkItDown for comprehensive reading.
 
@@ -82,70 +127,24 @@ class DocxReader:
         """
         logger.info(f"Reading document with MarkItDown: {file_path}, Query: {query}, OCR: {self.ocr_enabled}")
 
+        extract_params = self._resolve_extract_flags(query)
         try:
-            # For this implementation, we'll use python-docx directly
-            document = Document(file_path)
+            with open(file_path, 'rb') as f:
+                docx_bytes = f.read()
+            # Fast path: offload all non-image extraction to process pool
+            document = maybe_pool_submit(extract_docx_content, docx_bytes, **extract_params)
 
-            # Determine what content to extract based on query
-            extract_text = query in [
-                QueryType.TEXT,
-                QueryType.TEXT_WITH_METADATA,
-                QueryType.TEXT_WITH_IMAGES,
-                QueryType.SUMMARY,
-                QueryType.ANALYZE,
-            ]
-            extract_structure = query in [
-                QueryType.TEXT,
-                QueryType.TEXT_WITH_METADATA,
-                QueryType.TEXT_WITH_IMAGES,
-                QueryType.STRUCTURE_ONLY,
-                QueryType.SUMMARY,
-                QueryType.ANALYZE,
-            ]
-            extract_formatting = query in [
-                QueryType.STRUCTURE_ONLY,
-                QueryType.SUMMARY,
-                QueryType.ANALYZE,
-            ]
-            extract_metadata = query in [
-                QueryType.TEXT_WITH_METADATA,
-                QueryType.SUMMARY,
-                QueryType.ANALYZE,
-            ]
-            extract_tables = query in [
-                QueryType.TABLE_EXTRACTION,
-                QueryType.SUMMARY,
-                QueryType.ANALYZE,
-            ]
-            extract_images = query in [
-                QueryType.TEXT_WITH_IMAGES,
-                QueryType.IMAGE_EXTRACTION,
-            ]
-
-            # Extract text content
-            text = DocxReader._extract_text(document) if extract_text else ""
-
-            # Extract document structure
-            structure = DocxReader._extract_structure(document) if extract_structure else DocumentStructure()
-
-            # Extract formatting information
-            formatting = DocxReader._extract_formatting(document) if extract_formatting else FormattingInfo()
-
-            # Extract metadata
-            metadata = self._extract_metadata(document) if extract_metadata else {}
-
-            # Extract tables
-            tables = self._extract_tables(document) if extract_tables else []
-
-            # Extract images (OCR based on class-level ocr_enabled setting)
-            images = self._extract_images(file_path, include_ocr=self.ocr_enabled) if extract_images else []
+            # Standard path
+            images = []
+            if extract_params.get("needs_images"):
+                images = self._extract_images(file_path, include_ocr=self.ocr_enabled)
 
             return DocumentContent(
-                text=text,
-                structure=structure,
-                formatting=formatting,
-                metadata=metadata,
-                tables=tables,
+                text=document.text,
+                structure=document.structure,
+                formatting=document.formatting,
+                metadata=document.metadata,
+                tables=document.tables,
                 images=images,
             )
 
@@ -184,7 +183,17 @@ class DocxReader:
         logger.info(f"Reading document from bytes: {file_name}, Query: {query}, OCR: {self.ocr_enabled}")
 
         try:
-            # Create temporary file
+            extract_flags = self._resolve_extract_flags(query)
+
+            # Fast path: offload all non-image extraction to process pool
+            if not extract_flags.get("needs_images"):
+                return maybe_pool_submit(
+                    extract_docx_content,
+                    content,
+                    *extract_flags.values(),
+                )
+
+            # Standard path: create temporary file (needed for image extraction)
             with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as temp_file:
                 temp_path = temp_file.name
                 temp_file.write(content)
@@ -222,318 +231,6 @@ class DocxReader:
         except Exception as e:
             logger.error(f"Error extracting images: {str(e)}")
             raise ImageExtractionError(f"Failed to extract images: {str(e)}") from e
-
-    @staticmethod
-    def _extract_text(document) -> str:
-        """
-        Extract text content from a document.
-
-        Args:
-            document: python-docx Document object
-
-        Returns:
-            Document text content
-        """
-        text_parts = []
-
-        for paragraph in document.paragraphs:
-            text_parts.append(paragraph.text)
-
-        for table in document.tables:
-            for row in table.rows:
-                row_text = []
-                for cell in row.cells:
-                    row_text.append(cell.text)
-                text_parts.append(" | ".join(row_text))
-
-        return "\n".join(text_parts)
-
-    @staticmethod
-    def _extract_structure(document) -> DocumentStructure:
-        """
-        Extract document structure information.
-
-        Args:
-            document: python-docx Document object
-
-        Returns:
-            DocumentStructure object
-        """
-        # Variables will be populated in the following method call
-
-        # Process paragraphs and extract headers and styles
-        paragraphs, headers, styles = DocxReader._process_paragraphs(document.paragraphs)
-
-        # Process sections based on headers
-        sections = DocxReader._create_sections(paragraphs, headers)
-
-        return DocumentStructure(headers=headers, paragraphs=paragraphs, sections=sections, styles=styles)
-
-    @staticmethod
-    def _process_paragraphs(doc_paragraphs):
-        """
-        Process paragraphs to extract headers, paragraph info and styles.
-
-        Args:
-            doc_paragraphs: List of document paragraphs
-
-        Returns:
-            Tuple of (paragraphs, headers, styles) lists
-        """
-        headers = []
-        paragraphs = []
-        styles = []
-
-        for i, paragraph in enumerate(doc_paragraphs):
-            # Create a position (page number is approximate)
-            position = Position(page=i // 40 + 1, x=0.0, y=float(i % 40))
-
-            # Determine paragraph style name, defaulting to "Normal" if not found
-            paragraph_style_name = paragraph.style.name if paragraph.style and paragraph.style.name else "Normal"
-
-            # Check if it's a heading
-            if paragraph_style_name.startswith("Heading"):
-                level = int(paragraph_style_name.replace("Heading ", "")) if paragraph_style_name != "Heading" else 1
-                headers.append(HeaderInfo(level=level, text=paragraph.text, position=position))
-
-            # Add to paragraphs list
-            paragraphs.append(ParagraphInfo(text=paragraph.text, style=paragraph_style_name, position=position))
-
-            DocxReader._add_style_if_new(paragraph, styles, paragraph_style_name)
-
-        return paragraphs, headers, styles
-
-    @staticmethod
-    def _add_style_if_new(paragraph, styles, default_style_name: str = "Normal"):
-        """
-        Add style information if not already processed.
-
-        Args:
-            paragraph: Document paragraph
-            styles: List of styles to update
-        """
-        style_name = paragraph.style.name if paragraph.style and paragraph.style.name else default_style_name
-        if style_name not in [s.name for s in styles]:
-            style = StyleInfo(
-                name=style_name,
-                font=paragraph.style.font.name
-                if hasattr(paragraph.style, "font") and paragraph.style.font
-                else "Default",
-                size=paragraph.style.font.size if hasattr(paragraph.style, "font") and paragraph.style.font else 12,
-                bold=paragraph.bold if hasattr(paragraph, "bold") else False,
-                italic=paragraph.italic if hasattr(paragraph, "italic") else False,
-            )
-            styles.append(style)
-
-    @staticmethod
-    def _create_sections(paragraphs, headers):
-        """
-        Create document sections based on headers.
-
-        Args:
-            paragraphs: List of paragraph info objects
-            headers: List of header info objects
-
-        Returns:
-            List of section info objects
-        """
-        sections = []
-        current_section = None
-        section_content = []
-
-        for para in paragraphs:
-            # Check if this paragraph is a header
-            header_match = next((h for h in headers if h.text == para.text), None)
-
-            if header_match:
-                DocxReader._finalize_section(current_section, section_content, sections)
-                current_section = header_match
-                section_content = []
-            else:
-                # Add to current section content
-                section_content.append(para)
-
-        # Add last section if exists
-        DocxReader._finalize_section(current_section, section_content, sections)
-
-        return sections
-
-    @staticmethod
-    def _finalize_section(current_section, section_content, sections):
-        """
-        Add a section to the sections list if it exists.
-
-        Args:
-            current_section: Current section header
-            section_content: Content of the section
-            sections: List of sections to update
-        """
-        if current_section:
-            sections.append(
-                SectionInfo(
-                    title=current_section.text,
-                    content=section_content.copy(),
-                    level=current_section.level,
-                )
-            )
-
-    @staticmethod
-    def _extract_formatting(document) -> FormattingInfo:
-        """
-        Extract formatting information from a document.
-
-        Args:
-            document: python-docx Document object
-
-        Returns:
-            FormattingInfo object
-        """
-        # Create style dictionary
-        style_dict = DocxReader._create_style_dict(document.styles)
-
-        # Get page dimensions
-        page_width, page_height, margins = DocxReader._extract_page_dimensions(document)
-
-        return FormattingInfo(styles=style_dict, page_width=page_width, page_height=page_height, margins=margins)
-
-    @staticmethod
-    def _create_style_dict(styles):
-        """
-        Create a dictionary of styles from document style objects.
-
-        Args:
-            styles: Document style collection
-
-        Returns:
-            Dictionary of style information
-        """
-        style_dict = {}
-        for style in styles:
-            if hasattr(style, "name") and hasattr(style, "font"):
-                style_dict[style.name] = StyleInfo(
-                    name=style.name,
-                    font=style.font.name if hasattr(style.font, "name") else "Default",
-                    size=style.font.size if hasattr(style.font, "size") else 12,
-                )
-        return style_dict
-
-    @staticmethod
-    def _extract_page_dimensions(document):
-        """
-        Extract page dimensions from document.
-
-        Args:
-            document: python-docx Document object
-
-        Returns:
-            Tuple of (page_width, page_height, margins)
-        """
-        # Default values
-        default_width = 8.5
-        default_height = 11.0
-        default_margins = {"top": 1.0, "right": 1.0, "bottom": 1.0, "left": 1.0}
-
-        try:
-            section = document.sections[0]
-            page_width = section.page_width.inches if hasattr(section, "page_width") else default_width
-            page_height = section.page_height.inches if hasattr(section, "page_height") else default_height
-
-            margins = {
-                "top": section.top_margin.inches if hasattr(section, "top_margin") else default_margins["top"],
-                "right": section.right_margin.inches if hasattr(section, "right_margin") else default_margins["right"],
-                "bottom": section.bottom_margin.inches
-                if hasattr(section, "bottom_margin")
-                else default_margins["bottom"],
-                "left": section.left_margin.inches if hasattr(section, "left_margin") else default_margins["left"],
-            }
-            return page_width, page_height, margins
-        except (AttributeError, IndexError):
-            return default_width, default_height, default_margins
-
-    @staticmethod
-    def _extract_metadata(document) -> Dict[str, Any]:
-        """
-        Extract metadata from a document.
-
-        Args:
-            document: python-docx Document object
-
-        Returns:
-            Dictionary of metadata
-        """
-        metadata = {}
-
-        # Core properties
-        core_props = document.core_properties
-        if hasattr(core_props, "title"):
-            metadata["title"] = core_props.title
-        if hasattr(core_props, "author"):
-            metadata["author"] = core_props.author
-        if hasattr(core_props, "created"):
-            metadata["created_date"] = core_props.created.isoformat() if core_props.created else None
-        if hasattr(core_props, "modified"):
-            metadata["modified_date"] = core_props.modified.isoformat() if core_props.modified else None
-        if hasattr(core_props, "keywords"):
-            metadata["keywords"] = core_props.keywords
-        if hasattr(core_props, "subject"):
-            metadata["subject"] = core_props.subject
-        if hasattr(core_props, "category"):
-            metadata["category"] = core_props.category
-
-        # Document statistics
-        metadata["paragraph_count"] = len(document.paragraphs)
-        metadata["table_count"] = len(document.tables)
-        metadata["section_count"] = len(document.sections)
-
-        # Word count (approximate)
-        word_count = 0
-        for paragraph in document.paragraphs:
-            word_count += len(paragraph.text.split())
-        metadata["word_count"] = word_count
-
-        return metadata
-
-    @staticmethod
-    def _extract_tables(document) -> List[TableData]:
-        """
-        Extract tables from a document.
-
-        Args:
-            document: python-docx Document object
-
-        Returns:
-            List of TableData objects
-
-        Raises:
-            TableExtractionError: If table extraction fails
-        """
-        tables = []
-
-        try:
-            for i, table in enumerate(document.tables):
-                rows = []
-                headers = []
-
-                # Process table rows
-                for j, row in enumerate(table.rows):
-                    row_data = [cell.text for cell in row.cells]
-
-                    # First row might be headers
-                    if j == 0:
-                        headers = row_data
-
-                    rows.append(row_data)
-
-                # Create position (approximate)
-                position = Position(page=i + 1, x=0.0, y=0.0)
-
-                tables.append(TableData(rows=rows, headers=headers, position=position, metadata={"table_index": i}))
-
-        except Exception as e:
-            logger.error(f"Error extracting tables: {str(e)}")
-            raise TableExtractionError(f"Failed to extract tables: {str(e)}") from e
-
-        return tables
 
     def _extract_images(self, file_path: str, include_ocr: bool = True) -> List[ImageData]:
         """

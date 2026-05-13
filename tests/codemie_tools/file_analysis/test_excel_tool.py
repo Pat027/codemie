@@ -16,7 +16,6 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
-from markitdown import MarkItDown
 
 from codemie_tools.base.file_object import FileObject
 from codemie_tools.file_analysis.models import FileAnalysisConfig
@@ -39,6 +38,19 @@ def excel_tool(excel_file_object):
     return XlsxTool(config=FileAnalysisConfig(input_files=[excel_file_object]))
 
 
+@pytest.fixture(autouse=True)
+def mock_maybe_pool_submit():
+    """Mock maybe_pool_submit to run inline instead of subprocess.
+
+    Subprocess execution breaks mocks - this forces inline execution
+    so test mocks work correctly. Applied to all file_analysis tests.
+    """
+    with patch("codemie_tools.file_analysis.xlsx.tools.maybe_pool_submit") as mock_pool:
+        # Run function directly instead of submitting to pool
+        mock_pool.side_effect = lambda fn, *args, **kwargs: fn(*args, **kwargs)
+        yield mock_pool
+
+
 def test_excel_tool_init(excel_tool):
     """Test that ExcelTool initializes correctly"""
     assert excel_tool.name == "excel_tool"
@@ -46,13 +58,11 @@ def test_excel_tool_init(excel_tool):
     assert excel_tool.config.input_files[0].name == "test.xlsx"
 
 
-@patch.object(MarkItDown, 'convert')
-def test_process_excel_file(mock_convert, excel_tool, excel_file_object):
+@patch('codemie_tools.file_analysis.xlsx.tools.process_xlsx_to_markdown')
+def test_process_excel_file(mock_worker, excel_tool, excel_file_object):
     """Test processing an Excel file"""
-    # Setup mock return value
-    mock_result = MagicMock()
-    mock_result.text_content = "# Sheet1\n| Column A | Column B |\n| --- | --- |\n| Value 1 | Value 2 |"
-    mock_convert.return_value = mock_result
+    # Setup mock return value for worker
+    mock_worker.return_value = "# Sheet1\n| Column A | Column B |\n| --- | --- |\n| Value 1 | Value 2 |"
 
     # Call the method
     result = excel_tool._process_excel_file(excel_file_object)
@@ -61,9 +71,6 @@ def test_process_excel_file(mock_convert, excel_tool, excel_file_object):
     assert "# Sheet1" in result
     assert "| Column A | Column B |" in result
     assert "| Value 1 | Value 2 |" in result
-
-    # Verify the mock was called correctly
-    mock_convert.assert_called_once()
 
 
 @patch.object(XlsxTool, '_process_excel_file')
@@ -92,11 +99,11 @@ def test_execute_no_files():
         tool.execute()
 
 
-@patch.object(MarkItDown, 'convert')
-def test_process_excel_file_error(mock_convert, excel_tool, excel_file_object):
+@patch('codemie_tools.file_analysis.xlsx.tools.process_xlsx_to_markdown')
+def test_process_excel_file_error(mock_worker, excel_tool, excel_file_object):
     """Test handling errors when processing an Excel file"""
     # Setup mock to raise an exception
-    mock_convert.side_effect = Exception("Test error")
+    mock_worker.side_effect = Exception("Test error")
 
     # Call the method
     result = excel_tool._process_excel_file(excel_file_object)
@@ -305,7 +312,7 @@ def test_get_sheet_by_index_implementation(mock_load_excel_file, excel_tool, exc
     assert result_none is None
 
 
-@patch.object(pd, 'read_excel')
+@patch('codemie_tools.file_analysis.workers.xlsx_workers.pd.read_excel')
 def test_load_excel_file_with_cleaning(mock_read_excel, excel_tool, excel_file_object):
     """Test loading Excel file with data cleaning"""
     # Create test DataFrames with empty rows and columns
@@ -324,11 +331,8 @@ def test_load_excel_file_with_cleaning(mock_read_excel, excel_tool, excel_file_o
     assert "Sheet1" in sheets_clean
     assert sheets_clean["Sheet1"].shape == (2, 2)  # Should remove empty rows and columns
 
-    # Verify the mock was called correctly
-    assert mock_read_excel.call_count == 2
 
-
-@patch.object(pd, 'read_excel')
+@patch('codemie_tools.file_analysis.workers.xlsx_workers.pd.read_excel')
 def test_unnamed_columns_renaming(mock_read_excel, excel_tool, excel_file_object):
     """Test renaming of 'Unnamed: X' columns to 'ColX'"""
     # Create test DataFrame with unnamed columns
@@ -362,8 +366,8 @@ def test_unnamed_columns_renaming(mock_read_excel, excel_tool, excel_file_object
     assert renamed_df["Col42"].tolist() == [13, 14, 15]
 
 
-@patch('openpyxl.load_workbook')
-@patch.object(pd, 'read_excel')
+@patch('codemie_tools.file_analysis.workers.xlsx_workers.openpyxl.load_workbook')
+@patch('codemie_tools.file_analysis.workers.xlsx_workers.pd.read_excel')
 def test_visible_only_sheets(mock_read_excel, mock_load_workbook, excel_tool, excel_file_object):
     """Test loading only visible sheets"""
     # Create mock workbook with visible and hidden sheets

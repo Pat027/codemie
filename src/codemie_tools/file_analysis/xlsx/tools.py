@@ -21,6 +21,7 @@ from markitdown import MarkItDown, PRIORITY_SPECIFIC_FILE_FORMAT
 from pandas import DataFrame
 from pydantic import BaseModel, Field
 
+from codemie.datasource.loader.file_processor_pool import maybe_pool_submit
 from codemie_tools.base.codemie_tool import CodeMieTool
 from codemie_tools.base.constants import (
     SOURCE_DOCUMENT_KEY,
@@ -31,6 +32,8 @@ from codemie_tools.base.file_object import FileObject
 from codemie_tools.base.file_tool_mixin import FileToolMixin
 from codemie_tools.file_analysis.models import FileAnalysisConfig
 from codemie_tools.file_analysis.tool_vars import EXCEL_TOOL
+from codemie_tools.file_analysis.workers import process_xlsx_to_markdown
+from codemie_tools.file_analysis.workers.common import process_files_with_worker
 from codemie_tools.file_analysis.xlsx.markitdown_xlsx_converter import XlsxConverter
 from codemie_tools.file_analysis.xlsx.processor import XlsxProcessor
 
@@ -177,7 +180,7 @@ class XlsxTool(CodeMieTool, FileToolMixin):
                 sheet_name = sheet_names[index]
                 return sheets[sheet_name], sheet_name
             else:
-                return f"Invalid sheet index: {index}. Valid range: 0-{len(sheet_names)-1}", None
+                return f"Invalid sheet index: {index}. Valid range: 0-{len(sheet_names) - 1}", None
         except Exception as e:
             logger.error(f"Failed to get sheet by index: {str(e)}")
             return f"Error getting sheet by index: {str(e)}", None
@@ -286,6 +289,13 @@ class XlsxTool(CodeMieTool, FileToolMixin):
             Markdown text representation of the Excel file
         """
         try:
+            return maybe_pool_submit(
+                process_xlsx_to_markdown,
+                file_object.bytes_content(),
+                sheet_names,
+                visible_only,
+            )
+
             chat_model = self.config.chat_model
             llm_model = (
                 getattr(chat_model, "model_name", None) or getattr(chat_model, "model", None) if chat_model else None
@@ -299,15 +309,12 @@ class XlsxTool(CodeMieTool, FileToolMixin):
                 XlsxConverter(sheet_names=sheet_names, visible_only=visible_only),
                 priority=PRIORITY_SPECIFIC_FILE_FORMAT,
             )
-            # Create a file-like object from bytes content
             binary_content = io.BytesIO(file_object.bytes_content())
             result = md.convert(binary_content)
             return result.text_content
         except FileNotFoundError as e:
-            # Handle the case when a file is not found
             return f"File not found: {str(e)}"
         except Exception as e:
-            # Return error message for Excel processing failures
             return f"Failed to process Excel file: {str(e)}"
 
     @staticmethod
@@ -371,15 +378,20 @@ class XlsxTool(CodeMieTool, FileToolMixin):
         filter_values = kwargs.get("filter_values")
         filter_mode = kwargs.get("filter_mode", "exact")
 
-        return self._process_files(
-            sheet_names,
-            sheet_index,
-            get_sheet_names,
-            get_stats,
-            visible_only,
-            filter_values,
-            filter_mode,
-        )
+        # Delegate per-file processing to common helper to reduce duplication
+        def worker(file_object: FileObject) -> str:
+            return self._process_file_content(
+                file_object,
+                sheet_names,
+                sheet_index,
+                get_sheet_names,
+                get_stats,
+                visible_only,
+                filter_values,
+                filter_mode,
+            )
+
+        return process_files_with_worker(files, worker)
 
     def _process_files(
         self,
@@ -538,4 +550,4 @@ class XlsxTool(CodeMieTool, FileToolMixin):
             sheet_data = sheets[sheet_name]
             return self._format_dataframe_as_markdown(sheet_data, sheet_name)
 
-        return f"Invalid sheet index: {sheet_index}. Valid range: 0-{len(sheet_names_list)-1}"
+        return f"Invalid sheet index: {sheet_index}. Valid range: 0-{len(sheet_names_list) - 1}"

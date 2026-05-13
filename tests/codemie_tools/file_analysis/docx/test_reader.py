@@ -29,6 +29,14 @@ from codemie_tools.file_analysis.docx.models import (
     QueryType,
 )
 from codemie_tools.file_analysis.docx.reader import DocxReader
+from codemie_tools.file_analysis.workers.docx_workers import (
+    _extract_text,
+    _process_paragraphs,
+    _create_sections,
+    _extract_page_dimensions,
+    _extract_metadata,
+    _extract_tables,
+)
 
 expected_text_parts = [
     "Context",
@@ -116,14 +124,14 @@ def mock_docx_document():
 
 def test_extract_text_from_document(mock_docx_document):
     """Tests the static _extract_text method."""
-    text = DocxReader._extract_text(mock_docx_document)
+    text = _extract_text(mock_docx_document)
     expected_text = "This is a title.\nNormal paragraph text.\nAnother paragraph.\nHeader 1 | Header 2\nData 1 | Data 2"
     assert text == expected_text
 
 
 def test_process_paragraphs_from_document(mock_docx_document):
     """Tests the static _process_paragraphs method."""
-    paragraphs, headers, _ = DocxReader._process_paragraphs(mock_docx_document.paragraphs)
+    paragraphs, headers, _ = _process_paragraphs(mock_docx_document.paragraphs)
 
     assert len(paragraphs) == 3
     assert paragraphs[0].text == "This is a title."
@@ -147,7 +155,7 @@ def test_create_sections():
     ]
     paragraphs = [p1, p2, p3, p4]
 
-    sections = DocxReader._create_sections(paragraphs, headers)
+    sections = _create_sections(paragraphs, headers)
 
     assert len(sections) == 2
     assert sections[0].title == "Heading 1"
@@ -158,13 +166,13 @@ def test_create_sections():
 
 def test_extract_page_dimensions(mock_docx_document):
     """Tests the static _extract_page_dimensions method."""
-    width, height, margins = DocxReader._extract_page_dimensions(mock_docx_document)
+    width, height, margins = _extract_page_dimensions(mock_docx_document)
     assert width == 8.5
     assert height == 11.0
     assert margins == {"top": 1.0, "right": 1.25, "bottom": 1.0, "left": 1.25}
 
     mock_document_no_sections = MagicMock(sections=[])
-    width, height, margins = DocxReader._extract_page_dimensions(mock_document_no_sections)
+    width, height, margins = _extract_page_dimensions(mock_document_no_sections)
     assert width == 8.5
     assert height == 11.0
     assert margins == {"top": 1.0, "right": 1.0, "bottom": 1.0, "left": 1.0}
@@ -172,7 +180,7 @@ def test_extract_page_dimensions(mock_docx_document):
 
 def test_extract_metadata(mock_docx_document):
     """Tests the static _extract_metadata method."""
-    metadata = DocxReader._extract_metadata(mock_docx_document)
+    metadata = _extract_metadata(mock_docx_document)
     assert metadata["title"] == "Test Document"
     assert metadata["author"] == "Test Author"
     assert metadata["keywords"] == "test, docx"
@@ -183,7 +191,7 @@ def test_extract_metadata(mock_docx_document):
 
 def test_extract_tables(mock_docx_document):
     """Tests the static _extract_tables method."""
-    tables = DocxReader._extract_tables(mock_docx_document)
+    tables = _extract_tables(mock_docx_document)
     assert len(tables) == 1
     assert isinstance(tables[0], TableData)
     assert tables[0].rows == [["Header 1", "Header 2"], ["Data 1", "Data 2"]]

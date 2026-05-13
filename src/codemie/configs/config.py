@@ -706,6 +706,7 @@ class Config(BaseSettings):
     # File Datasource multiprocessing
     ENABLE_FILE_MULTIPROCESSING: bool = False
     FILE_DATASOURCE_MULTIPROCESSING_MAX_WORKERS: int = 2
+    FILE_MULTIPROCESSING_MAX_EXECUTED_TASK_PER_WORKER: int = 100
 
     @staticmethod
     def _parse_daily_utc_cron(cron_expression: str) -> tuple[int, int] | None:

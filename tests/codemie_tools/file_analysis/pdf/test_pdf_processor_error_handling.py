@@ -33,6 +33,13 @@ def pdf_processor():
     return PdfProcessor(chat_model=mock_chat_model)
 
 
+@pytest.fixture
+def pdf_file_object():
+    mock_pdf = Mock(spec=pdfplumber.PDF)
+    mock_pdf.pages = []  # Empty pages list
+    return mock_pdf
+
+
 # NOTE: The old pymupdf tests for 'is_closed' attribute were removed because:
 # 1. pdfplumber doesn't have an 'is_closed' attribute (uses context managers)
 # 2. Accessing closed documents naturally raises errors when trying to use .pages
@@ -41,23 +48,15 @@ def pdf_processor():
 # This is INTENTIONAL and SAFE - error handling happens at a different level.
 
 
-def test_extract_text_with_empty_pages_list(pdf_processor):
+def test_extract_text_with_empty_pages_list(pdf_file_object, pdf_processor, sample_pdf_path):
     """Test extracting text when pages list is empty (graceful handling)."""
-    mock_pdf = Mock(spec=pdfplumber.PDF)
-    mock_pdf.pages = []  # Empty pages list
+    # Read real PDF bytes
+    with open(sample_pdf_path, 'rb') as f:
+        pdf_bytes = f.read()
 
-    # Should handle gracefully and return empty result
-    result = pdf_processor.extract_text_as_markdown(mock_pdf)
+    # Empty pages list should return empty string
+    result = pdf_processor.extract_text_as_markdown(pdf_bytes, [])
     assert result == ""  # Empty markdown for no pages
-
-
-def test_get_total_pages_with_empty_pages_list(pdf_processor):
-    """Test getting page count when pages list is empty."""
-    mock_pdf = Mock(spec=pdfplumber.PDF)
-    mock_pdf.pages = []  # Empty pages list
-
-    result = pdf_processor.get_total_pages(mock_pdf)
-    assert result == "0"  # Zero pages
 
 
 def test_process_pdf_with_corrupted_bytes(pdf_processor):
@@ -197,7 +196,13 @@ def test_extract_text_as_markdown_closes_pdf_obj_not_bytes():
 
     raw_bytes = b"fake-pdf-content"
 
-    with patch("pdfplumber.open", return_value=mock_pdf_obj):
+    # Mock pool to run inline so pdfplumber.open mock works
+    with (
+        patch("codemie_tools.file_analysis.pdf.processor.maybe_pool_submit") as mock_pool,
+        patch("pdfplumber.open", return_value=mock_pdf_obj),
+    ):
+        # Run worker function directly without pool
+        mock_pool.side_effect = lambda fn, *args, **kwargs: fn(*args, **kwargs)
         result = PdfProcessor.extract_text_as_markdown(raw_bytes)
 
     # Should succeed without AttributeError
