@@ -209,6 +209,8 @@ class Config(BaseSettings):
     # ===========================================
     # Cookie-Based Authentication (Local Auth)
     # ===========================================
+    RATE_LIMIT_LOGIN: str = "5/15minutes"
+
     AUTH_COOKIE_NAME: str = "codemie_access_token"
     AUTH_COOKIE_HTTPONLY: bool = True  # Prevent JS access (XSS protection)
     AUTH_COOKIE_SECURE: bool = False  # Set True in production (HTTPS only)

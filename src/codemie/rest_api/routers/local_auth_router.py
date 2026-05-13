@@ -135,7 +135,7 @@ async def verify_email(request: Request, response: Response, data: VerifyEmailRe
 
 
 @router.post("/login", response_model=TokenResponse)
-@limiter.limit("5/15minutes")
+@limiter.limit(lambda: config.RATE_LIMIT_LOGIN)
 async def login(request: Request, response: Response, data: LoginRequest):
     """Login with email and password
 
