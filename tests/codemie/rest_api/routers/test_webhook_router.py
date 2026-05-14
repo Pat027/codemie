@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
@@ -55,7 +55,7 @@ def anyio_backend():
 
 
 @pytest.mark.anyio
-@patch.object(WebhookService, 'invoke_webhook_logic', new_callable=AsyncMock)
+@patch.object(WebhookService, 'invoke_webhook_logic')
 async def test_invoke_webhook_success(mock_invoke_webhook_logic):
     # Arrange
     mock_invoke_webhook_logic.return_value = {"status": "success"}

@@ -14,7 +14,7 @@
 
 import hashlib
 import hmac
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException, Request
@@ -64,9 +64,7 @@ class TestGitHubWebhookIntegration:
                 "User-Agent": "GitHub-Hookshot/abc123",
                 "Content-Type": "application/json",
             }
-            request.body = AsyncMock(return_value=actual_payload)
-
-            return request
+            return request, actual_payload
 
         return _create_request
 
@@ -98,7 +96,7 @@ class TestGitHubWebhookIntegration:
     async def test_github_webhook_success_flow(self, create_github_webhook_request, github_webhook_setting):
         """Test successful GitHub webhook processing with signature verification."""
         webhook_id = "github-pr-webhook-123"
-        request = create_github_webhook_request()
+        request, raw_payload = create_github_webhook_request()
         background_tasks = MagicMock()
 
         workflow = MagicMock()
@@ -109,7 +107,7 @@ class TestGitHubWebhookIntegration:
         with patch.object(SettingsService, 'retrieve_setting', return_value=github_webhook_setting):
             with patch.object(WorkflowService, 'get_workflow', return_value=workflow):
                 with patch('codemie.rest_api.routers.utils.run_in_thread_pool'):
-                    response = await WebhookService.invoke_webhook_logic(request, webhook_id, background_tasks)
+                    response = WebhookService.invoke_webhook_logic(request, webhook_id, background_tasks, raw_payload)
 
                     assert response.message == WebhookService.WEBHOOK_INVOKED_SUCCESSFULLY
                     background_tasks.add_task.assert_called_once()
@@ -120,12 +118,12 @@ class TestGitHubWebhookIntegration:
     ):
         """Test that webhooks with invalid signatures are rejected."""
         webhook_id = "github-pr-webhook-123"
-        request = create_github_webhook_request(tamper_signature=True)
+        request, raw_payload = create_github_webhook_request(tamper_signature=True)
         background_tasks = MagicMock()
 
         with patch.object(SettingsService, 'retrieve_setting', return_value=github_webhook_setting):
             with pytest.raises(HTTPException) as exc_info:
-                await WebhookService.invoke_webhook_logic(request, webhook_id, background_tasks)
+                WebhookService.invoke_webhook_logic(request, webhook_id, background_tasks, raw_payload)
 
             assert exc_info.value.status_code == 401
             assert "Invalid" in exc_info.value.detail
@@ -136,12 +134,12 @@ class TestGitHubWebhookIntegration:
     ):
         """Test that webhooks with tampered payloads are rejected."""
         webhook_id = "github-pr-webhook-123"
-        request = create_github_webhook_request(tamper_payload=True)
+        request, raw_payload = create_github_webhook_request(tamper_payload=True)
         background_tasks = MagicMock()
 
         with patch.object(SettingsService, 'retrieve_setting', return_value=github_webhook_setting):
             with pytest.raises(HTTPException) as exc_info:
-                await WebhookService.invoke_webhook_logic(request, webhook_id, background_tasks)
+                WebhookService.invoke_webhook_logic(request, webhook_id, background_tasks, raw_payload)
 
             assert exc_info.value.status_code == 401
 
@@ -149,7 +147,7 @@ class TestGitHubWebhookIntegration:
     async def test_github_webhook_event_filtering(self, create_github_webhook_request, github_webhook_setting):
         """Test that only allowed event types are processed."""
         webhook_id = "github-pr-webhook-123"
-        request = create_github_webhook_request()
+        request, raw_payload = create_github_webhook_request()
         background_tasks = MagicMock()
 
         # Change event to something not in filter
@@ -157,7 +155,7 @@ class TestGitHubWebhookIntegration:
 
         with patch.object(SettingsService, 'retrieve_setting', return_value=github_webhook_setting):
             with pytest.raises(HTTPException) as exc_info:
-                await WebhookService.invoke_webhook_logic(request, webhook_id, background_tasks)
+                WebhookService.invoke_webhook_logic(request, webhook_id, background_tasks, raw_payload)
 
             assert exc_info.value.status_code == 400
             assert "not allowed" in exc_info.value.detail
@@ -166,7 +164,7 @@ class TestGitHubWebhookIntegration:
     async def test_github_webhook_missing_secret_config(self, create_github_webhook_request):
         """Test that webhook without secret falls back to no-security mode (logs warning)."""
         webhook_id = "github-pr-webhook-123"
-        request = create_github_webhook_request()
+        request, raw_payload = create_github_webhook_request()
         background_tasks = MagicMock()
 
         # Setting without GitHub secret (but has GitHub headers)
@@ -194,7 +192,7 @@ class TestGitHubWebhookIntegration:
             with patch.object(WorkflowService, 'get_workflow', return_value=workflow):
                 with patch('codemie.rest_api.routers.utils.run_in_thread_pool'):
                     # Should succeed (falls back to no-security mode with warning)
-                    response = await WebhookService.invoke_webhook_logic(request, webhook_id, background_tasks)
+                    response = WebhookService.invoke_webhook_logic(request, webhook_id, background_tasks, raw_payload)
 
                     # Webhook is allowed (backward compatibility) but logs warning
                     assert response.message == WebhookService.WEBHOOK_INVOKED_SUCCESSFULLY
@@ -205,7 +203,7 @@ class TestGitHubWebhookIntegration:
     ):
         """Test that when GitHub secret IS configured, invalid signatures are rejected."""
         webhook_id = "github-pr-webhook-123"
-        request = create_github_webhook_request(tamper_signature=True)  # Invalid signature
+        request, raw_payload = create_github_webhook_request(tamper_signature=True)  # Invalid signature
         background_tasks = MagicMock()
 
         # Setting WITH GitHub secret
@@ -226,7 +224,7 @@ class TestGitHubWebhookIntegration:
         with patch.object(SettingsService, 'retrieve_setting', return_value=setting):
             # Should raise 401 because signature is invalid
             with pytest.raises(HTTPException) as exc_info:
-                await WebhookService.invoke_webhook_logic(request, webhook_id, background_tasks)
+                WebhookService.invoke_webhook_logic(request, webhook_id, background_tasks, raw_payload)
 
             assert exc_info.value.status_code == 401
             assert "Invalid" in exc_info.value.detail
@@ -242,8 +240,8 @@ class TestBackwardCompatibility:
 
         request = MagicMock(spec=Request)
         request.headers = {"X-Custom-Token": "my-secret-token"}
-        request.body = AsyncMock(return_value=b'{"data": "test"}')
         background_tasks = MagicMock()
+        raw_payload = b'{"data": "test"}'
 
         setting = MagicMock()
         setting.credential.side_effect = lambda key: {
@@ -265,7 +263,7 @@ class TestBackwardCompatibility:
         with patch.object(SettingsService, 'retrieve_setting', return_value=setting):
             with patch('codemie.triggers.bindings.webhook.validate_assistant', return_value=assistant):
                 with patch('codemie.rest_api.routers.utils.run_in_thread_pool'):
-                    response = await WebhookService.invoke_webhook_logic(request, webhook_id, background_tasks)
+                    response = WebhookService.invoke_webhook_logic(request, webhook_id, background_tasks, raw_payload)
 
                     assert response.message == WebhookService.WEBHOOK_INVOKED_SUCCESSFULLY
 
@@ -276,8 +274,8 @@ class TestBackwardCompatibility:
 
         request = MagicMock(spec=Request)
         request.headers = {}
-        request.body = AsyncMock(return_value=b'{}')
         background_tasks = MagicMock()
+        raw_payload = b'{}'
 
         setting = MagicMock()
         setting.credential.side_effect = lambda key: {
@@ -299,7 +297,7 @@ class TestBackwardCompatibility:
         with patch.object(SettingsService, 'retrieve_setting', return_value=setting):
             with patch('codemie.triggers.bindings.webhook.validate_assistant', return_value=assistant):
                 with patch('codemie.rest_api.routers.utils.run_in_thread_pool'):
-                    response = await WebhookService.invoke_webhook_logic(request, webhook_id, background_tasks)
+                    response = WebhookService.invoke_webhook_logic(request, webhook_id, background_tasks, raw_payload)
 
                     assert response.message == WebhookService.WEBHOOK_INVOKED_SUCCESSFULLY
 
@@ -313,12 +311,12 @@ class TestSecurityRequirements:
         webhook_id = "test-webhook"
 
         request = MagicMock(spec=Request)
-        signature = hmac.new(github_webhook_secret.encode('utf-8'), b'{"test": "data"}', hashlib.sha256).hexdigest()
+        raw_payload = b'{"test": "data"}'
+        signature = hmac.new(github_webhook_secret.encode('utf-8'), raw_payload, hashlib.sha256).hexdigest()
         request.headers = {
             "X-Hub-Signature-256": f"sha256={signature}",
             "X-GitHub-Event": "push",
         }
-        request.body = AsyncMock(return_value=b'{"test": "data"}')
         background_tasks = MagicMock()
 
         setting = MagicMock()
@@ -342,7 +340,7 @@ class TestSecurityRequirements:
             with patch.object(WorkflowService, 'get_workflow', return_value=workflow):
                 with patch('codemie.rest_api.routers.utils.run_in_thread_pool'):
                     # Should succeed - signature is valid
-                    response = await WebhookService.invoke_webhook_logic(request, webhook_id, background_tasks)
+                    response = WebhookService.invoke_webhook_logic(request, webhook_id, background_tasks, raw_payload)
                     assert response.message == WebhookService.WEBHOOK_INVOKED_SUCCESSFULLY
 
     @pytest.mark.asyncio
@@ -355,8 +353,8 @@ class TestSecurityRequirements:
             "X-Hub-Signature-256": "sha256=invalid_signature",
             "X-GitHub-Event": "push",
         }
-        request.body = AsyncMock(return_value=b'{"test": "data"}')
         background_tasks = MagicMock()
+        raw_payload = b'{"test": "data"}'
 
         setting = MagicMock()
         setting.credential.side_effect = lambda key: {
@@ -372,7 +370,7 @@ class TestSecurityRequirements:
 
         with patch.object(SettingsService, 'retrieve_setting', return_value=setting):
             with pytest.raises(HTTPException) as exc_info:
-                await WebhookService.invoke_webhook_logic(request, webhook_id, background_tasks)
+                WebhookService.invoke_webhook_logic(request, webhook_id, background_tasks, raw_payload)
 
             # Invalid request should be rejected with 401
             assert exc_info.value.status_code == 401

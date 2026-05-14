@@ -74,11 +74,10 @@ class WebhookService:
     UNSUPPORTED_RESOURCE_TYPE = "Unsupported resource type '{}'"
 
     @classmethod
-    async def invoke_webhook_logic(cls, request: Request, webhook_id: str, background_tasks: BackgroundTasks):
+    def invoke_webhook_logic(
+        cls, request: Request, webhook_id: str, background_tasks: BackgroundTasks, raw_payload: bytes
+    ):
         logger.info("Received webhook invocation request with WebhookID: '%s'", webhook_id)
-
-        # Read request body once for signature verification and payload processing
-        raw_payload = await request.body()
 
         query = {"credential_values.key.keyword": "webhook_id", "credential_values.value.keyword": webhook_id}
         setting = SettingsService.retrieve_setting(query)
@@ -143,7 +142,7 @@ class WebhookService:
         elif resource_type == ResourceType.WORKFLOW.value:
             cls.handle_workflow(resource_id, raw_payload, background_tasks, setting)
         elif resource_type == ResourceType.DATASOURCE.value:
-            await cls.handle_datasource(resource_id, background_tasks, setting)
+            cls.handle_datasource(resource_id, background_tasks, setting)
         else:
             WebhookMonitoringService.send_webhook_invocation_metric(
                 webhook_id=webhook_id,
@@ -412,7 +411,7 @@ class WebhookService:
         return BaseResponse(message=cls.WEBHOOK_INVOKED_SUCCESSFULLY, data="")
 
     @classmethod
-    async def handle_datasource(cls, resource_id, background_tasks: BackgroundTasks, setting: Settings):
+    def handle_datasource(cls, resource_id, background_tasks: BackgroundTasks, setting: Settings):
         datasource = validate_datasource(resource_id)
         if not datasource:
             raise HTTPException(

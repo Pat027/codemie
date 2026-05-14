@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException, Request, status
@@ -27,7 +27,6 @@ from codemie.triggers.bindings.webhook import ResourceType, WebhookService
 def mock_request():
     request = MagicMock(Request)
     request.headers = {}
-    request.body = AsyncMock(return_value=b'{}')
     return request
 
 
@@ -42,7 +41,7 @@ async def test_invoke_webhook_logic_webhook_not_found(mock_request, mock_backgro
     webhook_id = "test_webhook"
     with patch.object(SettingsService, 'retrieve_setting', return_value=None):
         with pytest.raises(HTTPException) as exc_info:
-            await WebhookService.invoke_webhook_logic(mock_request, webhook_id, mock_background_tasks)
+            WebhookService.invoke_webhook_logic(mock_request, webhook_id, mock_background_tasks, b'{}')
         assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
         assert exc_info.value.detail == WebhookService.WEBHOOK_NOT_FOUND_OR_NOT_ENABLED.format(webhook_id)
 
@@ -68,7 +67,7 @@ async def test_invoke_webhook_logic_invalid_security_header(mock_request, mock_b
 
     with patch.object(SettingsService, 'retrieve_setting', return_value=setting):
         with pytest.raises(HTTPException) as exc_info:
-            await WebhookService.invoke_webhook_logic(mock_request, webhook_id, mock_background_tasks)
+            WebhookService.invoke_webhook_logic(mock_request, webhook_id, mock_background_tasks, b'{}')
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
         assert exc_info.value.detail == WebhookService.INVALID_SECURITY_HEADER
 
@@ -93,7 +92,7 @@ async def test_invoke_webhook_logic_assistant_not_found(mock_request, mock_backg
     with patch.object(SettingsService, 'retrieve_setting', return_value=setting):
         with patch('codemie.triggers.bindings.webhook.validate_assistant', return_value=None):
             with pytest.raises(HTTPException) as exc_info:
-                await WebhookService.invoke_webhook_logic(mock_request, webhook_id, mock_background_tasks)
+                WebhookService.invoke_webhook_logic(mock_request, webhook_id, mock_background_tasks, b'{}')
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
             assert exc_info.value.detail == WebhookService.ASSISTANT_NOT_FOUND.format("assistant_id")
 
@@ -123,7 +122,7 @@ async def test_invoke_webhook_logic_handle_workflow(mock_request, mock_backgroun
     with patch.object(SettingsService, 'retrieve_setting', return_value=setting):
         with patch.object(WorkflowService, 'get_workflow', return_value=workflow):
             with patch('codemie.rest_api.routers.utils.run_in_thread_pool'):
-                response = await WebhookService.invoke_webhook_logic(mock_request, webhook_id, mock_background_tasks)
+                response = WebhookService.invoke_webhook_logic(mock_request, webhook_id, mock_background_tasks, b'{}')
                 assert isinstance(response, BaseResponse)
                 assert response.message == WebhookService.WEBHOOK_INVOKED_SUCCESSFULLY
 
@@ -175,7 +174,7 @@ def patch_services(setting_fixture, datasource_fixture):
 @pytest.mark.asyncio
 async def test_invoke_webhook_logic_handle_datasource(mock_request, mock_background_tasks):
     webhook_id = "test_webhook"
-    response = await WebhookService.invoke_webhook_logic(mock_request, webhook_id, mock_background_tasks)
+    response = WebhookService.invoke_webhook_logic(mock_request, webhook_id, mock_background_tasks, b'{}')
     assert isinstance(response, BaseResponse)
     assert response.message == WebhookService.WEBHOOK_INVOKED_SUCCESSFULLY
 
@@ -199,6 +198,6 @@ async def test_invoke_webhook_logic_unsupported_resource_type(mock_request, mock
 
     with patch.object(SettingsService, 'retrieve_setting', return_value=setting):
         with pytest.raises(HTTPException) as exc_info:
-            await WebhookService.invoke_webhook_logic(mock_request, webhook_id, mock_background_tasks)
+            WebhookService.invoke_webhook_logic(mock_request, webhook_id, mock_background_tasks, b'{}')
         assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
         assert exc_info.value.detail == WebhookService.UNSUPPORTED_RESOURCE_TYPE.format("unsupported_type")

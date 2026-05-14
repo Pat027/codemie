@@ -381,6 +381,12 @@ class Config(BaseSettings):
     REDIS_CONNECT_TIMEOUT_SECONDS: float = 5.0
     REDIS_TIMEOUT_SECONDS: float = 5.0
 
+    # Webhook rate limiting (Redis-backed fixed window counter)
+    WEBHOOK_RATE_LIMIT_ENABLED: bool = True
+    WEBHOOK_RATE_LIMIT_MAX_REQUESTS: int = 10
+    WEBHOOK_RATE_LIMIT_WINDOW_SECONDS: int = 60
+    WEBHOOK_RATE_LIMIT_REDIS_KEY_NAMESPACE: str = "codemie:webhook_rate_limit"
+
     # Enables PostgreSQL-backed enterprise Token Management System instead of the mock in-memory TMS.
     MCP_AUTH_TMS_ENABLED: bool = False
     # Logical KMS key id used by enterprise TMS envelope encryption; required when TMS is enabled.
