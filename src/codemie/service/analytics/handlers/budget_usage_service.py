@@ -146,14 +146,22 @@ def _build_budget_usage_rows(
         }
         rows.append(_build_spending_row(label, spending))
 
+    project_category_labels = {
+        "platform": "{}",
+        "cli": "{} (cli)",
+        "premium_models": "{} (premium)",
+    }
+
     for pmba in member_allocations:
+        template = project_category_labels.get(pmba.budget_category, "{} (" + pmba.budget_category + ")")
+        label = template.format(pmba.project_name)
         spending = {
             "total_spend": pmba.spend or 0.0,
             "max_budget": pmba.allocated_max_budget,
             "budget_reset_at": pmba.budget_reset_at,
             "project_name": pmba.project_name,
         }
-        rows.append(_build_spending_row(pmba.project_name, spending))
+        rows.append(_build_spending_row(label, spending))
 
     return _get_key_spending_columns(), rows
 

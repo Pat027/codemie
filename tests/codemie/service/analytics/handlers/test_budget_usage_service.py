@@ -122,12 +122,13 @@ class TestBuildBudgetUsageRows:
     def _spend_row(self, amount: float):
         return SimpleNamespace(budget_period_spend=Decimal(str(amount)))
 
-    def _member(self, project_name: str, spend: float, limit, reset_at=None):
+    def _member(self, project_name: str, spend: float, limit, reset_at=None, budget_category: str = "platform"):
         return SimpleNamespace(
             project_name=project_name,
             spend=spend,
             allocated_max_budget=limit,
             budget_reset_at=reset_at,
+            budget_category=budget_category,
         )
 
     def test_returns_correct_columns(self):
@@ -157,6 +158,26 @@ class TestBuildBudgetUsageRows:
         a = self._assignment("b4", "custom_cat")
         _, rows = _build_budget_usage_rows("user@example.com", [a], {"b4": self._budget(10.0)}, {}, [])
         assert rows[0]["project_name"] == "user@example.com (custom_cat)"
+
+    def test_project_platform_category_uses_project_name(self):
+        member = self._member("my-project", 5.0, 100.0, budget_category="platform")
+        _, rows = _build_budget_usage_rows("user@example.com", [], {}, {}, [member])
+        assert rows[0]["project_name"] == "my-project"
+
+    def test_project_cli_category_appends_cli_suffix(self):
+        member = self._member("my-project", 5.0, 100.0, budget_category="cli")
+        _, rows = _build_budget_usage_rows("user@example.com", [], {}, {}, [member])
+        assert rows[0]["project_name"] == "my-project (cli)"
+
+    def test_project_premium_models_category_appends_premium_suffix(self):
+        member = self._member("my-project", 5.0, 100.0, budget_category="premium_models")
+        _, rows = _build_budget_usage_rows("user@example.com", [], {}, {}, [member])
+        assert rows[0]["project_name"] == "my-project (premium)"
+
+    def test_project_unknown_category_appends_category_name(self):
+        member = self._member("my-project", 5.0, 100.0, budget_category="custom_cat")
+        _, rows = _build_budget_usage_rows("user@example.com", [], {}, {}, [member])
+        assert rows[0]["project_name"] == "my-project (custom_cat)"
 
     def test_assignment_with_missing_budget_is_skipped(self):
         a = self._assignment("unknown-id", "platform")
