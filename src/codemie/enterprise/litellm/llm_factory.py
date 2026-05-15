@@ -276,24 +276,34 @@ def _apply_project_runtime_overrides(
         request_params["model_kwargs"] = {"user": runtime_user}
 
 
-def _mirror_platform_budget_assignment(*, user_id: str | None) -> None:
+def _mirror_platform_budget_assignment(*, user_id: str | None, customer: Any | None) -> None:
     """Best-effort: mirror the PLATFORM budget assignment into user_budget_assignments.
 
     Called from the synchronous direct-runtime path after check_user_budget() creates
     the LiteLLM customer.  Dispatches to the main event loop without blocking so that
     the model-creation call-site is not affected if the DB write is slow or fails.
+
+    Uses the budget_id from the actual LiteLLM customer record so that users with a
+    custom budget get the correct ID mirrored.  Falls back to the configured default
+    platform budget_id when the customer has no budget table attached.
     """
     if not user_id:
         return
     import asyncio
 
-    from .budget_categories import BudgetCategory as LiteLLMBudgetCategory
-    from .dependencies import get_category_budget_id
     from .project_member_runtime_sync import _main_event_loop
     from codemie.service.budget.budget_enums import BudgetCategory as CoreBudgetCategory
     from codemie.service.budget.budget_service import budget_service
 
-    platform_budget_id = get_category_budget_id(LiteLLMBudgetCategory.PLATFORM)
+    budget_table = getattr(customer, "litellm_budget_table", None) if customer is not None else None
+    platform_budget_id: str | None = getattr(budget_table, "budget_id", None) if budget_table is not None else None
+
+    if not platform_budget_id:
+        from .budget_categories import BudgetCategory as LiteLLMBudgetCategory
+        from .dependencies import get_category_budget_id
+
+        platform_budget_id = get_category_budget_id(LiteLLMBudgetCategory.PLATFORM)
+
     if not platform_budget_id:
         return
     loop = _main_event_loop
@@ -386,9 +396,9 @@ def _configure_direct_runtime_overrides(
         f"mode={RuntimeBudgetMode.GLOBAL_OR_PERSONAL_BUDGET.value!r} "
         f"litellm_customer_key={user_email!r}"
     )
-    check_user_budget(user_email=user_email, user_id=user_id)
+    customer = check_user_budget(user_email=user_email, user_id=user_id)
     request_params["model_kwargs"] = {"user": user_email}
-    _mirror_platform_budget_assignment(user_id=user_id)
+    _mirror_platform_budget_assignment(user_id=user_id, customer=customer)
 
 
 def _get_direct_request_category_budget_id(user_id: str, category: str) -> str | None:
