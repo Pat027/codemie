@@ -153,9 +153,6 @@ class BaseDatasourceProcessor(ABC):
             Exception: If any error occurs during processing, it is logged, and the error state is set
             on the index before re-raising the exception.
         """
-        # Import is here because of circular import error
-        from codemie.service.llm_service.utils import set_llm_context
-
         with propagated_span(
             self._otel_context,
             "datasource.process",
@@ -164,23 +161,7 @@ class BaseDatasourceProcessor(ABC):
             try:
                 self._load_stats_persisted = False
                 self._init_index()
-
-                # Ensure Application exists for the project_name
-                if self.index.project_name:
-                    ensure_application_exists(self.index.project_name)
-
-                self.callbacks.append(
-                    DatasourceMonitoringCallback(
-                        self.index,
-                        self.user,
-                        (self.is_full_reindex or self.is_incremental_reindex),
-                        self.is_resume_indexing,
-                        self.request_uuid,
-                    )
-                )
-                if self.user:
-                    set_llm_context(None, self.index.project_name, self.user)
-                    set_logging_info(uuid=self.request_uuid, user_id=self.user.id, user_email=self.user.username)
+                self._setup_processing_context()
                 self.index.start_fetching(is_incremental=self.is_incremental_reindex)
                 self.loader = self._init_loader()
                 self._on_process_start()
@@ -218,9 +199,7 @@ class BaseDatasourceProcessor(ABC):
                 # Create scheduler if cron_expression was provided
                 self._create_or_update_scheduler()
 
-                # Call the on_complete method of each callback
-                for callback in self.callbacks:
-                    callback.on_complete(result)
+                self._notify_callbacks_on_complete(result)
             except IndexDeletedException as ex:
                 record_exception_on_span(ex)
                 logger.error(f"Stopping, index was deleted for datasource {self.index.repo_name}", exc_info=True)
@@ -228,9 +207,7 @@ class BaseDatasourceProcessor(ABC):
                     index=self._index_name, ignore=[400, 404]
                 )  # Ensure embeddings index is deleted
                 self._on_process_end()  # Clear any sensitive state (e.g. OAuth tokens)
-                # Call the on_error method of each callback
-                for callback in self.callbacks:
-                    callback.on_error(ex)
+                self._notify_callbacks_on_error(ex)
                 return
             except GuardrailBlockedException as ex:
                 record_exception_on_span(ex)
@@ -240,9 +217,7 @@ class BaseDatasourceProcessor(ABC):
                 self.client.indices.delete(index=self._index_name, ignore=[400, 404])
                 self.index.set_error(str(ex))
                 self._on_process_end()
-                # Call the on_error method of each callback
-                for callback in self.callbacks:
-                    callback.on_error(ex)
+                self._notify_callbacks_on_error(ex)
                 return
             except Exception as ex:
                 record_exception_on_span(ex)
@@ -251,10 +226,40 @@ class BaseDatasourceProcessor(ABC):
                     self._persist_load_stats()
                 self.index.set_error(str(ex))
                 self._on_process_end()
-                # Call the on_error method of each callback
-                for callback in self.callbacks:
-                    callback.on_error(ex)
+                self._notify_callbacks_on_error(ex)
                 raise
+
+    def _setup_processing_context(self) -> None:
+        # Import is here because of circular import error
+        from codemie.service.llm_service.utils import set_llm_context
+
+        if self.index.project_name:
+            ensure_application_exists(self.index.project_name)
+
+        self.callbacks.append(
+            DatasourceMonitoringCallback(
+                self.index,
+                self.user,
+                (self.is_full_reindex or self.is_incremental_reindex),
+                self.is_resume_indexing,
+                self.request_uuid,
+            )
+        )
+        if self.user:
+            set_llm_context(None, self.index.project_name, self.user)
+            set_logging_info(
+                uuid=self.request_uuid,
+                user_id=self.user.id,
+                user_email=self.user.email or self.user.username or self.user.id,
+            )
+
+    def _notify_callbacks_on_complete(self, result) -> None:
+        for callback in self.callbacks:
+            callback.on_complete(result)
+
+    def _notify_callbacks_on_error(self, ex: Exception) -> None:
+        for callback in self.callbacks:
+            callback.on_error(ex)
 
     def _update_complete_state_estimate(
         self, index: IndexInfo, initial_complete_state: int, total_raw_docs: int, total_source_docs: int
