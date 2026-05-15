@@ -192,6 +192,14 @@ class MCPToolkitService:
                 logger.debug(f"Skipping disabled MCP server: {mcp_server.name}")
                 continue
 
+            # Per-server execution context: clone the request-scoped parent and
+            # reset auth_headers so credentials written by one server's resolver
+            # cannot leak into another server's request via _merge_mcp_headers
+            # (auth_headers wins on collision; HeaderTokenDelivery.key is always
+            # "Authorization"). Also ensures ContextAwareMCPTool wrappers carry
+            # a context bound to their own server at invocation time.
+            per_server_context = execution_context.model_copy(update={"auth_headers": None})
+
             try:
                 server_tools = cls._process_single_mcp_server(
                     mcp_server=mcp_server,
@@ -202,14 +210,14 @@ class MCPToolkitService:
                     tools_config=tools_config,
                     mcp_server_args_preprocessor=mcp_server_args_preprocessor,
                     mcp_server_single_usage=mcp_server_single_usage,
-                    execution_context=execution_context,  # Pass context to tool processing
+                    execution_context=per_server_context,
                 )
             except MCPAuthenticationRequiredException as exc:
                 auth_failures.append(
                     cls._build_auth_required_server_payload(
                         caught_payload=exc.payload,
                         mcp_server=mcp_server,
-                        execution_context=execution_context,
+                        execution_context=per_server_context,
                     )
                 )
                 continue

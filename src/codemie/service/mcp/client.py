@@ -129,7 +129,10 @@ class MCPConnectClient:
             **(execution_context.to_request_fields() if execution_context else {}),
         )
 
-        logger.debug(f"Listing tools from MCP server: {server_config.command}{' '.join(server_config.args)}")
+        logger.debug(
+            f"Listing tools from MCP server: {server_config.command or server_config.url} "
+            f"{' '.join(server_config.args or [])}"
+        )
         bucket_no = _get_bucket_no(server_config)
         headers = _get_headers(bucket_no, server_config)
 

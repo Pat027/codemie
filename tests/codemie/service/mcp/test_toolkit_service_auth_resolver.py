@@ -860,3 +860,216 @@ def test_prepare_server_config_placeholder_only_servers_loop() -> None:
 
                 assert server_config.headers == {"Authorization": "Bearer legacy-token"}
                 assert mock_factory.get_token_for_current_user.call_count == index + 1
+
+
+class _AuthConfigHeaderResolver:
+    """OAuth2-style stub resolver: matches only servers with `auth_config`,
+    and writes ``execution_context.auth_headers["Authorization"]`` (mimicking
+    the enterprise ``MCPAuthResolver`` + ``HeaderTokenDelivery`` combination).
+    """
+
+    def __init__(self, token: str = "OAUTH_TOKEN") -> None:
+        self._token = token
+        self.calls: list[tuple[MCPServerConfig, str | None, MCPExecutionContext | None]] = []
+
+    def can_handle(self, server_config: MCPServerConfig) -> bool:
+        return bool(server_config.auth_config)
+
+    def resolve(
+        self,
+        server_config: MCPServerConfig,
+        user_id: str | None,
+        execution_context: MCPExecutionContext | None = None,
+    ) -> None:
+        self.calls.append((server_config, user_id, execution_context))
+        if execution_context is None:
+            return
+        if execution_context.auth_headers is None:
+            execution_context.auth_headers = {}
+        execution_context.auth_headers["Authorization"] = f"Bearer {self._token}"
+
+
+def _capture_list_tools_calls() -> tuple[AsyncMock, list[tuple[MCPServerConfig, MCPExecutionContext | None]]]:
+    """Build a mocked ``MCPConnectClient.list_tools`` that records each call's
+    (server_config snapshot, execution_context snapshot) pair. Snapshots are
+    taken at await-time so per-iteration mutations are observable even though
+    the same MCPExecutionContext type is shared by the test harness.
+    """
+    captured: list[tuple[MCPServerConfig, MCPExecutionContext | None]] = []
+
+    async def _record(
+        server_config: MCPServerConfig,
+        execution_context: MCPExecutionContext | None = None,
+    ) -> list[MCPToolDefinition]:
+        captured.append(
+            (
+                server_config.model_copy(deep=True),
+                execution_context.model_copy(deep=True) if execution_context is not None else None,
+            )
+        )
+        return [_build_tool_definition()]
+
+    return AsyncMock(side_effect=_record), captured
+
+
+def _build_oauth_server() -> MCPServerDetails:
+    server = _build_mcp_server(
+        name="oauth-server",
+        mcp_config_id="mcp-oauth",
+        headers={},
+        auth_config={
+            "id": "auth-oauth",
+            "auth_type": "oauth2",
+            "authorization_url": "https://login.example.com/oauth2/authorize",
+        },
+    )
+    # Distinct command/args/env so the toolkit cache does not collapse the two
+    # servers onto the same key (cache key is derived from command/url/args/env).
+    server.config.args = ["oauth-server"]
+    return server
+
+
+def _build_legacy_server() -> MCPServerDetails:
+    server = _build_mcp_server(
+        name="legacy-server",
+        mcp_config_id="mcp-legacy",
+        headers={"Authorization": "Bearer {{user.token}}"},
+        auth_config=None,
+    )
+    server.config.args = ["legacy-server"]
+    return server
+
+
+@pytest.mark.parametrize(
+    "server_order",
+    [("oauth-first", "legacy-second"), ("legacy-first", "oauth-second")],
+    ids=["oauth_then_legacy", "legacy_then_oauth"],
+)
+def test_get_mcp_server_tools_isolates_auth_headers_per_server(
+    monkeypatch: pytest.MonkeyPatch,
+    server_order: tuple[str, str],
+) -> None:
+    """Regression: a server using the OAuth2 ``HeaderTokenDelivery`` resolver
+    must not contaminate another server's ``Authorization`` via the shared
+    ``MCPExecutionContext.auth_headers`` dict (see ``_merge_mcp_headers`` —
+    ``auth_headers`` wins on collision). Verified independently of order.
+    """
+    mock_list_tools, captured = _capture_list_tools_calls()
+    mock_client = MagicMock(spec=MCPConnectClient)
+    mock_client.base_url = "http://mock-mcp-connect"
+    mock_client.list_tools = mock_list_tools
+    MCPToolkitService.init_singleton(mock_client)
+
+    resolver = _AuthConfigHeaderResolver(token="OAUTH_TOKEN")
+    monkeypatch.setattr(MCPToolkitService, "_auth_resolvers", [resolver])
+
+    oauth_server = _build_oauth_server()
+    legacy_server = _build_legacy_server()
+    servers = [oauth_server, legacy_server] if server_order[0] == "oauth-first" else [legacy_server, oauth_server]
+
+    with patch.object(MCPAccessControlService, "resolve_catalog_config", side_effect=lambda s: s):
+        with patch("codemie.service.mcp.toolkit_service.get_current_user", return_value=_build_user()):
+            with patch("codemie.service.mcp.toolkit_service.token_exchange_service") as mock_factory:
+                mock_factory.get_token_for_current_user.return_value = "LEGACY_TOKEN"
+
+                MCPToolkitService.get_mcp_server_tools(servers, user_id="user-1", assistant_id="assistant-1")
+
+    assert mock_list_tools.await_count == 2
+
+    by_name = {
+        snapshot[0].auth_config["id"] if snapshot[0].auth_config else "legacy": snapshot for snapshot in captured
+    }
+    oauth_snapshot = by_name["auth-oauth"]
+    legacy_snapshot = by_name["legacy"]
+
+    # OAuth2 server: resolver wrote auth_headers["Authorization"]; static headers untouched.
+    assert oauth_snapshot[1] is not None
+    assert oauth_snapshot[1].auth_headers == {"Authorization": "Bearer OAUTH_TOKEN"}
+    assert oauth_snapshot[0].headers == {}
+
+    # Legacy server: own resolver wrote into server_config.headers; per-server execution
+    # context starts with auth_headers=None so the OAuth2 token cannot leak in.
+    assert legacy_snapshot[0].headers == {"Authorization": "Bearer LEGACY_TOKEN"}
+    assert legacy_snapshot[1] is not None
+    assert legacy_snapshot[1].auth_headers in (None, {})
+
+
+def test_get_mcp_server_tools_does_not_mutate_caller_execution_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The request-scoped ``execution_context`` constructed inside
+    ``get_mcp_server_tools`` should remain pristine across iterations; per-server
+    contexts are clones. This guards against leakage back into shared callers."""
+    mock_list_tools, _captured = _capture_list_tools_calls()
+    mock_client = MagicMock(spec=MCPConnectClient)
+    mock_client.base_url = "http://mock-mcp-connect"
+    mock_client.list_tools = mock_list_tools
+    MCPToolkitService.init_singleton(mock_client)
+
+    resolver = _AuthConfigHeaderResolver(token="OAUTH_TOKEN")
+    monkeypatch.setattr(MCPToolkitService, "_auth_resolvers", [resolver])
+
+    captured_parents: list[MCPExecutionContext] = []
+    original_process = MCPToolkitService._process_single_mcp_server.__func__
+
+    def _spy(cls, *, execution_context, **kwargs):
+        # The per-server context is a clone, not the parent. Record it for assertions.
+        captured_parents.append(execution_context)
+        return original_process(cls, execution_context=execution_context, **kwargs)
+
+    with patch("codemie.service.mcp.toolkit_service.get_current_user", return_value=_build_user()):
+        with patch("codemie.service.mcp.toolkit_service.token_exchange_service") as mock_factory:
+            mock_factory.get_token_for_current_user.return_value = "LEGACY_TOKEN"
+            with patch.object(MCPToolkitService, "_process_single_mcp_server", classmethod(_spy)):
+                MCPToolkitService.get_mcp_server_tools(
+                    [_build_oauth_server(), _build_legacy_server()],
+                    user_id="user-1",
+                    assistant_id="assistant-1",
+                )
+
+    # Each server got its own context object (different ids), proving isolation.
+    assert len(captured_parents) == 2
+    assert captured_parents[0] is not captured_parents[1]
+    # Each clone carries the request-scoped fields verbatim from the parent.
+    for ctx in captured_parents:
+        assert ctx.user_id == "user-1"
+        assert ctx.assistant_id == "assistant-1"
+
+
+def test_get_mcp_server_tools_isolates_auth_required_payload_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When one server raises MCPAuthenticationRequiredException, the per-server
+    context handed to ``_build_auth_required_server_payload`` must be the same
+    clone the resolver saw — not the shared parent — so workflow_execution_id
+    handling stays consistent with the rest of the loop."""
+    payload = {
+        "auth_config_id": "auth-oauth",
+        "status": "authentication_required",
+        "auth_type": "oauth2",
+    }
+    auth_error = MCPAuthenticationRequiredException(payload)
+
+    monkeypatch.setattr(MCPToolkitService, "_auth_resolvers", [])
+
+    def _process(*, mcp_server, execution_context, **_):
+        if mcp_server.name == "oauth-server":
+            raise auth_error
+        return [MagicMock(name="legacy-tool")]
+
+    with patch.object(MCPToolkitService, "get_instance", return_value=MagicMock()):
+        with patch.object(MCPToolkitService, "_process_single_mcp_server", side_effect=_process):
+            with pytest.raises(MCPAuthenticationRequiredException) as exc_info:
+                MCPToolkitService.get_mcp_server_tools(
+                    [_build_oauth_server(), _build_legacy_server()],
+                    user_id="user-1",
+                    assistant_id="assistant-1",
+                    workflow_execution_id="wf-1",
+                )
+
+    # workflow_execution_id is preserved on the per-server clone, so initiate_url
+    # is correctly omitted by _build_auth_required_server_payload.
+    failures = exc_info.value.payload["servers"]
+    assert len(failures) == 1
+    assert failures[0]["mcp_server_name"] == "oauth-server"
+    assert "initiate_url" not in failures[0]
