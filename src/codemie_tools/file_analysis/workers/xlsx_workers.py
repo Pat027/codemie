@@ -195,7 +195,7 @@ def process_xlsx_to_markdown(
 
 def load_xlsx(
     file_bytes: bytes,
-    sheet_names: Optional[List[str]],
+    sheet_names: Optional[List[str]] | None,
     visible_only: bool,
     clean_data: bool,
     filter_values: Optional[List[str]],
@@ -222,7 +222,7 @@ def load_xlsx(
         if visible_only:
             visible_sheet_names = _get_visible_sheets(binary_content)
 
-        sheets_to_load = sheet_names
+        sheets_to_load = sheet_names if sheet_names else None
         if visible_only and visible_sheet_names:
             if sheet_names:
                 sheets_to_load = [name for name in sheet_names if name in visible_sheet_names]

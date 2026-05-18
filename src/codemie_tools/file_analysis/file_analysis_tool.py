@@ -154,19 +154,11 @@ class FileAnalysisTool(CodeMieTool, FileToolMixin):
     def _process_single_file(self, file_object: FileObject) -> str:
         """Process a single file and return its content as markdown text"""
         try:
-            chat_model = self.config.chat_model
-            llm_model = (
-                (getattr(chat_model, "model_name", None) or getattr(chat_model, "model", None) if chat_model else None),
-            )
-            llm_client = chat_model.client if chat_model and hasattr(chat_model, "client") else None
-
             # Use process pool if enabled, otherwise process inline
             return maybe_pool_submit(
                 convert_file_to_markdown,
                 file_object.bytes_content(),
                 file_object.name,
-                llm_client,
-                llm_model,
             )
         except FileNotFoundError as e:
             return f"File not found: {str(e)}"

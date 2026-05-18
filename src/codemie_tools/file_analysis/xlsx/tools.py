@@ -296,22 +296,6 @@ class XlsxTool(CodeMieTool, FileToolMixin):
                 visible_only,
             )
 
-            chat_model = self.config.chat_model
-            llm_model = (
-                getattr(chat_model, "model_name", None) or getattr(chat_model, "model", None) if chat_model else None
-            )
-            md = MarkItDown(
-                enable_builtins=True,
-                llm_client=chat_model.client if chat_model and hasattr(chat_model, "client") else None,
-                llm_model=llm_model,
-            )
-            md.register_converter(
-                XlsxConverter(sheet_names=sheet_names, visible_only=visible_only),
-                priority=PRIORITY_SPECIFIC_FILE_FORMAT,
-            )
-            binary_content = io.BytesIO(file_object.bytes_content())
-            result = md.convert(binary_content)
-            return result.text_content
         except FileNotFoundError as e:
             return f"File not found: {str(e)}"
         except Exception as e:
@@ -378,20 +362,15 @@ class XlsxTool(CodeMieTool, FileToolMixin):
         filter_values = kwargs.get("filter_values")
         filter_mode = kwargs.get("filter_mode", "exact")
 
-        # Delegate per-file processing to common helper to reduce duplication
-        def worker(file_object: FileObject) -> str:
-            return self._process_file_content(
-                file_object,
-                sheet_names,
-                sheet_index,
-                get_sheet_names,
-                get_stats,
-                visible_only,
-                filter_values,
-                filter_mode,
-            )
-
-        return process_files_with_worker(files, worker)
+        return self._process_files(
+            sheet_names,
+            sheet_index,
+            get_sheet_names,
+            get_stats,
+            visible_only,
+            filter_values,
+            filter_mode,
+        )
 
     def _process_files(
         self,

@@ -49,7 +49,7 @@ class XlsxProcessor:
             filter_values: List of values to search for. Row must contain ALL values (AND logic).
             filter_mode: Filter matching mode ('exact' - exact match, 'contains' - substring match)
         """
-        self.sheet_names = sheet_names
+        self.sheet_names = sheet_names if sheet_names else None
         self.visible_only = visible_only
         self.filter_values = filter_values
         self.filter_mode = filter_mode
