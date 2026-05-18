@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -385,6 +385,7 @@ class ProjectSpendTrackingRepository:
                         {
                             "id": row.id,
                             "project_name": row.project_name,
+                            "user_id": row.user_id,
                             "cost_center_id": row.cost_center_id,
                             "cost_center_name": row.cost_center_name,
                             "key_hash": None,
@@ -407,6 +408,7 @@ class ProjectSpendTrackingRepository:
                         "cumulative_spend": insert(ProjectSpendTracking).excluded.cumulative_spend,
                         "budget_period_spend": insert(ProjectSpendTracking).excluded.budget_period_spend,
                         "budget_category": insert(ProjectSpendTracking).excluded.budget_category,
+                        "user_id": insert(ProjectSpendTracking).excluded.user_id,
                     },
                 )
             )
@@ -483,6 +485,45 @@ class ProjectSpendTrackingRepository:
             await session.execute(stmt)
         await session.commit()
 
+    async def touch_budget_spend_dates(
+        self,
+        session: AsyncSession,
+        budget_ids: list[str],
+        project_name: str,
+        now: datetime,
+    ) -> None:
+        """Update spend_date to ``now`` on the latest budget row per budget_id for a user.
+
+        Called when LiteLLM confirms spend is unchanged so that _needs_refresh
+        sees a fresh timestamp without inserting a duplicate row.
+        """
+        if not budget_ids:
+            return
+
+        latest_subq = (
+            select(
+                ProjectSpendTracking.budget_id,
+                func.max(ProjectSpendTracking.spend_date).label("max_spend_date"),
+            )
+            .where(ProjectSpendTracking.project_name == project_name)
+            .where(ProjectSpendTracking.budget_id.in_(budget_ids))
+            .where(ProjectSpendTracking.spend_subject_type == "budget")
+            .group_by(ProjectSpendTracking.budget_id)
+            .subquery()
+        )
+
+        stmt = (
+            update(ProjectSpendTracking)
+            .where(ProjectSpendTracking.project_name == project_name)
+            .where(ProjectSpendTracking.spend_subject_type == "budget")
+            .where(ProjectSpendTracking.budget_id.in_(budget_ids))
+            .where(ProjectSpendTracking.spend_date == latest_subq.c.max_spend_date)
+            .values(spend_date=now)
+        )
+
+        await session.execute(stmt)
+        await session.commit()
+
     async def get_latest_by_budget_ids(
         self,
         session: AsyncSession,
@@ -494,17 +535,16 @@ class ProjectSpendTrackingRepository:
         Used by the /budget_usage endpoint to retrieve the current-period spend
         for a user's personal budget categories (platform / cli / premium_models).
 
-        Despite the column name ``project_name``, for personal budget rows this
-        field stores the user's UUID (``subject_user_id``). Multiple users can
-        share the same ``budget_id`` (e.g. a shared platform budget), so scoping
-        by ``project_name`` is required to avoid returning spend data written by
-        a different user who happened to refresh more recently.
+        Multiple users can share the same ``budget_id`` (e.g. a shared platform
+        budget), so scoping by ``project_name`` (the user's identifier/email) is
+        required to avoid returning spend data written by a different user.
 
         Args:
             session: Async database session
             budget_ids: Budget IDs to look up
-            project_name: The user UUID stored in the ``project_name`` column for
-                personal budget rows — used to scope results to this user only.
+            project_name: The user's email/identifier stored in ``project_name`` —
+                used to scope results to this user only. Matches the convention
+                used by the spend collector (project_name = user_identifier).
 
         Returns:
             Dict mapping budget_id to the most recent ProjectSpendTracking row

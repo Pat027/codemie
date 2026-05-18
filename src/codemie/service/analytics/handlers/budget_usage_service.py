@@ -162,7 +162,7 @@ class BudgetUsageService:
         Performs a lazy refresh from LiteLLM if spend data is older than
         config.BUDGET_USAGE_STALENESS_THRESHOLD_MS milliseconds.
         """
-        assignments, budgets_map, spend_map = await self._load_from_db(session, subject_user_id)
+        assignments, budgets_map, spend_map = await self._load_from_db(session, subject_user_id, subject_label)
 
         needs_refresh = self._needs_refresh(spend_map) and self._is_litellm_enabled()
         if needs_refresh:
@@ -181,7 +181,7 @@ class BudgetUsageService:
             # loaded ORM objects; rollback clears any error state from a failed
             # insert, then reload fresh objects for _build_budget_usage_rows.
             await session.rollback()
-            assignments, budgets_map, _ = await self._load_from_db(session, subject_user_id)
+            assignments, budgets_map, _ = await self._load_from_db(session, subject_user_id, subject_label)
 
         return _build_budget_usage_rows(subject_label, assignments, budgets_map, spend_map)
 
@@ -210,6 +210,7 @@ class BudgetUsageService:
         self,
         session: AsyncSession,
         subject_user_id: str,
+        subject_label: str,
     ) -> tuple[list, dict, dict]:
         """Load all DB data needed for budget usage in parallel.
 
@@ -224,7 +225,7 @@ class BudgetUsageService:
 
         budgets_map, spend_map = await asyncio.gather(
             budget_repository.get_by_ids(session, budget_ids),
-            tracking_repo.get_latest_by_budget_ids(session, budget_ids, subject_user_id),
+            tracking_repo.get_latest_by_budget_ids(session, budget_ids, subject_label),
         )
         return assignments, budgets_map, spend_map
 
@@ -274,6 +275,7 @@ class BudgetUsageService:
 
             now = datetime.now(timezone.utc)
             rows_to_insert = []
+            unchanged_budget_ids = []
             for assignment, result in zip(fetch_assignments, results, strict=False):
                 if isinstance(result, BaseException):
                     logger.warning(
@@ -284,16 +286,18 @@ class BudgetUsageService:
                     continue
                 fresh_spend = Decimal(str(result.get("total_spend", 0.0)))
                 existing = current_spend_map.get(assignment.budget_id)
-                if existing is not None and existing.budget_period_spend == fresh_spend:
+                if existing is not None and round(existing.budget_period_spend, 4) == round(fresh_spend, 4):
                     logger.debug(
                         f"Spend unchanged for budget_id={assignment.budget_id} "
-                        f"category={assignment.category} spend={fresh_spend}, skipping insert."
+                        f"category={assignment.category} spend={fresh_spend}, touching spend_date."
                     )
+                    unchanged_budget_ids.append(assignment.budget_id)
                     continue
                 rows_to_insert.append(
                     ProjectSpendTracking(
                         id=uuid.uuid4(),
-                        project_name=subject_user_id,
+                        project_name=subject_label,
+                        user_id=subject_user_id,
                         spend_date=now,
                         budget_period_spend=fresh_spend,
                         budget_id=assignment.budget_id,
@@ -304,15 +308,18 @@ class BudgetUsageService:
                     )
                 )
 
+            if unchanged_budget_ids:
+                await tracking_repo.touch_budget_spend_dates(session, unchanged_budget_ids, subject_label, now)
+
             fallback = await self._persist_tracking_rows(session, tracking_repo, subject_user_id, rows_to_insert)
             if fallback is not None:
                 return fallback
 
-            return await tracking_repo.get_latest_by_budget_ids(session, budget_ids, subject_user_id)
+            return await tracking_repo.get_latest_by_budget_ids(session, budget_ids, subject_label)
 
         except Exception as e:
             logger.warning(f"LiteLLM refresh failed for subject={subject_user_id}: {e}. Returning stale DB data.")
-            return await tracking_repo.get_latest_by_budget_ids(session, budget_ids, subject_user_id)
+            return await tracking_repo.get_latest_by_budget_ids(session, budget_ids, subject_label)
 
     @staticmethod
     async def _persist_tracking_rows(

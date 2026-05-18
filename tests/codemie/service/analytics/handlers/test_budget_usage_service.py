@@ -434,7 +434,7 @@ class TestBudgetUsageServiceLoadFromDb:
                 "codemie.repository.project_spend_tracking_repository.ProjectSpendTrackingRepository",
                 return_value=mock_tracking,
             ):
-                assignments, bmap, smap = await service._load_from_db(mock_session, "user-1")
+                assignments, bmap, smap = await service._load_from_db(mock_session, "user-1", "user@test.com")
 
         assert assignments == [assignment]
         assert bmap == budgets_map
@@ -457,7 +457,7 @@ class TestBudgetUsageServiceLoadFromDb:
                 "codemie.repository.project_spend_tracking_repository.ProjectSpendTrackingRepository",
                 return_value=mock_tracking,
             ):
-                assignments, bmap, smap = await service._load_from_db(mock_session, "user-1")
+                assignments, bmap, smap = await service._load_from_db(mock_session, "user-1", "user@test.com")
 
         assert assignments == []
         assert bmap == {}
