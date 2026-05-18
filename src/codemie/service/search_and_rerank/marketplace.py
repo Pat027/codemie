@@ -45,10 +45,10 @@ class SearchAndRerankMarketplace(SearchAndRerankKB):
         Returns:
             List of reranked documents with popularity boost applied.
         """
-        results = super().execute(routing_field_name)
+        documents, _doc_paths = super().execute(routing_field_name)
 
         results_with_scores = []
-        for doc in results:
+        for doc in documents:
             # popularity_score is already normalized to [0, 1] range by AssistantLoader
             popularity_score = doc.metadata.get('popularity_score', 0.0)
             results_with_scores.append((doc, popularity_score))
