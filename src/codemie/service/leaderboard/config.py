@@ -114,8 +114,8 @@ class LeaderboardSettings:
 
 
 # Advisory lock ID for leaderboard scheduler — must differ from other lock IDs
-# ConversationAnalysis: 987654321, SpendTracking: 987654322
-LEADERBOARD_LOCK_ID = 987654323
+# CA=987654321, Spend=987654322/323/324, LB=987654325
+LEADERBOARD_LOCK_ID = 987654325
 
 # Singleton settings instance
 leaderboard_settings = LeaderboardSettings()
