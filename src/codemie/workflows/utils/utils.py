@@ -361,7 +361,7 @@ def evaluate_conditional_route(
     next_candidate = state_schema.get(NEXT_KEY, workflow_state.next.state_id)[-1]
     logger.info(f"Evaluate conditional route. Started. State: {workflow_state.id}, NextCandidate: {next_candidate}")
 
-    if isinstance(messages[-1], AIMessage):
+    if messages and isinstance(messages[-1], AIMessage):
         task_result_metadata = messages[-1].response_metadata
         task_result = bool(task_result_metadata and task_result_metadata.get('success', False))
     else:
