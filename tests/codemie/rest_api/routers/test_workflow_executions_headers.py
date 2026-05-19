@@ -329,6 +329,7 @@ class TestWorkflowExecutionsRouterWithHeaders:
             raw_request=raw_request,
             user=user,
             propagate_headers=True,  # Enable header propagation
+            stream=False,
         )
 
         # Assert - extract_custom_headers called with propagate_headers=True
@@ -398,6 +399,7 @@ class TestWorkflowExecutionsRouterWithHeaders:
             raw_request=raw_request,
             user=user,
             propagate_headers=False,  # Default value
+            stream=False,
         )
 
         # Assert - extract_custom_headers called with propagate_headers=False

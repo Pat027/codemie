@@ -34,7 +34,11 @@ from langgraph.types import Send
 from pydantic import ValidationError
 
 from codemie.agents.assistant_agent import AIToolsAgent
-from codemie.chains.base import ThoughtAuthorType, StreamedGenerationResult, Thought
+from codemie.chains.base import (
+    ThoughtAuthorType,
+    StreamedGenerationResult,
+    Thought,
+)
 from codemie.configs import logger, config
 from codemie.enterprise.langfuse import (
     clear_workflow_trace_context,
@@ -109,7 +113,7 @@ class WorkflowExecutor:
     def create_executor(
         cls,
         workflow_config: WorkflowConfig,
-        user_input: str,
+        user_input: str | None,
         user: User,
         resume_execution: bool = False,
         execution_id: str = None,
@@ -301,7 +305,7 @@ class WorkflowExecutor:
     def __init__(
         self,
         workflow_config: WorkflowConfig,
-        user_input: str,
+        user_input: str | None,
         user: User,
         thought_queue: MessageQueue = None,
         file_names: Optional[list[str]] = None,
@@ -903,11 +907,29 @@ class WorkflowExecutor:
 
         return graph_config
 
+    def _inject_resume_input(self, workflow: CompiledStateGraph, config: RunnableConfig) -> None:
+        """When user resumes with the message, inject the message to the workflow"""
+        if not (self.resume_execution and self.user_input):
+            return
+
+        parsed_context = parse_from_string_representation(self.user_input)
+
+        if not isinstance(parsed_context, dict):
+            parsed_context = {}
+
+        workflow.update_state(
+            config,
+            {
+                MESSAGES_VARIABLE: [HumanMessage(content=self.user_input)],
+                CONTEXT_STORE_VARIABLE: parsed_context,
+            },
+        )
+
     def _run_workflow_execution(self, graph_config: RunnableConfig, chunks_collector: list):
         """Execute the workflow and collect output chunks."""
         inputs = self.on_workflow_start()
         workflow = self._init_workflow()
-
+        self._inject_resume_input(workflow, graph_config)
         self._process_workflow_chunks(workflow, inputs, graph_config, chunks_collector)
         self._check_for_interruption(workflow, graph_config)
         self.workflow_execution_service.finish()
@@ -956,10 +978,14 @@ class WorkflowExecutor:
         self._execute_workflow_stream(enable_verbose_consumer=True)
 
     def on_workflow_start(self):
-        input_message = HumanMessage(content=self.user_input)
-        messages = [input_message]
-        initial_context = parse_from_string_representation(self.user_input)
-        if not isinstance(initial_context, dict):
+        if self.user_input:
+            input_message = HumanMessage(content=self.user_input)
+            messages = [input_message]
+            initial_context = parse_from_string_representation(self.user_input)
+            if not isinstance(initial_context, dict):
+                initial_context = {}
+        else:
+            messages = []
             initial_context = {}
         if self.file_names:
             from codemie_tools.base.file_object import FileObject

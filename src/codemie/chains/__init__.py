@@ -17,7 +17,6 @@ from codemie.chains.base import (
     StreamingChain,
     GenerationResult,
     StreamedGenerationResult,
-    WorkflowExecutionResult,
 )
 from codemie.chains.pure_chat_chain import PureChatChain
 from codemie.chains.kb_sources_selector_chain import KBSourcesSelectorChain
@@ -28,6 +27,5 @@ __all__ = [
     "PureChatChain",
     "GenerationResult",
     "StreamedGenerationResult",
-    "WorkflowExecutionResult",
     "KBSourcesSelectorChain",
 ]

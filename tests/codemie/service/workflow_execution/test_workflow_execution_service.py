@@ -34,7 +34,7 @@ def workflow_config():
             WorkflowState(
                 id="state_b",
                 assistant_id="asst-2",
-                task="",
+                task="Review and approve the output",
                 next=WorkflowNextState(state_id="end"),
                 interrupt_before=True,
             ),
@@ -208,6 +208,65 @@ class TestStartState:
 
         _, kwargs = mock_state_cls.call_args
         assert kwargs["iteration_number"] is None
+
+
+class TestSendInterruptedEvent:
+    def test_no_op_when_thought_queue_is_none(self, service):
+        service.thought_queue = None
+        service._send_interrupted_event("state_b")
+        # No error raised — the method returns early
+
+    def test_sends_event_with_task_and_id_from_state_config(self, service):
+        mock_queue = MagicMock()
+        service.thought_queue = mock_queue
+
+        service._send_interrupted_event("state_b", execution_state_id="exec-state-uuid")
+
+        mock_queue.send.assert_called_once()
+        payload = json.loads(mock_queue.send.call_args[0][0])
+        assert payload["workflow_state"]["id"] == "exec-state-uuid"
+        assert payload["workflow_state"]["name"] == "state_b"
+        assert payload["workflow_state"]["task"] == "Review and approve the output"
+        assert payload["workflow_state"]["status"] == WorkflowExecutionStatusEnum.INTERRUPTED.value
+        assert payload["workflow_state"]["event_type"] == "state_interrupted"
+        assert payload["last"] is True
+
+    def test_sends_event_without_id_when_not_provided(self, service):
+        mock_queue = MagicMock()
+        service.thought_queue = mock_queue
+
+        service._send_interrupted_event("state_b")
+
+        payload = json.loads(mock_queue.send.call_args[0][0])
+        assert payload["workflow_state"]["id"] is None
+
+    def test_sends_none_task_when_state_config_not_found(self, service):
+        mock_queue = MagicMock()
+        service.thought_queue = mock_queue
+
+        service._send_interrupted_event("unknown_state")
+
+        payload = json.loads(mock_queue.send.call_args[0][0])
+        assert payload["workflow_state"]["task"] is None
+
+    def test_interrupt_propagates_predecessor_id_to_event(self, service):
+        mock_queue = MagicMock()
+        service.thought_queue = mock_queue
+        service.workflow_execution = MagicMock()
+
+        predecessor = _make_state("state_a", WorkflowExecutionStatusEnum.SUCCEEDED)
+        predecessor.id = "predecessor-uuid"
+
+        with patch(
+            "codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionState.get_all_by_fields",
+            return_value=[predecessor],
+        ):
+            service.interrupt("state_b")
+
+        mock_queue.send.assert_called_once()
+        payload = json.loads(mock_queue.send.call_args[0][0])
+        assert payload["workflow_state"]["event_type"] == "state_interrupted"
+        assert payload["workflow_state"]["id"] == "predecessor-uuid"
 
 
 class TestInterruptGuard:

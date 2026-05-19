@@ -166,6 +166,9 @@ def _make_thought_json(message: str) -> str:
     return json.dumps({"thought": {"id": "t1", "message": message, "author_type": "Agent"}})
 
 
+EXECUTION_ID = "exec-test"
+
+
 def _run_stream(workflow, generator_queue, producer_fn):
     """
     Helper: patches threading.Thread so that thread.start() runs producer_fn
@@ -176,7 +179,7 @@ def _run_stream(workflow, generator_queue, producer_fn):
         mock_thread = MagicMock()
         mock_thread_cls.return_value = mock_thread
         mock_thread.start.side_effect = lambda: producer_fn()
-        return list(_serve_workflow_stream(workflow, generator_queue))
+        return list(_serve_workflow_stream(workflow, generator_queue, EXECUTION_ID))
 
 
 class _FakeGeneratorQueue:
@@ -200,19 +203,21 @@ def mock_workflow():
 
 
 def test_serve_workflow_stream_passes_through_ndjson_chunks(generator_queue, mock_workflow):
-    """Each thought message received from the queue is yielded as a raw NDJSON line."""
-    msg1 = _make_thought_json("Hello")
-    msg2 = _make_thought_json("World")
+    """Each thought message received from the queue is yielded with workflow_execution_id injected."""
 
     def _produce():
-        generator_queue.queue.put(msg1)
-        generator_queue.queue.put(msg2)
+        generator_queue.queue.put(_make_thought_json("Hello"))
+        generator_queue.queue.put(_make_thought_json("World"))
         generator_queue.close()
 
     lines = _run_stream(mock_workflow, generator_queue, _produce)
 
-    assert lines[0] == f"{msg1}\n"
-    assert lines[1] == f"{msg2}\n"
+    chunk0 = json.loads(lines[0])
+    chunk1 = json.loads(lines[1])
+    assert chunk0["thought"]["message"] == "Hello"
+    assert chunk0["workflow_execution_id"] == EXECUTION_ID
+    assert chunk1["thought"]["message"] == "World"
+    assert chunk1["workflow_execution_id"] == EXECUTION_ID
 
 
 def test_serve_workflow_stream_final_chunk_has_last_true(generator_queue, mock_workflow):
@@ -269,7 +274,7 @@ def test_serve_workflow_stream_starts_and_joins_thread(generator_queue, mock_wor
         mock_thread_cls.return_value = mock_thread
         mock_thread.start.side_effect = lambda: _produce()
 
-        list(_serve_workflow_stream(mock_workflow, generator_queue))
+        list(_serve_workflow_stream(mock_workflow, generator_queue, EXECUTION_ID))
 
     mock_thread_cls.assert_called_once_with(target=mock_workflow.stream_to_client)
     mock_thread.start.assert_called_once()

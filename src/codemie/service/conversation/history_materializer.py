@@ -92,7 +92,7 @@ def _materialize_execution_reference(message: GeneratedMessage, workflow_id: Opt
         logger.warning(f"Workflow execution {execution_id} not found, keeping reference as-is")
         return message
 
-    thoughts = _get_execution_thoughts(execution_id)
+    thoughts = _get_execution_thoughts(execution_id, history_index=message.history_index)
 
     final_output = execution.output or ""
     if not final_output and thoughts:
@@ -114,12 +114,14 @@ def _materialize_execution_reference(message: GeneratedMessage, workflow_id: Opt
     )
 
 
-def _get_execution_thoughts(execution_id: str) -> List[dict]:
+def _get_execution_thoughts(execution_id: str, history_index: Optional[int] = None) -> List[dict]:
     """
     Retrieve thoughts for a workflow execution ordered by creation time.
 
     Args:
         execution_id: The workflow execution ID
+        history_index: When provided, return only states tagged with this turn index.
+            Falls back to all states when no states carry a history_index (legacy data).
 
     Returns:
         List of thought dicts, one per state that has an output
@@ -130,6 +132,10 @@ def _get_execution_thoughts(execution_id: str) -> List[dict]:
         states = WorkflowExecutionState.get_all_by_fields(
             fields={"execution_id.keyword": execution_id}, order_by="date"
         )
+
+        if history_index is not None and any(s.history_index is not None for s in states):
+            states = [s for s in states if s.history_index == history_index]
+
         return [
             {
                 "id": state.id,

@@ -16,6 +16,7 @@ from typing import Any, Optional
 from datetime import datetime
 import threading
 
+from codemie.chains.base import StreamedGenerationResult, WorkflowStateEvent, WorkflowStateEventType
 from codemie.configs import logger
 from codemie.core.workflow_models import (
     WorkflowConfig,
@@ -24,6 +25,7 @@ from codemie.core.workflow_models import (
     WorkflowExecutionState,
 )
 from codemie.core.thread import MessageQueue
+from codemie.core.constants import ChatRole
 from codemie.rest_api.security.user import User
 from codemie.service.request_summary_manager import request_summary_manager
 from codemie.service.monitoring.workflow_monitoring_service import WorkflowMonitoringService
@@ -45,7 +47,9 @@ class WorkflowExecutionService:
         self.workflow_execution_id = workflow_execution_id
         self.workflow_execution_lock = threading.Lock()
         self.thought_queue = thought_queue  # For streaming state events
+        self.workflow_execution = None
         self._refresh_workflow_execution()
+        self._current_history_index = self._compute_current_history_index()
 
     def fail(self, error_class: str, error_message: str):
         with self.workflow_execution_lock:
@@ -126,8 +130,11 @@ class WorkflowExecutionService:
                 f"set to {WorkflowExecutionStatusEnum.INTERRUPTED}"
             )
 
+            predecessor_execution_id = None
             if interrupted_state:
-                self._interrupt_predecessor_state(interrupted_state)
+                predecessor_execution_id = self._interrupt_predecessor_state(interrupted_state)
+
+            self._send_interrupted_event(interrupted_state, predecessor_execution_id)
 
     def resume_states(self):
         states = WorkflowExecutionState.get_all_by_fields(fields={EXECUTION_ID_KEYWORD: self.workflow_execution_id})
@@ -208,6 +215,22 @@ class WorkflowExecutionService:
         )
         request_summary_manager.clear_summary(self.workflow_execution_id)
 
+    def _compute_current_history_index(self) -> int:
+        """Return the history_index for states created in this execution run.
+
+        Determined by the highest history_index of user messages in execution.history,
+        which is updated by append_user_message_on_resume before the workflow restarts.
+        """
+
+        history = self.workflow_execution.history if self.workflow_execution else []
+        if not history:
+            return 0
+
+        return max(
+            (msg.history_index for msg in history if msg.role == ChatRole.USER.value and msg.history_index is not None),
+            default=0,
+        )
+
     def start_state(
         self,
         workflow_state_id: str,
@@ -227,19 +250,18 @@ class WorkflowExecutionService:
                 started_at=started_at,
                 preceding_state_ids=preceding_state_ids,
                 iteration_number=iteration_number,
+                history_index=self._current_history_index,
             )
             state.save()
 
             # Stream state start event to client
             if self.thought_queue:
-                from codemie.chains.base import StreamedGenerationResult, WorkflowStateEvent
-
                 state_event = WorkflowStateEvent(
                     id=state.id,
                     name=workflow_state_id,
                     task=str(task),
                     status=WorkflowExecutionStatusEnum.IN_PROGRESS.value,
-                    event_type="state_start",
+                    event_type=WorkflowStateEventType.STATE_START,
                     started_at=started_at.isoformat(),
                 )
                 result = StreamedGenerationResult(workflow_state=state_event)
@@ -279,15 +301,13 @@ class WorkflowExecutionService:
 
             # Stream state finish event to client
             if self.thought_queue:
-                from codemie.chains.base import StreamedGenerationResult, WorkflowStateEvent
-
                 state_event = WorkflowStateEvent(
                     id=state.id,
                     name=state.name,
                     task=state.task,
                     output=output,  # Include the actual output/result
                     status=status.value,
-                    event_type="state_finish",
+                    event_type=WorkflowStateEventType.STATE_FINISH,
                     started_at=state.started_at.isoformat() if state.started_at else None,
                     completed_at=completed_at.isoformat(),
                 )
@@ -428,7 +448,22 @@ class WorkflowExecutionService:
             if state.state_id in predecessor_ids and state.status == WorkflowExecutionStatusEnum.SUCCEEDED:
                 state.status = WorkflowExecutionStatusEnum.INTERRUPTED
                 state.save()
-                return
+                return state.id
+
+    def _send_interrupted_event(self, interrupted_state_id: str, execution_state_id: Optional[str] = None) -> None:
+        """Stream a STATE_INTERRUPTED event to the client with last=True to signal end-of-stream."""
+        if not self.thought_queue:
+            return
+
+        state_config = next((s for s in self.workflow_config.states if s.id == interrupted_state_id), None)
+        state_event = WorkflowStateEvent(
+            id=execution_state_id,
+            name=interrupted_state_id,
+            task=state_config.task if state_config else None,
+            status=WorkflowExecutionStatusEnum.INTERRUPTED.value,
+            event_type=WorkflowStateEventType.STATE_INTERRUPTED,
+        )
+        self.thought_queue.send(StreamedGenerationResult(last=True, workflow_state=state_event).model_dump_json())
 
     def _get_thoughts_from_states(self):
         """

@@ -118,6 +118,7 @@ class BaseWorkflowExecutionState(CommonBaseModel):
         sa_column=Column(JSONB, nullable=True),
     )
     iteration_number: Optional[int] = None
+    history_index: Optional[int] = None
 
 
 class WorkflowExecutionState(BaseModelWithSQLSupport, BaseWorkflowExecutionState, table=True):
@@ -299,6 +300,10 @@ class CreateWorkflowExecutionRequest(BaseModel):
         description="If true, automatically delete the workflow execution after completion (success or failure). "
         "If Langfuse traces are enabled, deletion occurs after traces are submitted.",
     )
+
+
+class ResumeWorkflowExecutionRequest(BaseModel):
+    user_input: str | None = None
 
 
 class WorkflowExecutionStateThoughtShort(BaseModel):

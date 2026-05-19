@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from codemie.workflows.workflow import WorkflowExecutor
 
 NDJSON_MEDIA_TYPE = "application/x-ndjson"
+WORKFLOW_EXECUTION_ID_KEY = "workflow_execution_id"
 
 
 executor = ThreadPoolExecutor(max_workers=config.THREAD_POOL_MAX_WORKERS)
@@ -87,7 +88,7 @@ def remove_nulls(obj):
 
 
 def _handle_streaming_execution(
-    workflow: "WorkflowExecutor", raw_request: Request, generator_queue: ThreadedGenerator
+    workflow: "WorkflowExecutor", raw_request: Request, generator_queue: ThreadedGenerator, execution_id: str
 ) -> StreamingResponse:
     """
     Handle synchronous streaming workflow execution.
@@ -96,13 +97,14 @@ def _handle_streaming_execution(
         workflow: WorkflowExecutor already initialized with the generator_queue
         raw_request: FastAPI request for disconnect handling
         generator_queue: ThreadedGenerator that was passed during workflow creation
+        execution_id: Workflow execution ID injected into every streamed chunk
 
     Returns:
         StreamingResponse with NDJSON content
     """
     raw_request.state.on_disconnect(lambda: _handle_client_disconnect(generator_queue))
 
-    wrapped_stream = _serve_workflow_stream(workflow, generator_queue)
+    wrapped_stream = _serve_workflow_stream(workflow, generator_queue, execution_id)
 
     headers = {
         "Cache-Control": "no-cache",
@@ -124,7 +126,7 @@ def _handle_client_disconnect(threaded_generator: ThreadedGenerator):
         threaded_generator.close()
 
 
-def _serve_workflow_stream(workflow: "WorkflowExecutor", generator_queue: ThreadedGenerator):
+def _serve_workflow_stream(workflow: "WorkflowExecutor", generator_queue: ThreadedGenerator, execution_id: str):
     """
     Execute workflow in thread and yield streaming data.
 
@@ -133,6 +135,7 @@ def _serve_workflow_stream(workflow: "WorkflowExecutor", generator_queue: Thread
     Args:
         workflow: WorkflowExecutor with generator_queue already set
         generator_queue: ThreadedGenerator to read messages from
+        execution_id: Injected into every chunk as workflow_execution_id
     """
     from codemie.chains.base import StreamedGenerationResult
     from time import time
@@ -150,22 +153,29 @@ def _serve_workflow_stream(workflow: "WorkflowExecutor", generator_queue: Thread
             if value is not StopIteration:
                 generation_result = json.loads(value, object_hook=lambda d: SimpleNamespace(**d))
 
-                yield f"{value}\n"
+                chunk = json.loads(value)
+                chunk[WORKFLOW_EXECUTION_ID_KEY] = execution_id
+                yield f"{json.dumps(chunk)}\n"
                 generator_queue.queue.task_done()
             else:
+                # Skip if the last chunk already carries last=True (e.g. state_interrupted).
+                if getattr(generation_result, 'last', False):
+                    break
+
                 # Always send the final chunk so clients can reliably detect stream completion.
                 # We intentionally avoid querying the DB here: when delete_on_completion=True,
                 # the execution record may already be deleted by _auto_delete_execution() which
                 # races with this consumer after thought_queue.close() signals StopIteration.
                 # The generated text comes from the local generation_result, not the DB.
+                thought = getattr(generation_result, 'thought', None)
                 final_message = StreamedGenerationResult(
-                    generated=generation_result.thought.message if generation_result else "",
+                    generated=thought.message if thought else "",
                     time_elapsed=time() - execution_start,
                     generated_chunk="",
                     last=True,
+                    workflow_execution_id=execution_id,
                 )
                 yield f"{final_message.model_dump_json()}\n"
-
                 break
     finally:
         thread.join(timeout=1)

@@ -714,3 +714,102 @@ def test_delete_all_executions_cascade_deletes_states_and_thoughts(
     assert mock_delete.call_count == 2
     mock_delete.assert_any_call(exec_a.id)
     mock_delete.assert_any_call(exec_b.id)
+
+
+# ===== append_user_message_on_resume tests =====
+
+
+def test_append_user_message_on_resume_appends_to_execution_history():
+    """append_user_message_on_resume builds a USER GeneratedMessage and appends it to execution history."""
+    service = WorkflowService()
+    execution = WorkflowExecution(
+        workflow_id="wf-1",
+        execution_id="exec-1",
+        history=[],
+        conversation_id=None,
+    )
+
+    with patch.object(WorkflowExecution, "update") as mock_update:
+        service.append_user_message_on_resume(execution, "hello resume")
+
+    assert len(execution.history) == 1
+    msg = execution.history[0]
+    assert msg.role == ChatRole.USER.value
+    assert msg.message == "hello resume"
+    assert msg.message_raw == "hello resume"
+    assert msg.history_index == 0
+    mock_update.assert_called_once_with(refresh=True)
+
+
+def test_append_user_message_on_resume_increments_history_index():
+    """history_index for the new message is one higher than the current max."""
+    from codemie.rest_api.models.conversation import GeneratedMessage
+
+    service = WorkflowService()
+    existing_msg = GeneratedMessage(role=ChatRole.USER.value, message="first", history_index=3)
+    execution = WorkflowExecution(
+        workflow_id="wf-1",
+        execution_id="exec-2",
+        history=[existing_msg],
+        conversation_id=None,
+    )
+
+    with patch.object(WorkflowExecution, "update"):
+        service.append_user_message_on_resume(execution, "second")
+
+    assert execution.history[-1].history_index == 4
+
+
+def test_append_user_message_on_resume_also_updates_conversation():
+    """When conversation_id is set, the message is also appended to the Conversation."""
+    service = WorkflowService()
+    execution = WorkflowExecution(
+        workflow_id="wf-1",
+        execution_id="exec-3",
+        history=[],
+        conversation_id="conv-42",
+    )
+    mock_conversation = MagicMock()
+    mock_conversation.history = []
+
+    mock_conv_class = MagicMock()
+    mock_conv_class.get_by_id.return_value = mock_conversation
+
+    with (
+        patch.object(WorkflowExecution, "update"),
+        patch("codemie.rest_api.models.conversation.Conversation.get_by_id", mock_conv_class.get_by_id),
+    ):
+        service.append_user_message_on_resume(execution, "hello conv")
+
+    mock_conv_class.get_by_id.assert_called_once_with("conv-42")
+    assert len(mock_conversation.history) == 2
+    user_msg = mock_conversation.history[0]
+    assert user_msg.message == "hello conv"
+    assert user_msg.role == ChatRole.USER.value
+    assistant_ref = mock_conversation.history[1]
+    assert assistant_ref.role == ChatRole.ASSISTANT.value
+    assert assistant_ref.workflow_execution_ref is True
+    assert assistant_ref.execution_id == "exec-3"
+    assert assistant_ref.assistant_id == "wf-1"
+    assert assistant_ref.history_index == user_msg.history_index
+    mock_conversation.update.assert_called_once_with(refresh=True)
+
+
+def test_append_user_message_on_resume_no_conversation_update_when_no_conversation_id():
+    """When conversation_id is None, no Conversation lookup or update happens."""
+    service = WorkflowService()
+    execution = WorkflowExecution(
+        workflow_id="wf-1",
+        execution_id="exec-4",
+        history=[],
+        conversation_id=None,
+    )
+    mock_conv_class = MagicMock()
+
+    with (
+        patch.object(WorkflowExecution, "update"),
+        patch("codemie.rest_api.models.conversation.Conversation.get_by_id", mock_conv_class.get_by_id),
+    ):
+        service.append_user_message_on_resume(execution, "no conv")
+
+    mock_conv_class.get_by_id.assert_not_called()

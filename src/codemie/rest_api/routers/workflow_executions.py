@@ -34,6 +34,7 @@ from codemie.core.workflow_models import (
     WorkflowExecutionStateOutput,
     WorkflowExecutionTransitionResponse,
     CreateWorkflowExecutionRequest,
+    ResumeWorkflowExecutionRequest,
     WorkflowExecutionStateThoughtWithChildren,
     UpdateWorkflowExecutionOutputRequest,
     WorkflowExecutionOutputChangeRequest,
@@ -320,7 +321,7 @@ def create_workflow_execution(
                 delete_on_completion=request.delete_on_completion,
             )
 
-            return _handle_streaming_execution(workflow, raw_request, generator_queue)
+            return _handle_streaming_execution(workflow, raw_request, generator_queue, execution.execution_id)
 
         # Handle background mode (existing behavior) - no queue provided, will create ThoughtQueue
         workflow = WorkflowExecutor.create_executor(
@@ -385,13 +386,14 @@ def resume_workflow_execution(
     user: User = Depends(authenticate),
     propagate_headers: bool = Query(default=False, description="Propagate X-* headers to MCP servers"),
     disable_cache: bool = Query(default=True, description="Disable prompt caching for resumed execution"),
+    stream: bool = Query(default=False, description="Stream execution output back to the client"),
+    body: Annotated[ResumeWorkflowExecutionRequest | None, Body()] = None,
 ):
     workflow_config = WorkflowService().get_workflow(workflow_id)
 
     if not Ability(user).can(Action.READ, workflow_config):
         raise_access_denied("view")
 
-    # Prevent execution of autonomous workflows
     if workflow_config.mode == WorkflowMode.AUTONOMOUS:
         raise ExtendedHTTPException(
             code=status.HTTP_403_FORBIDDEN,
@@ -407,6 +409,9 @@ def resume_workflow_execution(
         user=user.as_user_model(),
     )
 
+    if body and body.user_input:
+        WorkflowService().append_user_message_on_resume(execution, body.user_input)
+
     # Extract custom headers if propagation is enabled
     request_headers = extract_custom_headers(raw_request, propagate_headers)
 
@@ -414,17 +419,32 @@ def resume_workflow_execution(
     set_disable_prompt_cache(disable_cache)
 
     try:
+        generator_queue = None
+        extra_kwargs = {}
+        if stream:
+            generator_queue = ThreadedGenerator(
+                request_uuid=execution.execution_id,
+                user_id=user.id,
+                conversation_id=execution.execution_id,
+            )
+            thought_queue = ThoughtQueue()
+            thought_queue.set_context("user_id", user.id)
+            extra_kwargs["thought_queue"] = DualQueue(streaming_queue=generator_queue, persistence_queue=thought_queue)
+
         workflow = WorkflowExecutor.create_executor(
             workflow_config=workflow_config,
-            user_input="",
+            user_input=body.user_input if body else None,
             user=user,
             resume_execution=True,
             execution_id=execution.execution_id,
             request_headers=request_headers,
+            **extra_kwargs,
         )
 
-        stream = getattr(workflow, "stream")
-        background_tasks.add_task(stream)
+        if stream:
+            return _handle_streaming_execution(workflow, raw_request, generator_queue, execution.execution_id)
+
+        background_tasks.add_task(getattr(workflow, "stream"))
         return BaseResponse(message="Workflow execution has been resumed")
     except Exception as e:
         raise ExtendedHTTPException(

@@ -55,13 +55,6 @@ class Thought(BaseModel):
 Thought.model_rebuild()
 
 
-class WorkflowExecutionResult(BaseModel):
-    """Store workflow execution details"""
-
-    id_: str
-    status: str
-
-
 class GenerationResult(BaseModel):
     """
     Result of agent generation with structured error handling.
@@ -106,6 +99,12 @@ class GenerationResult(BaseModel):
         return self
 
 
+class WorkflowStateEventType(str, Enum):
+    STATE_START = "state_start"
+    STATE_FINISH = "state_finish"
+    STATE_INTERRUPTED = "state_interrupted"
+
+
 class WorkflowStateEvent(BaseModel):
     """Workflow state change event for streaming"""
 
@@ -113,7 +112,7 @@ class WorkflowStateEvent(BaseModel):
     name: str  # State name
     task: Optional[str] = None  # Task description
     status: str  # State status
-    event_type: str  # "state_start" or "state_finish"
+    event_type: WorkflowStateEventType
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
 
@@ -126,7 +125,7 @@ class StreamedGenerationResult(BaseModel):
     context: Optional[dict] = None
     last: Optional[bool] = False
     debug: Optional[dict] = None
-    workflow_execution: Optional[WorkflowExecutionResult] = None  # Workflow execution details
+    workflow_execution_id: Optional[str] = None
     workflow_state: Optional[WorkflowStateEvent] = None  # Workflow state change events
     execution_error: Optional[str] = Field(
         default=None, description="Error type indicator. None for successful execution"

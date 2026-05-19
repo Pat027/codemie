@@ -53,6 +53,7 @@ WORKFLOW_CONFIG = WorkflowConfig(
 USER = User(id=USER_ID)
 WORKFLOW_EXECUTIONS_URL = f"/v1/workflows/{WORKFLOW_ID}/executions"
 EXPORT_WORKFLOW_EXECUTION_URL = f"{WORKFLOW_EXECUTIONS_URL}/{EXECUTION_ID}/export"
+RESUME_URL = f"/v1/workflows/{WORKFLOW_ID}/executions/{EXECUTION_ID}/resume"
 client = TestClient(app)
 
 
@@ -69,6 +70,11 @@ def mock_workflow_service() -> MagicMock:
         # Return WorkflowConfig object, not WorkflowExecution
         mock_ser.get_workflow.return_value = WORKFLOW_CONFIG
         mock_ser.create_workflow_execution.return_value = WORKFLOW_EXECUTION
+        default_execution = MagicMock()
+        default_execution.execution_id = EXECUTION_ID
+        default_execution.conversation_id = None
+        default_execution.history = []
+        mock_ser.find_workflow_execution_by_id.return_value = default_execution
         mock_service.return_value = mock_ser
         yield mock_service
 
@@ -917,3 +923,123 @@ def test_create_workflow_execution_without_tags(
     call_kwargs = mock_workflow_executor.create_executor.call_args[1]
     assert 'tags' in call_kwargs
     assert call_kwargs['tags'] is None
+
+
+@pytest.mark.usefixtures(
+    "mock_workflow_service",
+    "mock_request_summary_manager",
+    "mock_workflow_executor",
+    "mock_background_tasks",
+)
+@pytest.mark.asyncio
+async def test_resume_with_user_input_passes_input_to_executor(
+    mock_authentication: MagicMock,
+    mock_ability: MagicMock,
+    mock_workflow_executor: MagicMock,
+    request_headers: dict,
+) -> None:
+    mock_ability.return_value.can.return_value = True
+    mock_authentication.return_value = USER
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.put(
+            RESUME_URL,
+            json={"user_input": "my resume message"},
+            headers=request_headers,
+        )
+
+    assert response.status_code == 200
+    mock_workflow_executor.create_executor.assert_called_once()
+    call_kwargs = mock_workflow_executor.create_executor.call_args.kwargs
+    assert call_kwargs["user_input"] == "my resume message"
+    assert call_kwargs["resume_execution"] is True
+
+
+@pytest.mark.usefixtures(
+    "mock_workflow_service",
+    "mock_request_summary_manager",
+    "mock_workflow_executor",
+    "mock_background_tasks",
+)
+@pytest.mark.asyncio
+async def test_resume_without_body_uses_none_user_input(
+    mock_authentication: MagicMock,
+    mock_ability: MagicMock,
+    mock_workflow_executor: MagicMock,
+    request_headers: dict,
+) -> None:
+    mock_ability.return_value.can.return_value = True
+    mock_authentication.return_value = USER
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.put(RESUME_URL, headers=request_headers)
+
+    assert response.status_code == 200
+    mock_workflow_executor.create_executor.assert_called_once()
+    call_kwargs = mock_workflow_executor.create_executor.call_args.kwargs
+    assert call_kwargs["user_input"] is None
+    assert call_kwargs["resume_execution"] is True
+
+
+@pytest.mark.usefixtures(
+    "mock_request_summary_manager",
+    "mock_workflow_executor",
+    "mock_background_tasks",
+)
+@pytest.mark.asyncio
+async def test_resume_with_user_input_appends_user_message_to_execution_history(
+    mock_authentication: MagicMock,
+    mock_ability: MagicMock,
+    mock_workflow_service: MagicMock,
+    request_headers: dict,
+) -> None:
+    """Router delegates history persistence to WorkflowService.append_user_message_on_resume."""
+    mock_ability.return_value.can.return_value = True
+    mock_authentication.return_value = USER
+
+    mock_workflow_service.return_value.get_workflow.return_value = WORKFLOW_CONFIG
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.put(
+            RESUME_URL,
+            json={"user_input": "resume this"},
+            headers=request_headers,
+        )
+
+    assert response.status_code == 200
+    mock_workflow_service.return_value.append_user_message_on_resume.assert_called_once()
+    call_args = mock_workflow_service.return_value.append_user_message_on_resume.call_args
+    assert call_args.args[1] == "resume this"
+
+
+@pytest.mark.usefixtures(
+    "mock_request_summary_manager",
+    "mock_workflow_executor",
+    "mock_background_tasks",
+)
+@pytest.mark.asyncio
+async def test_resume_with_user_input_appends_to_conversation_history(
+    mock_authentication: MagicMock,
+    mock_ability: MagicMock,
+    mock_workflow_service: MagicMock,
+    request_headers: dict,
+) -> None:
+    """Router delegates conversation history persistence to WorkflowService.append_user_message_on_resume."""
+    mock_ability.return_value.can.return_value = True
+    mock_authentication.return_value = USER
+
+    mock_workflow_service.return_value.get_workflow.return_value = WORKFLOW_CONFIG
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.put(
+            RESUME_URL,
+            json={"user_input": "resume this"},
+            headers=request_headers,
+        )
+
+    assert response.status_code == 200
+    mock_workflow_service.return_value.append_user_message_on_resume.assert_called_once()

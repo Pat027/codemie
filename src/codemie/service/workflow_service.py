@@ -1,4 +1,4 @@
-# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
+# Copyright 2026 EPAM Systems, Inc. ("EPAM")
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -153,110 +153,6 @@ class WorkflowService:
             self._send_workflow_update_failed_metric(e, stored_config.id, updated_workflow_config, user)
             raise e
 
-    def _send_workflow_update_failed_metric(
-        self, e: Exception, stored_config_id: str, updated_workflow_config: WorkflowConfig, user: User
-    ):
-        WorkflowMonitoringService.send_update_workflow_metric(
-            user_id=user.id,
-            user_name=user.name,
-            workflow_id=stored_config_id,
-            workflow_name=updated_workflow_config.name,
-            project=updated_workflow_config.project,
-            success=False,
-            additional_attributes={
-                "error_class": e.__class__.__name__,
-            },
-            mode=updated_workflow_config.mode,
-        )
-
-    def _update_workflow_history(self, workflow_config: WorkflowConfig, new_history_entry: YamlConfigHistory) -> None:
-        sql = text(f"""
-            UPDATE {WorkflowConfig.__tablename__}
-            SET yaml_config_history = :new_history_entry || yaml_config_history
-            WHERE id = :workflow_id
-        """)
-        stmt = sql.bindparams(
-            workflow_id=workflow_config.id, new_history_entry=json.dumps([new_history_entry.model_dump(mode="json")])
-        )
-        with Session(WorkflowExecution.get_engine()) as session:
-            session.execute(stmt)
-            session.commit()
-        workflow_config.refresh()
-
-    def _update_workflow_values(
-        self, stored_config: WorkflowConfig, updated_workflow_config: WorkflowConfig, user: User
-    ) -> None:
-        new_history_entry = YamlConfigHistory(
-            yaml_config=stored_config.yaml_config,
-            date=datetime.now(),
-            created_by=user.as_user_model(),
-        )
-        yaml_config_updated = False
-
-        for attr_name in self._editable_non_boolean_fields:
-            new_value = getattr(updated_workflow_config, attr_name)
-            if new_value:
-                if attr_name == "yaml_config":
-                    yaml_config_updated = True
-                setattr(stored_config, attr_name, new_value)
-
-        if yaml_config_updated:
-            stored_config.parse_execution_config()
-
-        if stored_config.shared != updated_workflow_config.shared:
-            stored_config.shared = updated_workflow_config.shared
-
-        stored_config.updated_by = user.as_user_model()
-        logger.debug(f"Store workflow: {stored_config.yaml_config}")
-        stored_config.update(refresh=True)
-        self._update_workflow_history(stored_config, new_history_entry)
-        logger.info(f"Workflow updated with ID: {stored_config.id}")
-        WorkflowMonitoringService.send_update_workflow_metric(
-            workflow_id=stored_config.id,
-            user_id=user.id,
-            user_name=user.name,
-            workflow_name=stored_config.name,
-            project=stored_config.project,
-            success=True,
-            mode=stored_config.mode,
-        )
-
-    @staticmethod
-    def _augment_user_input_with_history(user_input: str, conversation_id: Optional[str], workflow_id: str) -> str:
-        """
-        Augment user input with previous workflow execution history for chat mode.
-
-        Args:
-            user_input: Original user input
-            conversation_id: Conversation ID if in chat mode
-            workflow_id: Workflow ID to query executions
-
-        Returns:
-            Augmented input with history prepended, or original input if no history
-        """
-        if not conversation_id:
-            return user_input
-
-        from codemie.service.workflow_execution.workflow_execution_history_formatter import format_execution_history
-
-        # Format and inject previous execution history
-        history_context = format_execution_history(conversation_id, workflow_id)
-        if history_context:
-            # Prepend history to user input for workflow execution
-            augmented_input = f"{history_context}\n{user_input}"
-            logger.debug(
-                "Injected execution history into workflow input",
-                extra={
-                    "workflow_id": workflow_id,
-                    "history_length": len(history_context),
-                    "original_input_length": len(user_input),
-                    "augmented_input_length": len(augmented_input),
-                },
-            )
-            return augmented_input
-
-        return user_input
-
     @staticmethod
     def create_workflow_execution(
         workflow_config: WorkflowConfig,
@@ -303,13 +199,7 @@ class WorkflowService:
                     conversation.save(refresh=True)
                     logger.debug(f"Created new conversation {conversation_id} for workflow chat")
 
-                # Determine history_index from conversation history
-                history_index = 0
-                if conversation.history:
-                    max_index = max(
-                        (msg.history_index for msg in conversation.history if msg.history_index is not None), default=-1
-                    )
-                    history_index = max_index + 1
+                history_index = WorkflowService._next_history_index(conversation.history or [])
 
             # Create execution
             execution_id = str(uuid.uuid4())
@@ -544,6 +434,46 @@ class WorkflowService:
             logger.error(f"Failed to get workflow executions: {e}")
             raise e
 
+    def append_user_message_on_resume(self, execution: WorkflowExecution, user_input: str) -> None:
+        """Append a user message to execution history (and conversation history) on workflow resume.
+
+        Args:
+            execution: The workflow execution being resumed
+            user_input: The user-provided input message to append
+        """
+        from codemie.rest_api.models.conversation import Conversation
+
+        history_index = self._next_history_index(execution.history or [])
+        user_message = GeneratedMessage(
+            date=datetime.now(),
+            role=ChatRole.USER,
+            message=user_input,
+            message_raw=user_input,
+            history_index=history_index,
+        )
+        execution.history = [*(execution.history or []), user_message]
+        execution.update(refresh=True)
+        logger.info(f"Appended user message to execution history on resume. ExecutionId={execution.execution_id}")
+
+        if execution.conversation_id:
+            assistant_message_ref = GeneratedMessage(
+                date=datetime.now(),
+                role=ChatRole.ASSISTANT,
+                history_index=history_index,
+                assistant_id=execution.workflow_id,
+                workflow_execution_ref=True,
+                execution_id=execution.execution_id,
+                thoughts=[],
+                message=None,
+            )
+            conversation = Conversation.get_by_id(execution.conversation_id)
+            conversation.history = [*(conversation.history or []), user_message, assistant_message_ref]
+            conversation.update(refresh=True)
+            logger.info(
+                f"Appended user+assistant messages to conversation history on resume. "
+                f"ConversationId={execution.conversation_id}"
+            )
+
     def delete_workflow_execution(self, execution_config_id: str):
         try:
             return WorkflowExecution.delete(execution_config_id)
@@ -626,6 +556,156 @@ class WorkflowService:
             return workflow and workflow.project == project_name
         except Exception:
             return False
+
+    @classmethod
+    def get_workflow_spending_analytics(
+        cls,
+        user_name: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        project: Optional[str] = None,
+        since_date: Optional[datetime] = None,
+        include_breakdown: bool = False,
+    ) -> dict:
+        """
+        Get workflow execution spending analytics.
+
+        Args:
+            user_name: Filter by user name (case-insensitive)
+            workflow_id: Filter by specific workflow ID
+            project: Filter by project name
+            since_date: Filter by creation date (>=)
+            include_breakdown: Include detailed breakdown by individual workflows
+
+        Returns:
+            Dict with keys: total_money_spent, total_input_tokens, total_output_tokens,
+                           total_workflow_executions, breakdown (list of dicts)
+        """
+        filters = cls._build_workflow_filters(user_name, workflow_id, project, since_date)
+
+        with Session(WorkflowExecution.get_engine()) as session:
+            # Get totals
+            totals = cls._get_workflow_totals(session, filters)
+
+            # Get breakdown if requested
+            breakdown = []
+            if include_breakdown:
+                breakdown = cls._get_workflow_breakdown(session, filters)
+
+            return {
+                'total_money_spent': totals['total_money_spent'],
+                'total_input_tokens': totals['total_input_tokens'],
+                'total_output_tokens': totals['total_output_tokens'],
+                'total_workflow_executions': totals['total_workflow_executions'],
+                'breakdown': breakdown,
+            }
+
+    def _send_workflow_update_failed_metric(
+        self, e: Exception, stored_config_id: str, updated_workflow_config: WorkflowConfig, user: User
+    ):
+        WorkflowMonitoringService.send_update_workflow_metric(
+            user_id=user.id,
+            user_name=user.name,
+            workflow_id=stored_config_id,
+            workflow_name=updated_workflow_config.name,
+            project=updated_workflow_config.project,
+            success=False,
+            additional_attributes={
+                "error_class": e.__class__.__name__,
+            },
+            mode=updated_workflow_config.mode,
+        )
+
+    def _update_workflow_history(self, workflow_config: WorkflowConfig, new_history_entry: YamlConfigHistory) -> None:
+        sql = text(f"""
+            UPDATE {WorkflowConfig.__tablename__}
+            SET yaml_config_history = :new_history_entry || yaml_config_history
+            WHERE id = :workflow_id
+        """)
+        stmt = sql.bindparams(
+            workflow_id=workflow_config.id, new_history_entry=json.dumps([new_history_entry.model_dump(mode="json")])
+        )
+        with Session(WorkflowExecution.get_engine()) as session:
+            session.execute(stmt)
+            session.commit()
+        workflow_config.refresh()
+
+    def _update_workflow_values(
+        self, stored_config: WorkflowConfig, updated_workflow_config: WorkflowConfig, user: User
+    ) -> None:
+        new_history_entry = YamlConfigHistory(
+            yaml_config=stored_config.yaml_config,
+            date=datetime.now(),
+            created_by=user.as_user_model(),
+        )
+        yaml_config_updated = False
+
+        for attr_name in self._editable_non_boolean_fields:
+            new_value = getattr(updated_workflow_config, attr_name)
+            if new_value:
+                if attr_name == "yaml_config":
+                    yaml_config_updated = True
+                setattr(stored_config, attr_name, new_value)
+
+        if yaml_config_updated:
+            stored_config.parse_execution_config()
+
+        if stored_config.shared != updated_workflow_config.shared:
+            stored_config.shared = updated_workflow_config.shared
+
+        stored_config.updated_by = user.as_user_model()
+        logger.debug(f"Store workflow: {stored_config.yaml_config}")
+        stored_config.update(refresh=True)
+        self._update_workflow_history(stored_config, new_history_entry)
+        logger.info(f"Workflow updated with ID: {stored_config.id}")
+        WorkflowMonitoringService.send_update_workflow_metric(
+            workflow_id=stored_config.id,
+            user_id=user.id,
+            user_name=user.name,
+            workflow_name=stored_config.name,
+            project=stored_config.project,
+            success=True,
+            mode=stored_config.mode,
+        )
+
+    @staticmethod
+    def _augment_user_input_with_history(user_input: str, conversation_id: Optional[str], workflow_id: str) -> str:
+        """
+        Augment user input with previous workflow execution history for chat mode.
+
+        Args:
+            user_input: Original user input
+            conversation_id: Conversation ID if in chat mode
+            workflow_id: Workflow ID to query executions
+
+        Returns:
+            Augmented input with history prepended, or original input if no history
+        """
+        if not conversation_id:
+            return user_input
+
+        from codemie.service.workflow_execution.workflow_execution_history_formatter import format_execution_history
+
+        # Format and inject previous execution history
+        history_context = format_execution_history(conversation_id, workflow_id)
+        if history_context:
+            # Prepend history to user input for workflow execution
+            augmented_input = f"{history_context}\n{user_input}"
+            logger.debug(
+                "Injected execution history into workflow input",
+                extra={
+                    "workflow_id": workflow_id,
+                    "history_length": len(history_context),
+                    "original_input_length": len(user_input),
+                    "augmented_input_length": len(augmented_input),
+                },
+            )
+            return augmented_input
+
+        return user_input
+
+    @staticmethod
+    def _next_history_index(history: list) -> int:
+        return max((m.history_index for m in history if m.history_index is not None), default=-1) + 1
 
     @staticmethod
     def _build_workflow_filters(
@@ -736,45 +816,3 @@ class WorkflowService:
             )
 
         return breakdown
-
-    @classmethod
-    def get_workflow_spending_analytics(
-        cls,
-        user_name: Optional[str] = None,
-        workflow_id: Optional[str] = None,
-        project: Optional[str] = None,
-        since_date: Optional[datetime] = None,
-        include_breakdown: bool = False,
-    ) -> dict:
-        """
-        Get workflow execution spending analytics.
-
-        Args:
-            user_name: Filter by user name (case-insensitive)
-            workflow_id: Filter by specific workflow ID
-            project: Filter by project name
-            since_date: Filter by creation date (>=)
-            include_breakdown: Include detailed breakdown by individual workflows
-
-        Returns:
-            Dict with keys: total_money_spent, total_input_tokens, total_output_tokens,
-                           total_workflow_executions, breakdown (list of dicts)
-        """
-        filters = cls._build_workflow_filters(user_name, workflow_id, project, since_date)
-
-        with Session(WorkflowExecution.get_engine()) as session:
-            # Get totals
-            totals = cls._get_workflow_totals(session, filters)
-
-            # Get breakdown if requested
-            breakdown = []
-            if include_breakdown:
-                breakdown = cls._get_workflow_breakdown(session, filters)
-
-            return {
-                'total_money_spent': totals['total_money_spent'],
-                'total_input_tokens': totals['total_input_tokens'],
-                'total_output_tokens': totals['total_output_tokens'],
-                'total_workflow_executions': totals['total_workflow_executions'],
-                'breakdown': breakdown,
-            }

@@ -22,6 +22,7 @@ __all__ = [
     "RETRY_POLICY_DEFAULT_INITIAL_INTERVAL",
     "RETRY_POLICY_DEFAULT_MAX_ATTEMPTS",
     "RETRY_POLICY_DEFAULT_MAX_INTERVAL",
+    "ResumeWorkflowExecutionRequest",
     "UpdateWorkflowExecutionOutputRequest",
     "UpdateWorkflowRequest",
     "WorkflowAssistant",
@@ -69,6 +70,7 @@ from .workflow_config import (
 )
 from .workflow_execution import (
     CreateWorkflowExecutionRequest,
+    ResumeWorkflowExecutionRequest,
     UpdateWorkflowExecutionOutputRequest,
     WorkflowConversationListItem,
     WorkflowExecution,
