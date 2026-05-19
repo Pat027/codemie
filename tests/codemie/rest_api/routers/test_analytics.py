@@ -253,8 +253,8 @@ class TestCreateResponse:
         # Assert
         assert response1.headers["ETag"] != response2.headers["ETag"]
 
-    def test_etag_is_md5_hash_of_response_body(self, sample_summaries_response_data):
-        """Verify ETag is MD5 hash of response body."""
+    def test_etag_is_sha256_hash_of_response_body(self, sample_summaries_response_data):
+        """Verify ETag is SHA-256 hash of response body."""
         # Act
         with patch.object(config, "ENV", "production"):
             response = _create_response(sample_summaries_response_data, SummariesResponse)
@@ -262,7 +262,7 @@ class TestCreateResponse:
         # Assert
         validated = SummariesResponse(**sample_summaries_response_data)
         response_dict = validated.model_dump(by_alias=True)
-        expected_etag = hashlib.md5(json.dumps(response_dict, sort_keys=True).encode()).hexdigest()
+        expected_etag = hashlib.sha256(json.dumps(response_dict, sort_keys=True).encode()).hexdigest()
         assert response.headers["ETag"] == expected_etag
 
 

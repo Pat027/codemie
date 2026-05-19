@@ -611,7 +611,7 @@ def _create_response(data: dict, model_class) -> JSONResponse:
         response.headers["Cache-Control"] = "no-store"
     else:
         response.headers["Cache-Control"] = "public, max-age=300"
-        response.headers["ETag"] = hashlib.md5(json.dumps(response_dict, sort_keys=True).encode()).hexdigest()
+        response.headers["ETag"] = hashlib.sha256(json.dumps(response_dict, sort_keys=True).encode()).hexdigest()
     return response
 
 

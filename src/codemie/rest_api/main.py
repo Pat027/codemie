@@ -16,6 +16,7 @@ import asyncio
 import uuid
 import traceback
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 from elasticsearch import ApiError
 from fastapi import FastAPI, Request, status
@@ -614,6 +615,17 @@ def custom_openapi():
     return app.openapi_schema
 
 
+def _get_origin(url: str) -> str:
+    parsed = urlsplit(url)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+WEBAPP_CORS = [_get_origin(config.FRONTEND_URL)]
+
+if config.ENV != ENV_LOCAL:
+    WEBAPP_CORS.append("http://localhost:3000")
+
+
 app = FastAPI(lifespan=lifespan)
 app.openapi = custom_openapi
 
@@ -922,7 +934,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=WEBAPP_CORS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
