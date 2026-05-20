@@ -117,6 +117,12 @@ RUN apt-get update && \
     texlive-fonts-recommended \
     lmodern && \
     apt-get purge -y linux-libc-dev && \
+    # TODO: Remove once python:3.12.12-slim ships with libcap2 >= 1:2.75-10+deb13u1 (CVE-2026-4878)
+    #       and libsystemd0/libudev1 >= 257.13-1~deb13u1 (CVE-2026-29111)
+    apt-get install -y --no-install-recommends --only-upgrade \
+        "libcap2=1:2.75-10+deb13u1+b1" \
+        "libsystemd0=257.13-1~deb13u1" \
+        "libudev1=257.13-1~deb13u1" && \
     rm -rf /var/lib/apt/lists/*
 
 # Prevent writing files into critical directories
