@@ -140,7 +140,6 @@ def _handle_streaming_execution(
     headers = {
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
-        "Access-Control-Allow-Origin": "*",
     }
 
     return StreamingResponse(
