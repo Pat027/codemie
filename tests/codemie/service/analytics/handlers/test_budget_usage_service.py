@@ -420,7 +420,7 @@ class TestBudgetUsageServiceLoadFromDb:
         service = BudgetUsageService()
         mock_session = AsyncMock()
 
-        assignment = SimpleNamespace(budget_id="b1")
+        assignment = SimpleNamespace(budget_id="b1", category="platform")
         budgets_map = {"b1": MagicMock()}
         spend_map = {"b1": MagicMock()}
 
@@ -430,7 +430,7 @@ class TestBudgetUsageServiceLoadFromDb:
 
         mock_tracking = MagicMock()
         mock_tracking.get_latest_by_budget_ids = AsyncMock(return_value=spend_map)
-        mock_tracking.get_latest_before_today_by_budget_ids = AsyncMock(return_value={})
+        mock_tracking.get_latest_before_today_by_budget_categories = AsyncMock(return_value={})
 
         with patch("codemie.repository.budget_repository.budget_repository", mock_budget_repo):
             with patch(
@@ -454,7 +454,7 @@ class TestBudgetUsageServiceLoadFromDb:
 
         mock_tracking = MagicMock()
         mock_tracking.get_latest_by_budget_ids = AsyncMock(return_value={})
-        mock_tracking.get_latest_before_today_by_budget_ids = AsyncMock(return_value={})
+        mock_tracking.get_latest_before_today_by_budget_categories = AsyncMock(return_value={})
 
         with patch("codemie.repository.budget_repository.budget_repository", mock_budget_repo):
             with patch(

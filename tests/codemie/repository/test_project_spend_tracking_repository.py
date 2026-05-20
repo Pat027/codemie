@@ -142,7 +142,7 @@ async def test_get_latest_before_by_budget_category_ids_returns_empty_for_empty_
 
 
 @pytest.mark.asyncio
-async def test_get_latest_before_by_budget_category_ids_groups_rows_by_triple():
+async def test_get_latest_before_by_budget_category_ids_groups_rows_by_pair():
     repository = ProjectSpendTrackingRepository()
     session = AsyncMock()
     row = SimpleNamespace(project_name="proj-a", budget_id="budget-1", budget_category="cli")
@@ -152,11 +152,11 @@ async def test_get_latest_before_by_budget_category_ids_groups_rows_by_triple():
 
     result = await repository.get_latest_before_by_budget_category_ids(
         session,
-        [("proj-a", "budget-1", "cli")],
+        [("proj-a", "cli")],
         datetime.now(),
     )
 
-    assert result == {("proj-a", "budget-1", "cli"): row}
+    assert result == {("proj-a", "cli"): row}
 
 
 @pytest.mark.asyncio

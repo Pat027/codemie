@@ -293,13 +293,11 @@ class LiteLLMSpendCollectorService:
             budgets_map = await budget_repository.get_all_keyed_by_id(session)
             logger.debug(f"Loaded {len(budgets_map)} budget(s) for reset detection")
             deduped_entries = self._dedupe_personal_entries(entries_with_budget_id, budgets_map)
-            project_budget_category_triples = [
-                (entry.user_identifier, entry.budget_id, entry.budget_category) for entry in deduped_entries
-            ]
+            project_category_pairs = [(entry.user_identifier, entry.budget_category) for entry in deduped_entries]
 
             prev_rows = await self._tracking_repository.get_latest_before_by_budget_category_ids(
                 session,
-                project_budget_category_triples,
+                project_category_pairs,
                 target_snapshot_at,
             )
             logger.debug(f"Loaded {len(prev_rows)} prior budget baseline rows for delta calculation")
@@ -309,7 +307,7 @@ class LiteLLMSpendCollectorService:
                 project_name = entry.user_identifier
                 current_budget_period_spend = self._quantize_spend(entry.spend)
                 budget = budgets_map.get(entry.budget_id)
-                prev_row = prev_rows.get((project_name, entry.budget_id, entry.budget_category))
+                prev_row = prev_rows.get((project_name, entry.budget_category))
 
                 try:
                     daily_spend, cumulative_spend = self._compute_spend_snapshot(

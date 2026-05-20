@@ -176,29 +176,33 @@ class ProjectSpendTrackingRepository:
     async def get_latest_before_by_budget_category_ids(
         self,
         session: AsyncSession,
-        project_budget_category_triples: list[tuple[str, str, str]],
+        project_category_pairs: list[tuple[str, str]],
         before_spend_date: datetime,
-    ) -> dict[tuple[str, str, str], ProjectSpendTracking]:
-        """Return the most recent budget row per (project_name, budget_id, budget_category)."""
-        if not project_budget_category_triples:
+    ) -> dict[tuple[str, str], ProjectSpendTracking]:
+        """Return the most recent budget row per (project_name, budget_category).
+
+        Partitions by category only so that delta chains survive budget_id reassignments:
+        when a user is assigned a new budget_id under the same category, the previous row
+        from the old budget_id is still used as the baseline for delta calculation.
+        """
+        if not project_category_pairs:
             return {}
 
         from sqlalchemy import tuple_ as sa_tuple
 
         all_results = {}
-        for i in range(0, len(project_budget_category_triples), self._in_clause_batch_size):
-            batch = project_budget_category_triples[i : i + self._in_clause_batch_size]
+        for i in range(0, len(project_category_pairs), self._in_clause_batch_size):
+            batch = project_category_pairs[i : i + self._in_clause_batch_size]
             latest_dates_subq = (
                 select(
                     ProjectSpendTracking.project_name,
-                    ProjectSpendTracking.budget_id,
                     ProjectSpendTracking.budget_category,
                     func.max(ProjectSpendTracking.spend_date).label("max_spend_date"),
+                    func.max(ProjectSpendTracking.created_at).label("max_created_at"),
                 )
                 .where(
                     sa_tuple(
                         ProjectSpendTracking.project_name,
-                        ProjectSpendTracking.budget_id,
                         ProjectSpendTracking.budget_category,
                     ).in_(batch)
                 )
@@ -206,7 +210,6 @@ class ProjectSpendTrackingRepository:
                 .where(ProjectSpendTracking.spend_subject_type == "budget")
                 .group_by(
                     ProjectSpendTracking.project_name,
-                    ProjectSpendTracking.budget_id,
                     ProjectSpendTracking.budget_category,
                 )
                 .subquery()
@@ -215,14 +218,12 @@ class ProjectSpendTrackingRepository:
             stmt = select(ProjectSpendTracking).join(
                 latest_dates_subq,
                 (ProjectSpendTracking.project_name == latest_dates_subq.c.project_name)
-                & (ProjectSpendTracking.budget_id == latest_dates_subq.c.budget_id)
                 & (ProjectSpendTracking.budget_category == latest_dates_subq.c.budget_category)
-                & (ProjectSpendTracking.spend_date == latest_dates_subq.c.max_spend_date),
+                & (ProjectSpendTracking.spend_date == latest_dates_subq.c.max_spend_date)
+                & (ProjectSpendTracking.created_at == latest_dates_subq.c.max_created_at),
             )
             result = await session.execute(stmt)
-            all_results.update(
-                {(row.project_name, row.budget_id, row.budget_category): row for row in result.scalars().all()}
-            )
+            all_results.update({(row.project_name, row.budget_category): row for row in result.scalars().all()})
         return all_results
 
     async def get_latest_before_by_member_budget_ids(
@@ -631,6 +632,51 @@ class ProjectSpendTrackingRepository:
 
         result = await session.execute(stmt)
         return {row.budget_id: row for row in result.scalars().all()}
+
+    async def get_latest_before_today_by_budget_categories(
+        self,
+        session: AsyncSession,
+        budget_categories: list[str],
+        project_name: str,
+    ) -> dict[str, "ProjectSpendTracking"]:
+        """Return the most recent budget-type row per budget_category strictly before today (UTC).
+
+        Used as the ``prev_row`` baseline for daily delta computation in the lazy-refresh path,
+        partitioned by category so the chain survives budget_id reassignments.
+        """
+        if not budget_categories:
+            return {}
+
+        start_of_today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        latest_subq = (
+            select(
+                ProjectSpendTracking.budget_category,
+                func.max(ProjectSpendTracking.spend_date).label("max_spend_date"),
+                func.max(ProjectSpendTracking.created_at).label("max_created_at"),
+            )
+            .where(ProjectSpendTracking.project_name == project_name)
+            .where(ProjectSpendTracking.budget_category.in_(budget_categories))
+            .where(ProjectSpendTracking.spend_subject_type == "budget")
+            .where(ProjectSpendTracking.spend_date < start_of_today)
+            .group_by(ProjectSpendTracking.budget_category)
+            .subquery()
+        )
+
+        stmt = (
+            select(ProjectSpendTracking)
+            .join(
+                latest_subq,
+                (ProjectSpendTracking.budget_category == latest_subq.c.budget_category)
+                & (ProjectSpendTracking.spend_date == latest_subq.c.max_spend_date)
+                & (ProjectSpendTracking.created_at == latest_subq.c.max_created_at),
+            )
+            .where(ProjectSpendTracking.project_name == project_name)
+            .where(ProjectSpendTracking.spend_subject_type == "budget")
+        )
+
+        result = await session.execute(stmt)
+        return {row.budget_category: row for row in result.scalars().all()}
 
     async def get_entries_for_date(
         self,

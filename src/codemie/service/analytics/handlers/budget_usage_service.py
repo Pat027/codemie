@@ -245,7 +245,7 @@ def _collect_spend_rows(
             )
             unchanged_budget_ids.append(assignment.budget_id)
             continue
-        prev_row = prev_day_map.get(assignment.budget_id)
+        prev_row = prev_day_map.get(assignment.category)
         try:
             daily_spend, cumulative_spend = _compute_spend_delta(fresh_spend, prev_row, budget=budget, snapshot_at=now)
         except InvalidSpendSnapshotError as exc:
@@ -352,11 +352,12 @@ class BudgetUsageService:
         tracking_repo = ProjectSpendTrackingRepository()
         assignments = await budget_repository.get_user_category_assignments(session, subject_user_id)
         budget_ids = [a.budget_id for a in assignments]
+        budget_categories = [a.category for a in assignments]
 
         budgets_map, spend_map, prev_day_map = await asyncio.gather(
             budget_repository.get_by_ids(session, budget_ids),
             tracking_repo.get_latest_by_budget_ids(session, budget_ids, subject_label),
-            tracking_repo.get_latest_before_today_by_budget_ids(session, budget_ids, subject_label),
+            tracking_repo.get_latest_before_today_by_budget_categories(session, budget_categories, subject_label),
         )
         return assignments, budgets_map, spend_map, prev_day_map
 

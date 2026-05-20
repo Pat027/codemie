@@ -428,7 +428,7 @@ class TestCollectBudgetBased:
     ):
         """Normal delta: lifetime cumulative grows by the period-spend difference."""
         prev = _prev_row("unused", cumulative=Decimal("10.00"), budget_period_spend=Decimal("3.00"))
-        service = _budget_only_service(get_latest_prev={("alice@example.com", "cli", "cli"): prev})
+        service = _budget_only_service(get_latest_prev={("alice@example.com", "cli"): prev})
         mock_budget_repo.get_all_keyed_by_id = AsyncMock(return_value={"cli": _make_budget("cli", "cli")})
         mock_provider_base.return_value.collect_personal_spend = AsyncMock(
             return_value=[_make_personal_entry("alice@example.com", "cli", "cli", Decimal("5.50"))]
@@ -452,7 +452,7 @@ class TestCollectBudgetBased:
     ):
         """Unchanged spend (zero delta) produces no row."""
         prev = _prev_row("unused", cumulative=Decimal("10.00"), budget_period_spend=Decimal("3.00"))
-        service = _budget_only_service(get_latest_prev={("alice@example.com", "cli", "cli"): prev})
+        service = _budget_only_service(get_latest_prev={("alice@example.com", "cli"): prev})
         mock_budget_repo.get_all_keyed_by_id = AsyncMock(return_value={"cli": _make_budget("cli", "cli")})
         mock_provider_base.return_value.collect_personal_spend = AsyncMock(
             return_value=[_make_personal_entry("alice@example.com", "cli", "cli", Decimal("3.00"))]
@@ -526,7 +526,7 @@ class TestCollectBudgetBased:
             budget_period_spend=Decimal("9.00"),
             spend_date=datetime(2026, 3, 16, 23, 55, tzinfo=timezone.utc),
         )
-        service = _budget_only_service(get_latest_prev={("alice@example.com", "cli", "cli"): prev})
+        service = _budget_only_service(get_latest_prev={("alice@example.com", "cli"): prev})
         mock_budget_repo.get_all_keyed_by_id = AsyncMock(
             return_value={
                 "cli": _make_budget(
