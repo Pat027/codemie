@@ -1,4 +1,4 @@
-# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
+# Copyright 2026 EPAM Systems, Inc. ("EPAM")
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import pytest
 from typing import Generator
+from unittest.mock import call, patch
 
-from requests.exceptions import RequestException, Timeout, InvalidURL
-from unittest.mock import MagicMock, call, patch
+import httpx
 
 from codemie.triggers.actors.workflow import invoke_workflow
 from codemie.triggers.config import BASE_API_URL
@@ -26,35 +27,42 @@ JOB_ID = "test_job_id"
 WORKFLOW_ID = "test_workflow_id"
 URL = f"{BASE_API_URL}/v1/workflows/{WORKFLOW_ID}/executions"
 
-
-@pytest.fixture
-def mock_post() -> Generator[MagicMock, None, None]:
-    with patch("codemie.triggers.actors.workflow.requests.post") as mock_post:
-        yield mock_post
+_MOCK_BIND_KEY = 'test-bind-key'
 
 
 @pytest.fixture
-def mock_logger() -> Generator[MagicMock, None, None]:
+def mock_bind_key():
+    with patch('codemie.triggers.actors.workflow.get_bind_key', return_value=_MOCK_BIND_KEY):
+        yield
+
+
+@pytest.fixture
+def mock_logger() -> Generator:
     with patch("codemie.triggers.actors.workflow.logger") as mock_logger:
         yield mock_logger
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "exception", [Timeout("The request timed out"), InvalidURL("Invalid URL"), RequestException("Server error")]
+    "exception",
+    [
+        httpx.ReadTimeout("The request timed out"),
+        httpx.InvalidURL("Invalid URL"),
+        httpx.RequestError("Server error"),
+    ],
 )
-def test_invoke_workflow_exceptions(mock_post: MagicMock, mock_logger: MagicMock, exception: Exception) -> None:
+async def test_invoke_workflow_exceptions(httpx_mock, mock_bind_key, mock_logger, exception) -> None:
     expected_exception_msg = "Failed to invoke workflow. job_id: %s, workflow_id: %s, error: %s"
-    mock_post.side_effect = exception
+    httpx_mock.add_exception(exception)
 
-    invoke_workflow(workflow_id=WORKFLOW_ID, user_id=USER_ID, job_id=JOB_ID, task="Test Task")
+    await invoke_workflow(workflow_id=WORKFLOW_ID, user_id=USER_ID, job_id=JOB_ID, task="Test Task")
 
     mock_logger.error.assert_called_once_with(expected_exception_msg, JOB_ID, WORKFLOW_ID, str(exception))
 
 
-def test_invoke_workflow_success(mock_post: MagicMock, mock_logger: MagicMock) -> None:
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_post.return_value = mock_response
+@pytest.mark.asyncio
+async def test_invoke_workflow_success(httpx_mock, mock_bind_key, mock_logger) -> None:
+    httpx_mock.add_response(method='POST', url=URL, status_code=200)
     expected_info_processing = 'Invoking triggered actor "invoke_workflow". job_id: %s, workflow_id: %s, url: %s'
     expected_info_successful = 'Workflow invoked successfully. job_id: %s, workflow_id: %s'
     expected_calls = [
@@ -62,21 +70,19 @@ def test_invoke_workflow_success(mock_post: MagicMock, mock_logger: MagicMock) -
         call(expected_info_successful, JOB_ID, WORKFLOW_ID),
     ]
 
-    invoke_workflow(workflow_id=WORKFLOW_ID, user_id=USER_ID, job_id=JOB_ID, task="Test Task")
+    await invoke_workflow(workflow_id=WORKFLOW_ID, user_id=USER_ID, job_id=JOB_ID, task="Test Task")
 
-    mock_post.assert_called_once()
-    args, kwargs = mock_post.call_args
-    assert kwargs["url"] == URL
-    assert kwargs["headers"]["user-id"] == USER_ID
-    assert kwargs["json"]["user_input"] == "Test Task"
-
+    requests_made = httpx_mock.get_requests()
+    assert len(requests_made) == 1
+    assert str(requests_made[0].url) == URL
+    assert requests_made[0].headers['user-id'] == USER_ID
+    assert json.loads(requests_made[0].content)['user_input'] == 'Test Task'
     assert mock_logger.info.call_args_list == expected_calls
 
 
-def test_invoke_workflow_default_task(mock_post: MagicMock, mock_logger: MagicMock) -> None:
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_post.return_value = mock_response
+@pytest.mark.asyncio
+async def test_invoke_workflow_default_task(httpx_mock, mock_bind_key, mock_logger) -> None:
+    httpx_mock.add_response(method='POST', url=URL, status_code=200)
     expected_info_processing = 'Invoking triggered actor "invoke_workflow". job_id: %s, workflow_id: %s, url: %s'
     expected_info_successful = 'Workflow invoked successfully. job_id: %s, workflow_id: %s'
     expected_calls = [
@@ -84,9 +90,8 @@ def test_invoke_workflow_default_task(mock_post: MagicMock, mock_logger: MagicMo
         call(expected_info_successful, JOB_ID, WORKFLOW_ID),
     ]
 
-    invoke_workflow(workflow_id=WORKFLOW_ID, user_id=USER_ID, job_id=JOB_ID)
+    await invoke_workflow(workflow_id=WORKFLOW_ID, user_id=USER_ID, job_id=JOB_ID)
 
-    mock_post.assert_called_once()
-    args, kwargs = mock_post.call_args
-    assert kwargs["json"]["user_input"] == "Do it"
+    requests_made = httpx_mock.get_requests()
+    assert json.loads(requests_made[0].content)['user_input'] == 'Do it'
     assert mock_logger.info.call_args_list == expected_calls

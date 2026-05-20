@@ -185,6 +185,7 @@ class TestCronPromptExtension:
             trigger=mock_trigger,
             id="test_job",
             replace_existing=True,
+            executor="asyncio",
             kwargs={
                 "assistant_id": "assistant_123",
                 "user_id": "test_user",
@@ -224,6 +225,7 @@ class TestCronPromptExtension:
             trigger=mock_trigger,
             id="test_workflow_job",
             replace_existing=True,
+            executor="asyncio",
             kwargs={
                 "workflow_id": "workflow_123",
                 "user_id": "test_user",

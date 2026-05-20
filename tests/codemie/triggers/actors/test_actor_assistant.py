@@ -1,4 +1,4 @@
-# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
+# Copyright 2026 EPAM Systems, Inc. ("EPAM")
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,140 +12,119 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import unittest
-from unittest.mock import patch, MagicMock
+import json
+import pytest
+from unittest.mock import AsyncMock
 
-from requests import RequestException
-
-from codemie.configs import logger
 from codemie.triggers.actors.assistant import invoke_assistant
 
 _MOCK_BIND_KEY = 'test-bind-key'
-_EXPECTED_HEADERS = {
-    'Content-Type': 'application/json',
-    'user-id': 'user-id',
-    'X-Bind-Key': _MOCK_BIND_KEY,
-}
+_ASSISTANT_URL = 'http://mockserver:8080'
+_ASSISTANT_ID = 'assistant-id'
+_USER_ID = 'user-id'
+_JOB_ID = 'job-id'
+_CONVERSATION_ID = 'conversation-id'
+_POST_URL = f'{_ASSISTANT_URL}/v1/assistants/{_ASSISTANT_ID}/model'
 
 
-class TestInvokeAssistant(unittest.TestCase):
-    @patch('codemie.triggers.actors.assistant.get_bind_key', return_value=_MOCK_BIND_KEY)
-    @patch('codemie.triggers.actors.assistant.create_conversation', return_value='conversation-id')
-    @patch('codemie.triggers.actors.assistant.requests.post')
-    def test_invoke_assistant_success(self, mock_post, mock_create_conversation, mock_get_bind_key):
-        """Test successful invocation of assistant."""
-        mock_response = MagicMock()
-        mock_response.raise_for_status.return_value = None
-        mock_post.return_value = mock_response
+@pytest.mark.asyncio
+async def test_invoke_assistant_success(httpx_mock, mocker):
+    mocker.patch('codemie.triggers.actors.assistant.get_bind_key', return_value=_MOCK_BIND_KEY)
+    mocker.patch(
+        'codemie.triggers.actors.assistant.create_conversation',
+        new_callable=AsyncMock,
+        return_value=_CONVERSATION_ID,
+    )
+    httpx_mock.add_response(method='POST', url=_POST_URL, status_code=200)
 
-        invoke_assistant(
-            assistant_id='assistant-id',
-            user_id='user-id',
-            job_id='job-id',
-            task='Do a task',
-            url="http://mockserver:8080",
-        )
+    await invoke_assistant(
+        assistant_id=_ASSISTANT_ID,
+        user_id=_USER_ID,
+        job_id=_JOB_ID,
+        task='Do a task',
+        url=_ASSISTANT_URL,
+    )
 
-        mock_create_conversation.assert_called_once_with(
-            assistant_id='assistant-id',
-            conversation_name='Webhook: assistant-id',
-            user_id='user-id',
-            job_id='job-id',
-            url='http://mockserver:8080',
-        )
+    requests_made = httpx_mock.get_requests()
+    assert len(requests_made) == 1
+    assert str(requests_made[0].url) == _POST_URL
+    assert requests_made[0].headers['user-id'] == _USER_ID
+    assert requests_made[0].headers['X-Bind-Key'] == _MOCK_BIND_KEY
+    assert json.loads(requests_made[0].content) == {
+        'text': 'Do a task',
+        'content_raw': '<p>Do a task</p>',
+        'stream': False,
+        'conversation_id': _CONVERSATION_ID,
+    }
 
-    @patch('codemie.triggers.actors.assistant.get_bind_key', return_value=_MOCK_BIND_KEY)
-    @patch('codemie.triggers.actors.assistant.create_conversation', return_value='conversation-id')
-    @patch('codemie.triggers.actors.assistant.requests.post')
-    def test_invoke_assistant_uses_scheduler_prefix(self, mock_post, mock_create_conversation, mock_get_bind_key):
-        """Test that trigger_source=Scheduler produces 'Scheduler: <id>' conversation name."""
-        mock_response = MagicMock()
-        mock_response.raise_for_status.return_value = None
-        mock_post.return_value = mock_response
 
-        invoke_assistant(
-            assistant_id='assistant-id',
-            user_id='user-id',
-            job_id='job-id',
-            task='Do a task',
-            url="http://mockserver:8080",
-            trigger_source='Scheduler',
-        )
+@pytest.mark.asyncio
+async def test_invoke_assistant_uses_scheduler_prefix(httpx_mock, mocker):
+    mocker.patch('codemie.triggers.actors.assistant.get_bind_key', return_value=_MOCK_BIND_KEY)
+    mock_create = mocker.patch(
+        'codemie.triggers.actors.assistant.create_conversation',
+        new_callable=AsyncMock,
+        return_value=_CONVERSATION_ID,
+    )
+    httpx_mock.add_response(method='POST', url=_POST_URL, status_code=200)
 
-        mock_create_conversation.assert_called_once_with(
-            assistant_id='assistant-id',
-            conversation_name='Scheduler: assistant-id',
-            user_id='user-id',
-            job_id='job-id',
-            url='http://mockserver:8080',
-        )
-        mock_post.assert_called_once_with(
-            url='http://mockserver:8080/v1/assistants/assistant-id/model',
-            headers=_EXPECTED_HEADERS,
-            json={
-                'text': 'Do a task',
-                'content_raw': '<p>Do a task</p>',
-                'stream': False,
-                'conversation_id': 'conversation-id',
-            },
-            timeout=600,
-        )
-        self.assertTrue(logger.hasHandlers())
+    await invoke_assistant(
+        assistant_id=_ASSISTANT_ID,
+        user_id=_USER_ID,
+        job_id=_JOB_ID,
+        task='Do a task',
+        url=_ASSISTANT_URL,
+        trigger_source='Scheduler',
+    )
 
-    @patch('codemie.triggers.actors.assistant.get_bind_key', return_value=_MOCK_BIND_KEY)
-    @patch('codemie.triggers.actors.assistant.delete_conversation')
-    @patch('codemie.triggers.actors.assistant.create_conversation', return_value='conversation-id')
-    @patch('codemie.triggers.actors.assistant.requests.post')
-    def test_invoke_assistant_post_request_failure(
-        self, mock_post, mock_create_conversation, mock_delete_conversation, mock_get_bind_key
-    ):
-        """Test invocation of assistant when POST request fails cleans up the pre-created conversation."""
-        mock_response = MagicMock()
-        mock_response.raise_for_status.side_effect = RequestException("Failed request")
-        mock_post.return_value = mock_response
+    mock_create.assert_called_once_with(
+        assistant_id=_ASSISTANT_ID,
+        conversation_name='Scheduler: assistant-id',
+        user_id=_USER_ID,
+        job_id=_JOB_ID,
+        url=_ASSISTANT_URL,
+    )
 
-        invoke_assistant(
-            assistant_id='assistant-id',
-            user_id='user-id',
-            job_id='job-id',
-            task='Do a task',
-            url="http://mockserver:8080",
-        )
 
-        mock_post.assert_called_once_with(
-            url='http://mockserver:8080/v1/assistants/assistant-id/model',
-            headers=_EXPECTED_HEADERS,
-            json={
-                'text': 'Do a task',
-                'content_raw': '<p>Do a task</p>',
-                'stream': False,
-                'conversation_id': 'conversation-id',
-            },
-            timeout=600,
-        )
-        mock_delete_conversation.assert_called_once_with(
-            'conversation-id', 'user-id', 'job-id', 'http://mockserver:8080'
-        )
-        self.assertTrue(logger.hasHandlers())
+@pytest.mark.asyncio
+async def test_invoke_assistant_post_request_failure(httpx_mock, mocker):
+    mocker.patch('codemie.triggers.actors.assistant.get_bind_key', return_value=_MOCK_BIND_KEY)
+    mocker.patch(
+        'codemie.triggers.actors.assistant.create_conversation',
+        new_callable=AsyncMock,
+        return_value=_CONVERSATION_ID,
+    )
+    mock_delete = mocker.patch('codemie.triggers.actors.assistant.delete_conversation', new_callable=AsyncMock)
+    httpx_mock.add_response(method='POST', url=_POST_URL, status_code=500)
 
-    @patch('codemie.triggers.actors.assistant.get_bind_key', return_value=_MOCK_BIND_KEY)
-    @patch('codemie.triggers.actors.assistant.delete_conversation')
-    @patch('codemie.triggers.actors.assistant.create_conversation', return_value=None)
-    @patch('codemie.triggers.actors.assistant.requests.post')
-    def test_invoke_assistant_failure_no_cleanup_when_conversation_not_created(
-        self, mock_post, mock_create_conversation, mock_delete_conversation, mock_get_bind_key
-    ):
-        """Test that delete_conversation is not called when create_conversation returned None (fallback UUID)."""
-        mock_response = MagicMock()
-        mock_response.raise_for_status.side_effect = RequestException("Failed request")
-        mock_post.return_value = mock_response
+    await invoke_assistant(
+        assistant_id=_ASSISTANT_ID,
+        user_id=_USER_ID,
+        job_id=_JOB_ID,
+        task='Do a task',
+        url=_ASSISTANT_URL,
+    )
 
-        invoke_assistant(
-            assistant_id='assistant-id',
-            user_id='user-id',
-            job_id='job-id',
-            task='Do a task',
-            url="http://mockserver:8080",
-        )
+    mock_delete.assert_called_once_with(_CONVERSATION_ID, _USER_ID, _JOB_ID, _ASSISTANT_URL)
 
-        mock_delete_conversation.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_invoke_assistant_failure_no_cleanup_when_conversation_not_created(httpx_mock, mocker):
+    mocker.patch('codemie.triggers.actors.assistant.get_bind_key', return_value=_MOCK_BIND_KEY)
+    mocker.patch(
+        'codemie.triggers.actors.assistant.create_conversation',
+        new_callable=AsyncMock,
+        return_value=None,
+    )
+    mock_delete = mocker.patch('codemie.triggers.actors.assistant.delete_conversation', new_callable=AsyncMock)
+    httpx_mock.add_response(method='POST', url=_POST_URL, status_code=500)
+
+    await invoke_assistant(
+        assistant_id=_ASSISTANT_ID,
+        user_id=_USER_ID,
+        job_id=_JOB_ID,
+        task='Do a task',
+        url=_ASSISTANT_URL,
+    )
+
+    mock_delete.assert_not_called()

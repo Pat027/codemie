@@ -1,4 +1,4 @@
-# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
+# Copyright 2026 EPAM Systems, Inc. ("EPAM")
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,8 +15,7 @@
 import uuid
 from typing import Optional
 
-import requests
-from requests.exceptions import RequestException
+import httpx
 
 from codemie.configs import logger
 from codemie.rest_api.security.authentication import BIND_KEY_HEADER, get_bind_key
@@ -25,7 +24,7 @@ from codemie.triggers.actors.conversation import create_conversation, delete_con
 from codemie.triggers.config import BASE_API_URL
 
 
-def invoke_assistant(
+async def invoke_assistant(
     assistant_id: str,
     user_id: str,
     job_id: str,
@@ -39,7 +38,7 @@ def invoke_assistant(
         USER_ID_HEADER: user_id,
         BIND_KEY_HEADER: get_bind_key(),
     }
-    created_conversation_id = create_conversation(
+    created_conversation_id = await create_conversation(
         assistant_id=assistant_id,
         conversation_name=f"{trigger_source}: {assistant_id}",
         user_id=user_id,
@@ -57,12 +56,16 @@ def invoke_assistant(
     logger.info('Invoking triggered actor "invoke_assistant". job_id: %s, assistant: %s', job_id, assistant_id)
 
     try:
-        response = requests.post(
-            url=f'{url.rstrip("/")}/v1/assistants/{assistant_id}/model', headers=headers, json=data, timeout=600
-        )
-        response.raise_for_status()
-        logger.info('Successfully invoked assistant: %s, job_id: %s', assistant_id, job_id)
-    except RequestException as e:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                url=f'{url.rstrip("/")}/v1/assistants/{assistant_id}/model',
+                headers=headers,
+                json=data,
+                timeout=600,
+            )
+            response.raise_for_status()
+            logger.info('Successfully invoked assistant: %s, job_id: %s', assistant_id, job_id)
+    except httpx.HTTPError as e:
         logger.error('Failed to invoke assistant %s for job_id %s: %s', assistant_id, job_id, str(e))
         if created_conversation_id:
-            delete_conversation(created_conversation_id, user_id, job_id, url)
+            await delete_conversation(created_conversation_id, user_id, job_id, url)

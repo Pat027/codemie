@@ -1,4 +1,4 @@
-# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
+# Copyright 2026 EPAM Systems, Inc. ("EPAM")
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import requests
-from requests.exceptions import RequestException
+import httpx
 
 from codemie.configs import logger
 from codemie.core.models import UpdateConversationRequest
@@ -24,7 +23,9 @@ from codemie.triggers.config import BASE_API_URL
 CONTENT_TYPE_JSON = 'application/json'
 
 
-def create_conversation(assistant_id: str, conversation_name: str, user_id: str, job_id: str, url: str = BASE_API_URL):
+async def create_conversation(
+    assistant_id: str, conversation_name: str, user_id: str, job_id: str, url: str = BASE_API_URL
+):
     """Create conversation."""
     headers = {
         'Content-Type': CONTENT_TYPE_JSON,
@@ -39,23 +40,26 @@ def create_conversation(assistant_id: str, conversation_name: str, user_id: str,
     logger.info('Invoking triggered actor "create_conversation", job_id: %s.', job_id)
 
     try:
-        response = requests.post(url=f'{url.rstrip("/")}/v1/conversations', headers=headers, json=data, timeout=600)
-        response.raise_for_status()
-        conversation_id = response.json().get('id')
-        if conversation_id:
-            update_conversation(
-                conversation_id, UpdateConversationRequest(name=conversation_name), user_id, job_id, url=url
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                url=f'{url.rstrip("/")}/v1/conversations', headers=headers, json=data, timeout=600
             )
-            return conversation_id
-        else:
-            logger.error('Failed to get conversation ID from response: %s', response.json())
-            return None
-    except RequestException as e:
+            response.raise_for_status()
+            conversation_id = response.json().get('id')
+            if conversation_id:
+                await update_conversation(
+                    conversation_id, UpdateConversationRequest(name=conversation_name), user_id, job_id, url=url
+                )
+                return conversation_id
+            else:
+                logger.error('Failed to get conversation ID from response: %s', response.json())
+                return None
+    except httpx.HTTPError as e:
         logger.error('Failed to create conversation: %s', str(e))
         return None
 
 
-def update_conversation(
+async def update_conversation(
     conversation_id: str,
     update_request: UpdateConversationRequest,
     user_id: str,
@@ -75,16 +79,20 @@ def update_conversation(
     )
 
     try:
-        response = requests.put(
-            url=f'{url.rstrip("/")}/v1/conversations/{conversation_id}', headers=headers, json=data, timeout=600
-        )
-        response.raise_for_status()
-        logger.info('Successfully updated conversation: %s', conversation_id)
-    except RequestException as e:
+        async with httpx.AsyncClient() as client:
+            response = await client.put(
+                url=f'{url.rstrip("/")}/v1/conversations/{conversation_id}',
+                headers=headers,
+                json=data,
+                timeout=600,
+            )
+            response.raise_for_status()
+            logger.info('Successfully updated conversation: %s', conversation_id)
+    except httpx.HTTPError as e:
         logger.error('Failed to update conversation %s: %s', conversation_id, str(e))
 
 
-def delete_conversation(conversation_id: str, user_id: str, job_id: str, url: str = BASE_API_URL):
+async def delete_conversation(conversation_id: str, user_id: str, job_id: str, url: str = BASE_API_URL):
     """Delete conversation."""
     headers = {
         'Content-Type': CONTENT_TYPE_JSON,
@@ -97,10 +105,11 @@ def delete_conversation(conversation_id: str, user_id: str, job_id: str, url: st
     )
 
     try:
-        response = requests.delete(
-            url=f'{url.rstrip("/")}/v1/conversations/{conversation_id}', headers=headers, timeout=600
-        )
-        response.raise_for_status()
-        logger.info('Successfully deleted conversation: %s', conversation_id)
-    except RequestException as e:
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(
+                url=f'{url.rstrip("/")}/v1/conversations/{conversation_id}', headers=headers, timeout=600
+            )
+            response.raise_for_status()
+            logger.info('Successfully deleted conversation: %s', conversation_id)
+    except httpx.HTTPError as e:
         logger.warning('Failed to delete orphan conversation %s: %s', conversation_id, str(e))

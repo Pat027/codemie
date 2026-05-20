@@ -280,6 +280,7 @@ class Config(BaseSettings):
     TRIGGER_ENGINE_ENABLED: bool = False
     STALE_INDEXING_WATCHDOG_ENABLED: bool = False
     SCHEDULER_PROMPT_SIZE_LIMIT: int = 4000
+    CRON_SCHEDULER_MAX_WORKERS: int = 20
 
     NATS_PLUGIN_KEY_CHECK_ENABLED: bool = False
     NATS_SERVERS_URI: str = "nats://nats:4222"

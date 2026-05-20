@@ -14,12 +14,15 @@
 
 """Module for triggers core service"""
 
+import asyncio
 import platform
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Dict
 from croniter import croniter
+from apscheduler.executors.asyncio import AsyncIOExecutor
+from apscheduler.executors.pool import ThreadPoolExecutor as APSThreadPoolExecutor
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -95,10 +98,15 @@ class Cron:
             logger.warning("Cron scheduler already running, skipping start")
             return
 
-        self.scheduler = AsyncIOScheduler()
+        self.scheduler = AsyncIOScheduler(
+            executors={
+                "default": APSThreadPoolExecutor(max_workers=config.CRON_SCHEDULER_MAX_WORKERS),
+                "asyncio": AsyncIOExecutor(),
+            }
+        )
         self.scheduler.start()
         logger.info("Trigger Engine Cron binding started on %s", platform.uname().node)
-        self.scheduler.add_job(self.__watch_settings, "interval", seconds=10)
+        self.scheduler.add_job(self.__watch_settings, "interval", seconds=10, executor="asyncio")
         if config.STALE_INDEXING_WATCHDOG_ENABLED:
             self.scheduler.add_job(self.__watch_stale_indexing, "interval", seconds=60)
 
@@ -140,11 +148,11 @@ class Cron:
         finally:
             self.scheduler = None
 
-    def __watch_settings(self):
+    async def __watch_settings(self):
         """Watch for changes in the settings"""
         # Clean expired cache entries once per watcher cycle (not per validation)
         self.cache.clean_expired()
-        user_settings = self.__get_settings()
+        user_settings = await asyncio.to_thread(self.__get_settings)
         self.remove_jobs_for_deleted_settings(user_settings)
         self.__actualize_jobs(settings=user_settings)
 
@@ -436,6 +444,7 @@ class Cron:
             trigger=cron_trigger,
             id=job_id,
             replace_existing=True,
+            executor="asyncio",
             kwargs={
                 "assistant_id": resource_id,
                 "user_id": user_id,
@@ -454,6 +463,7 @@ class Cron:
             trigger=cron_trigger,
             id=job_id,
             replace_existing=True,
+            executor="asyncio",
             kwargs={
                 "workflow_id": resource_id,
                 "user_id": user_id,

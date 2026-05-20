@@ -1,4 +1,4 @@
-# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
+# Copyright 2026 EPAM Systems, Inc. ("EPAM")
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,8 +15,8 @@
 """Workflow REST API actor."""
 
 from typing import Optional
-import requests
-from requests.exceptions import RequestException
+
+import httpx
 
 from codemie.configs import logger
 from codemie.core.workflow_models import CreateWorkflowExecutionRequest
@@ -25,7 +25,7 @@ from codemie.rest_api.security.user import USER_ID_HEADER
 from codemie.triggers.config import BASE_API_URL
 
 
-def invoke_workflow(
+async def invoke_workflow(
     workflow_id: str, user_id: str, job_id: str, task: Optional[str] = "Do it", url: str = BASE_API_URL
 ):
     """Invoke workflow"""
@@ -36,9 +36,6 @@ def invoke_workflow(
             BIND_KEY_HEADER: get_bind_key(),
         }
         full_url = f'{url.rstrip("/")}/v1/workflows/{workflow_id}/executions'
-
-        # What about stream boolean that we always having on routers?
-        # Maybe we wanted to have it disabled for troggered by webhook workflows?
         data = CreateWorkflowExecutionRequest(user_input=task).dict()
         logger.info(
             'Invoking triggered actor "invoke_workflow". job_id: %s, workflow_id: %s, url: %s',
@@ -46,8 +43,9 @@ def invoke_workflow(
             workflow_id,
             full_url,
         )
-        response = requests.post(url=full_url, headers=headers, json=data, timeout=600)
-        response.raise_for_status()
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url=full_url, headers=headers, json=data, timeout=600)
+            response.raise_for_status()
         logger.info('Workflow invoked successfully. job_id: %s, workflow_id: %s', job_id, workflow_id)
-    except RequestException as e:
+    except (httpx.HTTPError, httpx.InvalidURL) as e:
         logger.error('Failed to invoke workflow. job_id: %s, workflow_id: %s, error: %s', job_id, workflow_id, str(e))
