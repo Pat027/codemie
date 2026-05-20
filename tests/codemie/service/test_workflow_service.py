@@ -860,3 +860,82 @@ def test_append_user_message_on_resume_no_conversation_update_when_no_conversati
         service.append_user_message_on_resume(execution, "no conv")
 
     mock_conv_class.get_by_id.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests for _update_workflow_values – start_hint explicit update block
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "stored_hint, updated_hint, expected_hint",
+    [
+        ("old hint", "new hint", "new hint"),
+        (None, "new hint", "new hint"),
+        ("some hint", "some hint", "some hint"),
+    ],
+    ids=["hint_changed", "hint_set_from_none", "hint_unchanged"],
+)
+@patch('codemie.core.workflow_models.WorkflowConfig.update')
+@patch('codemie.core.workflow_models.WorkflowConfig.refresh')
+def test_update_workflow_values_start_hint_updated_when_different(
+    mock_refresh: MagicMock,
+    mock_update: MagicMock,
+    workflow_service: WorkflowService,
+    workflow_config: WorkflowConfig,
+    user: User,
+    stored_hint: str,
+    updated_hint: str,
+    expected_hint: str,
+) -> None:
+    """_update_workflow_values must assign start_hint from updated config when values differ."""
+    workflow_config.start_hint = stored_hint
+
+    updated_config = WorkflowConfig(
+        name=workflow_config.name,
+        description=workflow_config.description,
+        project=workflow_config.project,
+        start_hint=updated_hint,
+    )
+
+    workflow_service._update_workflow_values(workflow_config, updated_config, user)
+
+    assert workflow_config.start_hint == expected_hint
+
+
+@pytest.mark.parametrize(
+    "stored_hint, updated_hint",
+    [
+        ("existing hint", None),
+        ("existing hint", ""),
+    ],
+    ids=["cleared_to_none", "cleared_to_empty_string"],
+)
+@patch('codemie.core.workflow_models.WorkflowConfig.update')
+@patch('codemie.core.workflow_models.WorkflowConfig.refresh')
+def test_update_workflow_values_start_hint_cleared(
+    mock_refresh: MagicMock,
+    mock_update: MagicMock,
+    workflow_service: WorkflowService,
+    workflow_config: WorkflowConfig,
+    user: User,
+    stored_hint: str,
+    updated_hint,
+) -> None:
+    """_update_workflow_values must support explicitly clearing start_hint to None or empty string.
+
+    The general editable-fields loop skips falsy values, so the explicit
+    start_hint block is the only path that allows clearing the field.
+    """
+    workflow_config.start_hint = stored_hint
+
+    updated_config = WorkflowConfig(
+        name=workflow_config.name,
+        description=workflow_config.description,
+        project=workflow_config.project,
+        start_hint=updated_hint,
+    )
+
+    workflow_service._update_workflow_values(workflow_config, updated_config, user)
+
+    assert workflow_config.start_hint == updated_hint

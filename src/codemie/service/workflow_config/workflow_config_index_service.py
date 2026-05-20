@@ -103,6 +103,7 @@ class WorkflowConfigIndexService:
                         id=entry.id,
                         name=entry.name,
                         description=entry.description,
+                        start_hint=entry.start_hint,
                         icon_url=entry.icon_url,
                         created_by=entry.created_by,
                         updated_by=entry.updated_by,

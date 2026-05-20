@@ -58,6 +58,7 @@ class WorkflowService:
         "yaml_config",
         "supervisor_prompt",
         "meta_config",
+        "start_hint",
     }
 
     def get_workflow(self, workflow_id: str, user: Optional[User] = None) -> WorkflowConfig:
@@ -651,6 +652,9 @@ class WorkflowService:
 
         if stored_config.shared != updated_workflow_config.shared:
             stored_config.shared = updated_workflow_config.shared
+
+        if updated_workflow_config.start_hint != stored_config.start_hint:
+            stored_config.start_hint = updated_workflow_config.start_hint
 
         stored_config.updated_by = user.as_user_model()
         logger.debug(f"Store workflow: {stored_config.yaml_config}")

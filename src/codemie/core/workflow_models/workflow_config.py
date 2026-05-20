@@ -74,6 +74,7 @@ class WorkflowConfigBase(CommonBaseModel, Owned):
         default_factory=list, sa_column=Column(PydanticListType(WorkflowTool))
     )
     description: str
+    start_hint: Optional[str] = None
     icon_url: Optional[str] = None
     mode: WorkflowMode = WorkflowMode.SEQUENTIAL
     name: str
@@ -165,6 +166,7 @@ class WorkflowConfigBase(CommonBaseModel, Owned):
             yaml_dict = yaml.safe_load(yaml_obj) if isinstance(yaml_obj, str) else yaml_obj
             name = yaml_dict.get('name')
             description = yaml_dict.get('description')
+            start_hint = yaml_dict.get('start_hint')
             mode = yaml_dict.get('mode')
             yaml_config = yaml_dict.get("execution_config", {})
             assistants = yaml_config.get('assistants', [])
@@ -183,6 +185,7 @@ class WorkflowConfigBase(CommonBaseModel, Owned):
             return cls(
                 name=name,
                 description=description,
+                start_hint=start_hint,
                 icon_url=icon_url,
                 mode=mode,
                 yaml_config=yaml.safe_dump(yaml_config),
@@ -324,6 +327,7 @@ class WorkflowConfigListResponse(BaseModel):
     id: Optional[str] = None
     name: str
     description: str
+    start_hint: Optional[str] = None
     icon_url: Optional[str] = None
     created_by: Optional[UserEntity] = None
     updated_by: Optional[UserEntity] = None

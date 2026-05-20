@@ -370,6 +370,7 @@ class CreateWorkflowRequest(BaseModel):
     name: str
     mode: Optional[WorkflowMode] = WorkflowMode.SEQUENTIAL
     description: str
+    start_hint: Optional[str] = None
     project: str
     icon_url: Optional[str] = None
     yaml_config: Optional[str] = None
@@ -385,6 +386,7 @@ class UpdateWorkflowRequest(BaseModel):
     id: Optional[str] = None
     name: str
     description: str
+    start_hint: Optional[str] = None
     project: str
     mode: WorkflowMode = WorkflowMode.SEQUENTIAL
     icon_url: Optional[str] = None

@@ -25,6 +25,7 @@ from codemie.core.workflow_models import (
     RETRY_POLICY_DEFAULT_INITIAL_INTERVAL,
 )
 from codemie.rest_api.security.user import User
+from codemie.core.workflow_models.workflow_config import WorkflowConfigListResponse
 
 
 class TestWorkflowConfig:
@@ -46,6 +47,7 @@ class TestWorkflowConfig:
         yaml_data = """
         name: Sequential Workflow Example
         description: Example of sequential workflow
+        start_hint: Start by describing your goal
         mode: Sequential
 
         execution_config:
@@ -58,8 +60,40 @@ class TestWorkflowConfig:
         """
         result = WorkflowConfig.from_yaml(yaml_data)
         assert isinstance(result, WorkflowConfig)
+        assert result.start_hint == "Start by describing your goal"
         assert len(result.assistants) == 1
         assert result.assistants[0].id == "assistant_1"
+
+    def test_start_hint_property(self):
+        """Test that start_hint property can be set and retrieved."""
+        wf = WorkflowConfig(
+            id="wf-test",
+            name="Test Workflow",
+            description="Test description",
+            start_hint="This is a helpful hint to get started",
+        )
+        assert wf.start_hint == "This is a helpful hint to get started"
+
+    def test_start_hint_optional_none(self):
+        """Test that start_hint can be None."""
+        wf = WorkflowConfig(
+            id="wf-test-2",
+            name="Test Workflow 2",
+            description="Test description without hint",
+            start_hint=None,
+        )
+        assert wf.start_hint is None
+
+    def test_start_hint_in_model_dump(self):
+        """Test that start_hint is included in model dump."""
+        wf = WorkflowConfig(
+            id="wf-test-3",
+            name="Test Workflow 3",
+            description="Test description",
+            start_hint="Start by analyzing the requirements",
+        )
+        dumped = wf.model_dump()
+        assert dumped["start_hint"] == "Start by analyzing the requirements"
 
     def test_get_effective_retry_policy(self, workflow_config):
         # Set up a workflow config with a default retry policy
@@ -109,6 +143,36 @@ class TestWorkflowConfig:
 
         workflow_config.max_concurrency = config.WORKFLOW_MAX_CONCURRENCY + 1
         assert workflow_config.get_max_concurrency() == config.WORKFLOW_MAX_CONCURRENCY
+
+
+class TestWorkflowConfigListResponse:
+    def test_start_hint_is_present_in_dump(self):
+        """Test that start_hint property is included in model dump."""
+        item = WorkflowConfigListResponse(
+            id="wf-1",
+            name="Test Workflow",
+            description="Test workflow description",
+            start_hint="Try: summarize the repo and suggest next steps",
+            project="app",
+            shared=True,
+            mode="Sequential",
+        )
+        dumped = item.model_dump()
+        assert dumped["start_hint"] == "Try: summarize the repo and suggest next steps"
+
+    def test_start_hint_optional(self):
+        """Test that start_hint is optional and can be None."""
+        item = WorkflowConfigListResponse(
+            id="wf-2",
+            name="Test Workflow 2",
+            description="Test workflow without start hint",
+            start_hint=None,
+            project="app",
+            shared=False,
+            mode="Autonomous",
+        )
+        dumped = item.model_dump()
+        assert dumped["start_hint"] is None
 
 
 class TestParseExecutionConfigSkillIds:
