@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import func, update
+from sqlalchemy import func, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -331,7 +331,7 @@ class ProjectSpendTrackingRepository:
                 )
                 .on_conflict_do_update(
                     index_elements=["project_name", "key_hash", "spend_date"],
-                    index_where=(ProjectSpendTracking.spend_subject_type == "key"),
+                    index_where=text("spend_subject_type = 'key'"),
                     set_={
                         "daily_spend": insert(ProjectSpendTracking).excluded.daily_spend,
                         "cumulative_spend": insert(ProjectSpendTracking).excluded.cumulative_spend,
@@ -403,7 +403,7 @@ class ProjectSpendTrackingRepository:
                 )
                 .on_conflict_do_update(
                     index_elements=["project_name", "budget_id", "budget_category", "spend_date"],
-                    index_where=(ProjectSpendTracking.spend_subject_type == "budget"),
+                    index_where=text("spend_subject_type = 'budget'"),
                     set_={
                         "daily_spend": insert(ProjectSpendTracking).excluded.daily_spend,
                         "cumulative_spend": insert(ProjectSpendTracking).excluded.cumulative_spend,
@@ -473,7 +473,7 @@ class ProjectSpendTrackingRepository:
                 .values(values)
                 .on_conflict_do_update(
                     index_elements=index_elements,
-                    index_where=(ProjectSpendTracking.spend_subject_type == spend_subject_type),
+                    index_where=text(f"spend_subject_type = '{spend_subject_type}'"),
                     set_={
                         "daily_spend": insert(ProjectSpendTracking).excluded.daily_spend,
                         "cumulative_spend": insert(ProjectSpendTracking).excluded.cumulative_spend,
