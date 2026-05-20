@@ -121,10 +121,9 @@ async def test_invoke_webhook_logic_handle_workflow(mock_request, mock_backgroun
 
     with patch.object(SettingsService, 'retrieve_setting', return_value=setting):
         with patch.object(WorkflowService, 'get_workflow', return_value=workflow):
-            with patch('codemie.rest_api.routers.utils.run_in_thread_pool'):
-                response = WebhookService.invoke_webhook_logic(mock_request, webhook_id, mock_background_tasks, b'{}')
-                assert isinstance(response, BaseResponse)
-                assert response.message == WebhookService.WEBHOOK_INVOKED_SUCCESSFULLY
+            response = WebhookService.invoke_webhook_logic(mock_request, webhook_id, mock_background_tasks, b'{}')
+            assert isinstance(response, BaseResponse)
+            assert response.message == WebhookService.WEBHOOK_INVOKED_SUCCESSFULLY
 
 
 @pytest.fixture
@@ -166,9 +165,8 @@ def setting_fixture():
 def patch_services(setting_fixture, datasource_fixture):
     with patch.object(SettingsService, 'retrieve_setting', return_value=setting_fixture):
         with patch('codemie.triggers.bindings.webhook.validate_datasource', return_value=datasource_fixture):
-            with patch('codemie.triggers.bindings.webhook.run_in_thread_pool'):
-                with patch('codemie.core.models.GitRepo.get_by_id', return_value=MagicMock(name="MockGitRepo")):
-                    yield
+            with patch('codemie.core.models.GitRepo.get_by_id', return_value=MagicMock(name="MockGitRepo")):
+                yield
 
 
 @pytest.mark.asyncio

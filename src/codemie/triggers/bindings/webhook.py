@@ -20,7 +20,6 @@ from codemie.configs import logger
 from codemie.core.constants import CodeIndexType
 from codemie.core.models import BaseResponse, GitRepo
 from codemie.rest_api.models.settings import Settings
-from codemie.rest_api.routers.utils import run_in_thread_pool
 from codemie.rest_api.security.user import User
 from codemie.service.constants import FullDatasourceTypes
 from codemie.service.monitoring.webhook_monitoring_service import WebhookMonitoringService
@@ -386,9 +385,7 @@ class WebhookService:
                 status_code=status.HTTP_404_NOT_FOUND, detail=cls.ASSISTANT_NOT_FOUND.format(assistant_id)
             )
 
-        background_tasks.add_task(
-            run_in_thread_pool, invoke_assistant, assistant_id, setting.user_id, assistant_id, formatted_payload
-        )
+        background_tasks.add_task(invoke_assistant, assistant_id, setting.user_id, assistant_id, formatted_payload)
 
         return BaseResponse(message=cls.WEBHOOK_INVOKED_SUCCESSFULLY, data="")
 
@@ -404,9 +401,7 @@ class WebhookService:
             )
         user = User(id=setting.user_id)
 
-        background_tasks.add_task(
-            run_in_thread_pool, invoke_workflow, workflow_id, user.id, workflow_id, formatted_payload
-        )
+        background_tasks.add_task(invoke_workflow, workflow_id, user.id, workflow_id, formatted_payload)
 
         return BaseResponse(message=cls.WEBHOOK_INVOKED_SUCCESSFULLY, data="")
 
