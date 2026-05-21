@@ -351,7 +351,11 @@ class TestRefreshFromLitellmSpendDedup:
         service = BudgetUsageService()
         mock_session = AsyncMock()
         assignment = self._assignment("b1")
-        existing_spend = SimpleNamespace(budget_period_spend=Decimal("10.0"), spend_date=datetime.now(timezone.utc))
+        existing_spend = SimpleNamespace(
+            budget_period_spend=Decimal("10.0"),
+            cumulative_spend=Decimal("10.0"),
+            spend_date=datetime.now(timezone.utc),
+        )
         current_spend_map = {"b1": existing_spend}
 
         mock_tracking = MagicMock()

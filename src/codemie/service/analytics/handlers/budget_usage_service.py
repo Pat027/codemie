@@ -245,7 +245,7 @@ def _collect_spend_rows(
             )
             unchanged_budget_ids.append(assignment.budget_id)
             continue
-        prev_row = prev_day_map.get(assignment.category)
+        prev_row = existing if existing is not None else prev_day_map.get(assignment.category)
         try:
             daily_spend, cumulative_spend = _compute_spend_delta(fresh_spend, prev_row, budget=budget, snapshot_at=now)
         except InvalidSpendSnapshotError as exc:
