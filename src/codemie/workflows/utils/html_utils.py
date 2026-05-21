@@ -76,5 +76,5 @@ def generate_html_report(states: List[Any]) -> str:
         state_title = f"{sanitized_state_name}_{state.status.value}"
         state_data.append({"title": state_title, "content": html_content})
 
-    html_content = Template(html_template).render(states=state_data)
+    html_content = Template(html_template, autoescape=True).render(states=state_data)
     return html_content
