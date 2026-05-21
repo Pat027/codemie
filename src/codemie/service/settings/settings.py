@@ -516,7 +516,7 @@ class SettingsService(BaseSettingsService):
         for cred_pair in cred_values:
             if (
                 cred_pair.key == cls.URL
-                and cred_type in (CredentialTypes.GIT, CredentialTypes.JIRA)
+                and cred_type in (CredentialTypes.GIT,)
                 and not cred_pair.value.endswith(".git")
             ):
                 base_url = get_url_domain(cred_pair.value)
