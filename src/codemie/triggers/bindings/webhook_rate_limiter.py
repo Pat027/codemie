@@ -14,7 +14,10 @@
 
 from __future__ import annotations
 
-import redis as redis_lib
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import redis as redis_lib
 
 from codemie.clients.redis import create_redis_client
 from codemie.configs import config
