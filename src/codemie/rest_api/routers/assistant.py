@@ -863,6 +863,8 @@ async def ask_virtual_assistant(
         creator=user.name,
     )
 
+    tools_config = request.tools_config or AssistantService.prepare_tools_config_from_toolkits(assistant.toolkits)
+
     chat_request = AssistantChatRequest.model_construct(
         conversation_id=request.conversation_id,
         text=request.text,
@@ -871,7 +873,7 @@ async def ask_virtual_assistant(
         history=request.history,
         stream=request.stream,
         output_schema=request.output_schema,
-        tools_config=request.tools_config,
+        tools_config=tools_config,
         metadata=request.metadata,
         top_k=request.top_k,
         propagate_headers=request.propagate_headers,

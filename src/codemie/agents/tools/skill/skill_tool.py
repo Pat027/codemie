@@ -369,7 +369,7 @@ def create_skill_tool_if_needed(
         return None
 
     project = getattr(assistant_config, "project", "demo")
-    assistant_id = getattr(assistant_config, "id", "")
+    assistant_id = getattr(assistant_config, "id", "") or ""
 
     return SkillTool(
         user=user,
@@ -389,7 +389,7 @@ def create_skill_companion_file_tool_if_needed(
         return None
 
     project = getattr(assistant_config, "project", "demo")
-    assistant_id = getattr(assistant_config, "id", "")
+    assistant_id = getattr(assistant_config, "id", "") or ""
 
     return SkillCompanionFileTool(
         user=user,
