@@ -141,10 +141,8 @@ class LLMHandler:
         """Build terms aggregation for LLMs usage with fetch-and-slice."""
         from codemie.service.analytics.aggregation_builder import AggregationBuilder
 
-        # No sub-aggregations needed - using doc_count for total requests
         sub_aggs = {}
 
-        # Build terms aggregation using helper
         terms_agg = AggregationBuilder.build_terms_agg(
             group_by_field="attributes.llm_model.keyword",
             fetch_size=fetch_size,
@@ -152,9 +150,31 @@ class LLMHandler:
             sub_aggs=sub_aggs,
         )
 
-        # Construct full aggregation body
+        # Add filter to query to exclude errors from LLM_PROXY_REQUESTS_TOTAL
+        modified_query = {
+            "bool": {
+                "must": [query],
+                "should": [
+                    {
+                        "bool": {
+                            "must_not": {"term": {"metric_name.keyword": MetricName.LLM_PROXY_REQUESTS_TOTAL.value}}
+                        }
+                    },
+                    {
+                        "bool": {
+                            "must": [
+                                {"term": {"metric_name.keyword": MetricName.LLM_PROXY_REQUESTS_TOTAL.value}},
+                                {"range": {"attributes.response_status": {"lt": 400}}},
+                            ]
+                        }
+                    },
+                ],
+                "minimum_should_match": 1,
+            }
+        }
+
         agg_body = {
-            "query": query,
+            "query": modified_query,
             "size": 0,
             "aggs": {
                 "paginated_results": terms_agg,
@@ -165,7 +185,6 @@ class LLMHandler:
 
     def _parse_llms_usage_result(self, result: dict) -> list[dict]:
         """Parse result for LLMs usage."""
-        # Extract buckets from paginated_results (already sliced by pipeline)
         buckets = result.get("aggregations", {}).get("paginated_results", {}).get("buckets", [])
         rows = [{"model_name": bucket["key"], "total_requests": bucket["doc_count"]} for bucket in buckets]
         logger.debug(f"Parsed llms-usage result: total_model_buckets={len(buckets)}, rows_parsed={len(rows)}")

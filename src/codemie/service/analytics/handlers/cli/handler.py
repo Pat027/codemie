@@ -486,10 +486,8 @@ class CLIHandler(CLIBaseHandler):
         """Build terms aggregation for CLI LLMs usage with fetch-and-slice."""
         from codemie.service.analytics.aggregation_builder import AggregationBuilder
 
-        # Define sub-aggregations (none needed, just counting doc_count)
         sub_aggs = {}
 
-        # Build terms aggregation using helper
         terms_agg = AggregationBuilder.build_terms_agg(
             group_by_field="attributes.llm_model.keyword",
             fetch_size=fetch_size,
@@ -497,9 +495,31 @@ class CLIHandler(CLIBaseHandler):
             sub_aggs=sub_aggs,
         )
 
-        # Construct full aggregation body
+        # Add filter to query to exclude errors from LLM_PROXY_REQUESTS_TOTAL
+        modified_query = {
+            "bool": {
+                "must": [query],
+                "should": [
+                    {
+                        "bool": {
+                            "must_not": {"term": {"metric_name.keyword": MetricName.LLM_PROXY_REQUESTS_TOTAL.value}}
+                        }
+                    },
+                    {
+                        "bool": {
+                            "must": [
+                                {"term": {"metric_name.keyword": MetricName.LLM_PROXY_REQUESTS_TOTAL.value}},
+                                {"range": {"attributes.response_status": {"lt": 400}}},
+                            ]
+                        }
+                    },
+                ],
+                "minimum_should_match": 1,
+            }
+        }
+
         agg_body = {
-            "query": query,
+            "query": modified_query,
             "size": 0,
             "aggs": {
                 "paginated_results": terms_agg,

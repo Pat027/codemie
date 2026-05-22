@@ -87,6 +87,7 @@ class LLMProxyMonitoringService(BaseMonitoringService):
 
             # Track proxy request (synchronous, non-blocking)
             # Langfuse SDK uses background threads internally, no need for asyncio.to_thread()
+
             cls._track_proxy_request(
                 user=user,
                 endpoint=endpoint,
@@ -161,8 +162,12 @@ class LLMProxyMonitoringService(BaseMonitoringService):
             }
 
             # Add sanitized request context attributes
-            sanitized_info = cls._sanitize_request_info(request_info)
+            sanitized_info = cls._sanitize_request_info(request_info, endpoint)
             attributes.update(sanitized_info)
+
+            if status_code == 400 and LLM_MODEL in request_info:
+                is_valid = cls._is_valid_model(request_info[LLM_MODEL])
+                attributes["is_valid_model"] = is_valid
 
             # Send request count metric
             cls.send_count_metric(
@@ -207,7 +212,7 @@ class LLMProxyMonitoringService(BaseMonitoringService):
             }
 
             # Add sanitized request context attributes
-            sanitized_info = cls._sanitize_request_info(request_info)
+            sanitized_info = cls._sanitize_request_info(request_info, endpoint)
             attributes.update(sanitized_info)
 
             # Add error message if provided
@@ -344,7 +349,7 @@ class LLMProxyMonitoringService(BaseMonitoringService):
             logger.warning(f"Error sending LangFuse trace: {str(e)}")
 
     @classmethod
-    def _sanitize_request_info(cls, request_info: dict) -> dict:
+    def _sanitize_request_info(cls, request_info: dict, endpoint: str = "") -> dict:
         """
         Sanitize request_info to prevent memory bloat.
 
@@ -353,6 +358,7 @@ class LLMProxyMonitoringService(BaseMonitoringService):
 
         Args:
             request_info: Raw request information dictionary
+            endpoint: API endpoint path (used to determine if model validation is needed)
 
         Returns:
             Sanitized dictionary with size-limited values
@@ -362,8 +368,15 @@ class LLMProxyMonitoringService(BaseMonitoringService):
         # Maximum string length for any field
         max_string_length = 500
 
+        # Endpoints where model validation should be applied
+        model_validation_endpoints = {"/v1/models", "/models", "/v1/health", "/health"}
+
         for key, value in request_info.items():
             if value is None:
+                continue
+
+            # Skip llm_model if invalid ONLY for model/health endpoints
+            if key == LLM_MODEL and endpoint in model_validation_endpoints and not cls._is_valid_model(value):
                 continue
 
             # Limit string lengths
@@ -377,6 +390,34 @@ class LLMProxyMonitoringService(BaseMonitoringService):
                 sanitized[key] = limit_string(str(value), max_length=max_string_length)
 
         return sanitized
+
+    @classmethod
+    def _is_valid_model(cls, model_name: str) -> bool:
+        """
+        Check if model exists in LiteLLM available models.
+
+        Args:
+            model_name: Model name to validate
+
+        Returns:
+            True if model exists, False otherwise
+        """
+        try:
+            from codemie.enterprise.litellm import get_available_models
+
+            models = get_available_models()
+            if not models:
+                return False  # Can't validate, assume invalid
+
+            # Check in both chat and embedding models
+            all_model_names = {m.base_name for m in models.chat_models}
+            all_model_names.update({m.base_name for m in models.embedding_models})
+
+            return model_name in all_model_names
+
+        except Exception as e:
+            logger.warning(f"Error validating model {model_name}: {e}")
+            return False  # Can't validate, assume invalid
 
     @staticmethod
     def _is_cli_request(request_info: dict) -> bool:
