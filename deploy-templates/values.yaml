@@ -253,9 +253,6 @@ ingress:
   enabled: true
   # -- Additional ingress annotations
   annotations:
-    nginx.ingress.kubernetes.io/auth-response-headers: X-Auth-Request-Access-Token,Authorization
-    nginx.ingress.kubernetes.io/auth-signin: https://$host/oauth2/start?rd=$escaped_request_uri
-    nginx.ingress.kubernetes.io/auth-url: http://oauth2-proxy.oauth2-proxy.svc.cluster.local:80/oauth2/auth
     nginx.ingress.kubernetes.io/rewrite-target: /$1
     nginx.ingress.kubernetes.io/proxy-body-size: 900m
     nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
@@ -369,9 +366,6 @@ dsPool:
     enabled: false
     # -- Additional ingress annotations
     annotations:
-      nginx.ingress.kubernetes.io/auth-response-headers: X-Auth-Request-Access-Token,Authorization
-      nginx.ingress.kubernetes.io/auth-signin: https://$host/oauth2/start?rd=$escaped_request_uri
-      nginx.ingress.kubernetes.io/auth-url: http://oauth2-proxy.oauth2-proxy.svc.cluster.local:80/oauth2/auth
       nginx.ingress.kubernetes.io/rewrite-target: /v1/index/$1
       nginx.ingress.kubernetes.io/proxy-body-size: 900m
       nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
@@ -438,9 +432,6 @@ proxyPool:
     enabled: false
     # -- Additional ingress annotations
     annotations:
-      nginx.ingress.kubernetes.io/auth-response-headers: X-Auth-Request-Access-Token,Authorization
-      nginx.ingress.kubernetes.io/auth-signin: https://$host/oauth2/start?rd=$escaped_request_uri
-      nginx.ingress.kubernetes.io/auth-url: http://oauth2-proxy.oauth2-proxy.svc.cluster.local:80/oauth2/auth
       nginx.ingress.kubernetes.io/proxy-body-size: 900m
       nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
     # -- Ingress path type

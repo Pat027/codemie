@@ -28,7 +28,7 @@ A Helm chart for AI/Run API
 | dsPool.argoRollout.scaleDownDelaySeconds | int | `120` | The time to wait before scaling down the old replica set |
 | dsPool.enabled | bool | `false` | Enable a separate deployment/rollout for ds-pool processing |
 | dsPool.extraEnv | list | `[]` | Additional env vars merged after extraEnv + customEnv (e.g. DATASOURCE_WORKER_ONLY=true) |
-| dsPool.ingress.annotations | object | `{"nginx.ingress.kubernetes.io/auth-response-headers":"X-Auth-Request-Access-Token,Authorization","nginx.ingress.kubernetes.io/auth-signin":"https://$host/oauth2/start?rd=$escaped_request_uri","nginx.ingress.kubernetes.io/auth-url":"http://oauth2-proxy.oauth2-proxy.svc.cluster.local:80/oauth2/auth","nginx.ingress.kubernetes.io/proxy-body-size":"900m","nginx.ingress.kubernetes.io/proxy-read-timeout":"600","nginx.ingress.kubernetes.io/rewrite-target":"/v1/index/$1"}` | Additional ingress annotations |
+| dsPool.ingress.annotations | object | `{"nginx.ingress.kubernetes.io/proxy-body-size":"900m","nginx.ingress.kubernetes.io/proxy-read-timeout":"600","nginx.ingress.kubernetes.io/rewrite-target":"/v1/index/$1"}` | Additional ingress annotations |
 | dsPool.ingress.enabled | bool | `false` | Enable ingress for the ds-pool workload |
 | dsPool.ingress.path | string | `"/code-assistant-api/v1/index/(.*)"` | Path routed to the ds-pool service (all /v1/index/* endpoints) |
 | dsPool.ingress.pathType | string | `"ImplementationSpecific"` | Ingress path type |
@@ -53,7 +53,7 @@ A Helm chart for AI/Run API
 | image.repository | string | `""` | Repository to use for the AI/Run API |
 | image.tag | string | `""` | Tag to use for the AI/Run API. Overrides the image tag whose default is the chart appVersion |
 | imagePullSecrets | list | `[]` | Secrets with credentials to pull images from a private registry |
-| ingress.annotations | object | `{"nginx.ingress.kubernetes.io/auth-response-headers":"X-Auth-Request-Access-Token,Authorization","nginx.ingress.kubernetes.io/auth-signin":"https://$host/oauth2/start?rd=$escaped_request_uri","nginx.ingress.kubernetes.io/auth-url":"http://oauth2-proxy.oauth2-proxy.svc.cluster.local:80/oauth2/auth","nginx.ingress.kubernetes.io/proxy-body-size":"900m","nginx.ingress.kubernetes.io/proxy-buffer-size":"64k","nginx.ingress.kubernetes.io/proxy-read-timeout":"600","nginx.ingress.kubernetes.io/rewrite-target":"/$1"}` | Additional ingress annotations |
+| ingress.annotations | object | `{"nginx.ingress.kubernetes.io/proxy-body-size":"900m","nginx.ingress.kubernetes.io/proxy-buffer-size":"64k","nginx.ingress.kubernetes.io/proxy-read-timeout":"600","nginx.ingress.kubernetes.io/rewrite-target":"/$1"}` | Additional ingress annotations |
 | ingress.enabled | bool | `true` | Enable an ingress resource for the AI/Run API |
 | ingress.host | string | `"codemie.%%DOMAIN%%"` | AI/Run API hostname |
 | ingress.path | string | `"/code-assistant-api/(.*)"` | The path to AI/Run API |
@@ -91,7 +91,7 @@ A Helm chart for AI/Run API
 | proxyPool.argoRollout.scaleDownDelaySeconds | int | `120` | The time to wait before scaling down the old replica set |
 | proxyPool.enabled | bool | `false` | Enable a separate deployment/rollout for proxy-pool processing |
 | proxyPool.extraEnv | list | `[]` | Additional env vars merged after extraEnv + customEnv |
-| proxyPool.ingress.annotations | object | `{"nginx.ingress.kubernetes.io/auth-response-headers":"X-Auth-Request-Access-Token,Authorization","nginx.ingress.kubernetes.io/auth-signin":"https://$host/oauth2/start?rd=$escaped_request_uri","nginx.ingress.kubernetes.io/auth-url":"http://oauth2-proxy.oauth2-proxy.svc.cluster.local:80/oauth2/auth","nginx.ingress.kubernetes.io/proxy-body-size":"900m","nginx.ingress.kubernetes.io/proxy-read-timeout":"600"}` | Additional ingress annotations |
+| proxyPool.ingress.annotations | object | `{"nginx.ingress.kubernetes.io/proxy-body-size":"900m","nginx.ingress.kubernetes.io/proxy-read-timeout":"600"}` | Additional ingress annotations |
 | proxyPool.ingress.enabled | bool | `false` | Enable ingress for the proxy-pool workload |
 | proxyPool.ingress.pathType | string | `"ImplementationSpecific"` | Ingress path type |
 | proxyPool.ingress.paths | list | `[{"path":"/v1/chat/completions"},{"path":"/chat/completions"},{"path":"/v1/completions"},{"path":"/completions"},{"path":"/v1/messages"},{"path":"/messages"},{"path":"/v1/messages/count_tokens"},{"path":"/messages/count_tokens"},{"path":"/v1/responses"},{"path":"/responses"},{"path":"/v1/embeddings"},{"path":"/embeddings"},{"path":"/v1/health"},{"path":"/health"},{"path":"/v1/models"},{"path":"/models"},{"path":"/v1/models/(.*):generateContent"},{"path":"/models/(.*):generateContent"},{"path":"/v1/models/(.*):streamGenerateContent"},{"path":"/models/(.*):streamGenerateContent"},{"path":"/v1/models/(.*):countTokens"},{"path":"/models/(.*):countTokens"},{"path":"/v1beta/models/(.*):generateContent"},{"path":"/v1beta/models/(.*):streamGenerateContent"}]` | Paths routed to the proxy-pool service (all LiteLLM proxy endpoints) |
