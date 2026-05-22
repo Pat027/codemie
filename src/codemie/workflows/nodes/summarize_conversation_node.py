@@ -116,6 +116,26 @@ class SummarizeConversationCommandNode(BaseNode[AgentMessages]):
     def get_task(self, *arg, **kwargs):
         return "Summarizing workflow conversation because it's too long"
 
+    def post_process_output(self, state_schema: Type[StateSchemaType], task, output) -> str:
+        """Post-process the raw output without JSON encoding.
+
+        Override base class to preserve markdown formatting in the summary output.
+        The base class json.dumps() the output, which escapes markdown special characters.
+        For summarization, we want to preserve the markdown as-is.
+
+        Args:
+            state_schema: The current state schema
+            task: The task description from get_task()
+            output: The raw markdown output from the execute method
+
+        Returns:
+            str: The markdown string as-is (when summarization occurred),
+                 or JSON "null" (when no summarization was needed)
+        """
+        if output is None:
+            return "null"
+        return str(output)
+
     def finalize_and_update_state(
         self, raw_output: Any, processed_output: str, success: bool, state_schema: Type[StateSchemaType]
     ) -> Command | None:
