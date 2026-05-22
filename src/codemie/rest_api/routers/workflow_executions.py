@@ -278,8 +278,7 @@ def create_workflow_execution(
         user=user_model,
     )
 
-    # Extract custom headers if propagation is enabled
-    request_headers = extract_custom_headers(raw_request, request.propagate_headers)
+    request_headers = extract_custom_headers(raw_request) if request.propagate_headers else None
 
     # Set cache control flag for this request
     set_disable_prompt_cache(request.disable_cache or False)
@@ -412,8 +411,7 @@ def resume_workflow_execution(
     if body and body.user_input:
         WorkflowService().append_user_message_on_resume(execution, body.user_input)
 
-    # Extract custom headers if propagation is enabled
-    request_headers = extract_custom_headers(raw_request, propagate_headers)
+    request_headers = extract_custom_headers(raw_request) if propagate_headers else None
 
     # Set cache control flag for this request
     set_disable_prompt_cache(disable_cache)

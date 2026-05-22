@@ -489,7 +489,6 @@ class AssistantChatRequest(ConfiguredModel):
     metadata: Optional[dict[str, Any]] = None
     tools_config: Optional[list[ToolConfig]] = None
     output_schema: Annotated[Optional[dict], AfterValidator(validate_structured_output)] = None
-    propagate_headers: bool = Field(default=False, description="Whether to propagate X-* headers to MCP servers")
     disable_cache: Optional[bool] = Field(
         default=False, description="Disable prompt caching for this request (applies to main agent LLM only)"
     )

@@ -1,4 +1,4 @@
-# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
+# Copyright 2026 EPAM Systems, Inc. ("EPAM")
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@ from codemie.rest_api.models.index import ProviderIndexInfo
 from codemie.rest_api.security.user import User
 from codemie.service.provider.util import decrypt_datasource_provider_fields
 from codemie.service.provider.datasource import ProviderDatasourceSchemaService
+from codemie.service.provider.provider_header_context import ProviderHeaderContext
 from codemie.configs import logger
 from .util import to_class_name
 from .provider_api_client import ProviderAPIClient
@@ -81,11 +82,13 @@ class ProviderToolFactory:
                     "user": User,
                     "project_id": str,
                     "request_uuid": str,
+                    "invoke_headers": Optional[dict],
                 },
                 "name": self._tool_name,
                 "base_name": self.tool_config.name,
                 "description": self.tool_config.description,
                 "args_schema": self._generate_args_schema(),
+                "invoke_headers": None,
             },
         )
         klass.name = self._tool_name
@@ -139,13 +142,18 @@ class ProviderToolFactory:
                 "async": False,
             }
 
+            x_correlation_id = (self.invoke_headers or {}).get(
+                ProviderHeaderContext.HEADERS["CORRELATION_ID"]
+            ) or self.request_uuid
+
             try:
                 logger.info(f"{log_prefix} Invoking tool")
                 response = api_client.invoke_tool(
                     toolkit_name=context.toolkit_config.name,
                     tool_name=context.tool_config.name,
-                    x_correlation_id=self.request_uuid,
+                    x_correlation_id=x_correlation_id,
                     tool_invocation_request=payload,
+                    _headers=self.invoke_headers,
                 )
                 logger.info(f"{log_prefix} Invoked tool successfully")
                 return response.result

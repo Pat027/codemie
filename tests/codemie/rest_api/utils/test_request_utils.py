@@ -1,4 +1,4 @@
-# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
+# Copyright 2026 EPAM Systems, Inc. ("EPAM")
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 """
 Test suite for request utilities including custom header extraction.
 
-Tests the extract_custom_headers function for MCP header propagation including
+Tests the extract_custom_headers function for header forwarding including
 filtering, security blocking, and edge cases.
 """
 
@@ -30,7 +30,7 @@ class TestExtractCustomHeaders:
 
     def test_extract_x_headers(self):
         """
-        TC-1.4.1: Verify extraction of X-prefixed headers.
+        Verify extraction of X-prefixed headers.
 
         Priority: Critical
         """
@@ -44,7 +44,7 @@ class TestExtractCustomHeaders:
         }
 
         # Act
-        result = extract_custom_headers(mock_request, propagate=True)
+        result = extract_custom_headers(mock_request)
 
         # Assert - only X- headers extracted
         assert result is not None
@@ -59,7 +59,7 @@ class TestExtractCustomHeaders:
 
     def test_extract_blocked_headers_filtered(self):
         """
-        TC-1.4.2: Verify blocked headers are filtered out.
+        Verify blocked headers are filtered out.
 
         Priority: Critical
         """
@@ -74,8 +74,8 @@ class TestExtractCustomHeaders:
 
         # Act
         with patch('codemie.rest_api.utils.request_utils.config') as mock_config:
-            mock_config.MCP_BLOCKED_HEADERS = 'authorization,cookie,x-api-key,x-auth-token,x-internal-secret'
-            result = extract_custom_headers(mock_request, propagate=True)
+            mock_config.FORWARDED_HEADERS_BLOCKLIST = 'authorization,cookie,x-api-key,x-auth-token,x-internal-secret'
+            result = extract_custom_headers(mock_request)
 
         # Assert - only non-blocked X- headers returned
         assert result is not None
@@ -87,25 +87,9 @@ class TestExtractCustomHeaders:
         assert 'X-Api-Key' not in result
         assert 'Authorization' not in result
 
-    def test_extract_with_propagate_false(self):
-        """
-        TC-1.4.3: Verify no headers extracted when propagation disabled.
-
-        Priority: Critical
-        """
-        # Arrange
-        mock_request = Mock()
-        mock_request.headers = {'X-Tenant-ID': 'abc', 'X-User': 'john'}
-
-        # Act
-        result = extract_custom_headers(mock_request, propagate=False)
-
-        # Assert - None returned when propagation disabled
-        assert result is None
-
     def test_extract_no_x_headers(self):
         """
-        TC-1.4.4: Verify behavior when no custom headers present.
+        Verify behavior when no custom headers present.
 
         Priority: High
         """
@@ -118,14 +102,14 @@ class TestExtractCustomHeaders:
         }
 
         # Act
-        result = extract_custom_headers(mock_request, propagate=True)
+        result = extract_custom_headers(mock_request)
 
         # Assert - None returned when no X- headers
         assert result is None
 
     def test_extract_case_insensitive_matching(self):
         """
-        TC-1.4.5: Verify case-insensitive header matching.
+        Verify case-insensitive header matching.
 
         Priority: High
         """
@@ -139,8 +123,8 @@ class TestExtractCustomHeaders:
 
         # Act
         with patch('codemie.rest_api.utils.request_utils.config') as mock_config:
-            mock_config.MCP_BLOCKED_HEADERS = 'authorization,cookie'
-            result = extract_custom_headers(mock_request, propagate=True)
+            mock_config.FORWARDED_HEADERS_BLOCKLIST = 'authorization,cookie'
+            result = extract_custom_headers(mock_request)
 
         # Assert - all X- headers extracted regardless of case
         assert result is not None
@@ -151,7 +135,7 @@ class TestExtractCustomHeaders:
 
     def test_extract_case_insensitive_blocking(self):
         """
-        TC-1.4.6: Verify blocked headers matched case-insensitively.
+        Verify blocked headers matched case-insensitively.
 
         Priority: High
         """
@@ -166,8 +150,8 @@ class TestExtractCustomHeaders:
 
         # Act
         with patch('codemie.rest_api.utils.request_utils.config') as mock_config:
-            mock_config.MCP_BLOCKED_HEADERS = 'x-auth-token,x-api-key'
-            result = extract_custom_headers(mock_request, propagate=True)
+            mock_config.FORWARDED_HEADERS_BLOCKLIST = 'x-auth-token,x-api-key'
+            result = extract_custom_headers(mock_request)
 
         # Assert - all variations of blocked headers removed
         assert result is not None
@@ -190,8 +174,8 @@ class TestExtractCustomHeaders:
 
         # Act
         with patch('codemie.rest_api.utils.request_utils.config') as mock_config:
-            mock_config.MCP_BLOCKED_HEADERS = 'x-auth-token,x-api-key'
-            result = extract_custom_headers(mock_request, propagate=True)
+            mock_config.FORWARDED_HEADERS_BLOCKLIST = 'x-auth-token,x-api-key'
+            result = extract_custom_headers(mock_request)
 
         # Assert - None when all headers blocked
         assert result is None
@@ -207,16 +191,16 @@ class TestExtractCustomHeaders:
         mock_request.headers = {}
 
         # Act
-        result = extract_custom_headers(mock_request, propagate=True)
+        result = extract_custom_headers(mock_request)
 
         # Assert - None for empty headers
         assert result is None
 
     def test_extract_with_special_characters(self):
         """
-        TC-1.4.8: Verify handling of headers with special characters.
+        Verify handling of headers with special characters.
 
-        Priority: Medium (included for completeness)
+        Priority: Medium
         """
         # Arrange
         mock_request = Mock()
@@ -228,8 +212,8 @@ class TestExtractCustomHeaders:
 
         # Act
         with patch('codemie.rest_api.utils.request_utils.config') as mock_config:
-            mock_config.MCP_BLOCKED_HEADERS = 'authorization,cookie'
-            result = extract_custom_headers(mock_request, propagate=True)
+            mock_config.FORWARDED_HEADERS_BLOCKLIST = 'authorization,cookie'
+            result = extract_custom_headers(mock_request)
 
         # Assert - special characters preserved
         assert result is not None
@@ -239,9 +223,9 @@ class TestExtractCustomHeaders:
 
     def test_extract_with_empty_string_in_blocked_list(self):
         """
-        TC-1.4.7: Verify handling of malformed blocked headers config.
+        Verify handling of malformed blocked headers config.
 
-        Priority: Medium (included for completeness)
+        Priority: Medium
         """
         # Arrange
         mock_request = Mock()
@@ -249,8 +233,8 @@ class TestExtractCustomHeaders:
 
         # Act
         with patch('codemie.rest_api.utils.request_utils.config') as mock_config:
-            mock_config.MCP_BLOCKED_HEADERS = 'authorization,,cookie, ,x-api-key'
-            result = extract_custom_headers(mock_request, propagate=True)
+            mock_config.FORWARDED_HEADERS_BLOCKLIST = 'authorization,,cookie, ,x-api-key'
+            result = extract_custom_headers(mock_request)
 
         # Assert - empty strings don't cause issues
         assert result is not None
@@ -269,42 +253,13 @@ class TestExtractCustomHeaders:
 
         # Act
         with patch('codemie.rest_api.utils.request_utils.config') as mock_config:
-            mock_config.MCP_BLOCKED_HEADERS = 'authorization,cookie'
-            result = extract_custom_headers(mock_request, propagate=True)
+            mock_config.FORWARDED_HEADERS_BLOCKLIST = 'authorization,cookie'
+            result = extract_custom_headers(mock_request)
 
         # Assert - original case preserved
         assert 'X-Tenant-ID' in result  # Original case
         assert 'x-user-id' in result  # Original case
         assert 'X-SESSION-ID' in result  # Original case
-
-    @patch('codemie.rest_api.utils.request_utils.logger')
-    def test_extract_logging(self, mock_logger):
-        """
-        TC-1.4.9: Verify debug logging works correctly.
-
-        Priority: Low (included for completeness)
-        """
-        # Arrange
-        mock_request = Mock()
-        mock_request.headers = {'X-Tenant-ID': 'abc', 'X-User-ID': 'john'}
-
-        # Act
-        with patch('codemie.rest_api.utils.request_utils.config') as mock_config:
-            mock_config.MCP_BLOCKED_HEADERS = 'authorization,cookie'
-            extract_custom_headers(mock_request, propagate=True)
-
-        # Assert - logger.debug called
-        mock_logger.debug.assert_called_once()
-        call_args = mock_logger.debug.call_args
-
-        # Verify log message contains header count
-        assert 'Extracted' in call_args[0][0]
-        assert 'custom headers' in call_args[0][0]
-
-        # Verify extra context
-        assert 'extra' in call_args[1]
-        assert call_args[1]['extra']['propagate_headers'] is True
-        assert call_args[1]['extra']['header_count'] == 2
 
     def test_extract_with_unicode_values(self):
         """
@@ -318,8 +273,8 @@ class TestExtractCustomHeaders:
 
         # Act
         with patch('codemie.rest_api.utils.request_utils.config') as mock_config:
-            mock_config.MCP_BLOCKED_HEADERS = 'authorization,cookie'
-            result = extract_custom_headers(mock_request, propagate=True)
+            mock_config.FORWARDED_HEADERS_BLOCKLIST = 'authorization,cookie'
+            result = extract_custom_headers(mock_request)
 
         # Assert - Unicode preserved
         assert result is not None

@@ -103,8 +103,8 @@ class TestWorkflowExecutionsRouterWithHeaders:
             user=user,
         )
 
-        # Assert - extract_custom_headers called with propagate_headers=True
-        mock_extract_headers.assert_called_once_with(raw_request, True)
+        # Assert - extract_custom_headers called with just the raw_request (no propagate arg)
+        mock_extract_headers.assert_called_once_with(raw_request)
 
         # Assert - WorkflowExecutor.create_executor called with request_headers
         mock_create_executor.assert_called_once()
@@ -179,8 +179,8 @@ class TestWorkflowExecutionsRouterWithHeaders:
             user=user,
         )
 
-        # Assert - extract_custom_headers called with propagate_headers=False
-        mock_extract_headers.assert_called_once_with(raw_request, False)
+        # Assert - extract_custom_headers not called when propagate_headers=False
+        mock_extract_headers.assert_not_called()
 
         # Assert - WorkflowExecutor.create_executor called with request_headers=None
         mock_create_executor.assert_called_once()
@@ -332,8 +332,8 @@ class TestWorkflowExecutionsRouterWithHeaders:
             stream=False,
         )
 
-        # Assert - extract_custom_headers called with propagate_headers=True
-        mock_extract_headers.assert_called_once_with(raw_request, True)
+        # Assert - extract_custom_headers called with just the raw_request (no propagate arg)
+        mock_extract_headers.assert_called_once_with(raw_request)
 
         # Assert - WorkflowExecutor.create_executor called with request_headers
         mock_create_executor.assert_called_once()
@@ -402,8 +402,8 @@ class TestWorkflowExecutionsRouterWithHeaders:
             stream=False,
         )
 
-        # Assert - extract_custom_headers called with propagate_headers=False
-        mock_extract_headers.assert_called_once_with(raw_request, False)
+        # Assert - extract_custom_headers not called when propagate_headers=False
+        mock_extract_headers.assert_not_called()
 
         # Assert - WorkflowExecutor.create_executor called with request_headers=None
         mock_create_executor.assert_called_once()

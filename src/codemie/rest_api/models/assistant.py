@@ -1366,10 +1366,6 @@ class VirtualAssistantChatRequest(BaseModel):
         default=10,
         description='Number of context chunks to retrieve.',
     )
-    propagate_headers: bool = Field(
-        default=False,
-        description='Whether to propagate X-* headers to MCP servers.',
-    )
     disable_cache: Optional[bool] = Field(
         default=False,
         description='Disable prompt caching for this request.',

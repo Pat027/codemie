@@ -876,7 +876,6 @@ async def ask_virtual_assistant(
         tools_config=tools_config,
         metadata=request.metadata,
         top_k=request.top_k,
-        propagate_headers=request.propagate_headers,
         disable_cache=request.disable_cache,
         mcp_server_single_usage=request.mcp_server_single_usage,
         save_history=False,  # Enforced — virtual assistants never persist history

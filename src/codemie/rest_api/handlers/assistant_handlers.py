@@ -419,8 +419,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
         )
 
         try:
-            # Extract headers if propagation is enabled
-            request_headers = extract_custom_headers(raw_request, request.propagate_headers)
+            request_headers = extract_custom_headers(raw_request)
 
             # Set cache control flag for this request
             set_disable_prompt_cache(request.disable_cache or False)
@@ -686,8 +685,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
         """
         request_uuid = raw_request.state.uuid
 
-        # Extract headers if propagation is enabled
-        request_headers = extract_custom_headers(raw_request, request.propagate_headers)
+        request_headers = extract_custom_headers(raw_request)
 
         # Set cache control flag for this request
         set_disable_prompt_cache(request.disable_cache or False)
@@ -741,8 +739,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
         """
         Handle synchronous (non-streaming) assistant request.
         """
-        # Extract headers if propagation is enabled
-        request_headers = extract_custom_headers(raw_request, request.propagate_headers)
+        request_headers = extract_custom_headers(raw_request)
 
         # Set cache control flag for this request
         set_disable_prompt_cache(request.disable_cache or False)

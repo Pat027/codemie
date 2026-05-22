@@ -48,6 +48,7 @@ from codemie.core.constants import CodeIndexType, ToolType
 from codemie.core.dependecies import get_llm_by_credentials
 from codemie.core.models import AssistantChatRequest, CodeFields, IdeChatRequest, ToolConfig
 from codemie.core.thread import MessageQueue
+from codemie.service.provider.provider_header_context import ProviderHeaderContext
 from codemie.core.utils import build_unique_file_objects_list
 from codemie.rest_api.models.assistant import (
     Assistant,
@@ -110,8 +111,34 @@ class ToolkitService:
 
         return build_unique_file_objects_list(request.file_names, conversation_id, history_index)
 
+    @staticmethod
+    def _build_provider_headers(
+        request_headers: dict[str, str] | None,
+        conversation_id: str | None,
+        assistant_id: str | None,
+        llm_model: str | None,
+        history_index: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+    ) -> dict[str, str]:
+        """Delegates to ProviderHeaderContext for header construction."""
+        context = ProviderHeaderContext(
+            request_headers=request_headers or {},
+            conversation_id=conversation_id,
+            history_index=history_index,
+            assistant_id=assistant_id,
+            llm_model=llm_model,
+            temperature=temperature,
+            top_p=top_p,
+        )
+        return context.build()
+
     @classmethod
-    def get_toolkit_methods(cls):
+    def get_toolkit_methods(
+        cls,
+        request_headers: dict[str, str] | None = None,
+        conversation_id: str | None = None,
+    ):
         """Get mapping of toolkit types to their factory methods.
 
         Returns:
@@ -152,7 +179,10 @@ class ToolkitService:
                     request,
                 )
             ),
-            **cls.get_provider_toolkits_methods(),
+            **cls.get_provider_toolkits_methods(
+                request_headers=request_headers,
+                conversation_id=conversation_id,
+            ),
         }
 
     @classmethod
@@ -248,7 +278,11 @@ class ToolkitService:
         return toolkits
 
     @classmethod
-    def get_provider_toolkits_methods(cls):
+    def get_provider_toolkits_methods(
+        cls,
+        request_headers: dict[str, str] | None = None,
+        conversation_id: str | None = None,
+    ):
         """Get provider toolkit methods.
 
         Returns:
@@ -260,15 +294,26 @@ class ToolkitService:
         for toolkit in provider_toolkits:
             toolkit_name = toolkit.get_tools_ui_info()['toolkit']
 
-            toolkit_methods[toolkit_name] = lambda assistant, user, request_uuid, request, _toolkit=toolkit: [
-                tool(
-                    project_id=assistant.project,
-                    user=user,
-                    request_uuid=request_uuid,
-                    tool_config=request.tools_config,
-                )
-                for tool in _toolkit.get_toolkit().get_tools()
-            ]
+            def _make_toolkit_lambda(_tk=toolkit, _request_headers=request_headers):
+                return lambda assistant, user, _llm_model, request_uuid, request: [
+                    tool(
+                        project_id=assistant.project,
+                        user=user,
+                        request_uuid=request_uuid,
+                        invoke_headers=cls._build_provider_headers(
+                            request_headers=_request_headers,
+                            conversation_id=request.conversation_id if request else conversation_id,
+                            assistant_id=assistant.id,
+                            llm_model=_llm_model,
+                            history_index=request.history_index if request else None,
+                            temperature=assistant.temperature,
+                            top_p=assistant.top_p,
+                        ),
+                    )
+                    for tool in _tk.get_toolkit().get_tools()
+                ]
+
+            toolkit_methods[toolkit_name] = _make_toolkit_lambda()
         return toolkit_methods
 
     @classmethod
@@ -443,6 +488,7 @@ class ToolkitService:
                 request_uuid,
                 is_react,
                 exclude_extra_context_tools,
+                request_headers=request_headers,
             )
         )
         logger.debug(f"Initialized context tools for assistant `{assistant.name}`. Total tools: {len(tools)}")
@@ -776,7 +822,13 @@ class ToolkitService:
         # Tools with credentials
         tools.extend(
             cls.add_tools_with_creds(
-                assistant, user, llm_model, request_uuid, request, augmented_toolkits=augmented_toolkits
+                assistant,
+                user,
+                llm_model,
+                request_uuid,
+                request,
+                augmented_toolkits=augmented_toolkits,
+                request_headers=request_headers,
             )
         )
 
@@ -864,6 +916,7 @@ class ToolkitService:
         request: AssistantChatRequest = None,
         skip_filtering: bool = False,
         augmented_toolkits: Optional[list] = None,
+        request_headers: dict[str, str] | None = None,
     ):
         """Add tools that require credentials from various toolkits.
 
@@ -875,12 +928,16 @@ class ToolkitService:
             request: The assistant chat request (optional)
             skip_filtering: If True, return all tools without filtering (for tool search flow)
             augmented_toolkits: Optional augmented toolkits list (includes dynamic tools)
+            request_headers: Filtered X-* headers to propagate to provider tool calls
 
         Returns:
             List of credential-based tools
         """
         tools = []
-        toolkit_methods = cls.get_toolkit_methods()
+        toolkit_methods = cls.get_toolkit_methods(
+            request_headers=request_headers,
+            conversation_id=request.conversation_id if request else None,
+        )
         # Use augmented toolkits if provided, otherwise use assistant's configured toolkits
         toolkits_to_process = augmented_toolkits if augmented_toolkits is not None else assistant.toolkits
         for toolkit in toolkits_to_process:
@@ -916,6 +973,7 @@ class ToolkitService:
         request_uuid: str,
         is_react: bool = True,
         exclude_extra_context_tools: bool = False,
+        request_headers: dict[str, str] | None = None,
     ):
         """Adds tools based on the context of the assistant.
 
@@ -927,6 +985,7 @@ class ToolkitService:
             request_uuid: Unique request identifier
             is_react: Whether the agent uses ReAct pattern
             exclude_extra_context_tools: Whether to exclude extra context tools
+            request_headers: Filtered X-* headers to propagate to provider tool calls
 
         Returns:
             List of context-based tools
@@ -938,7 +997,17 @@ class ToolkitService:
                 cls._add_kb_tools(tools, context, assistant, llm_model)
 
             if context.context_type == ContextType.PROVIDER:
-                cls._add_provider_context_tools(tools, assistant, context, user, request_uuid)
+                cls._add_provider_context_tools(
+                    tools,
+                    assistant,
+                    context,
+                    user,
+                    request_uuid,
+                    request_headers=request_headers,
+                    conversation_id=request.conversation_id if request else None,
+                    llm_model=llm_model,
+                    history_index=request.history_index if request else None,
+                )
 
             if context.context_type == ContextType.CODE:
                 cls._add_code_tools(tools, context, assistant, request, is_react, exclude_extra_context_tools)
@@ -1156,7 +1225,16 @@ class ToolkitService:
 
     @classmethod
     def _add_provider_context_tools(
-        cls, tools: list[BaseTool], assistant: Assistant, context: Context, user: User, request_uuid: str
+        cls,
+        tools: list[BaseTool],
+        assistant: Assistant,
+        context: Context,
+        user: User,
+        request_uuid: str,
+        request_headers: dict[str, str] | None = None,
+        conversation_id: str | None = None,
+        llm_model: str | None = None,
+        history_index: int | None = None,
     ):
         """Add provider context tools.
 
@@ -1165,7 +1243,11 @@ class ToolkitService:
             assistant: The assistant configuration
             context: The context configuration
             user: The user making the request
-            request_uuid: Unique request identifier
+            request_uuid: Unique request identifier for tool instantiation
+            request_headers: Filtered X-* headers to propagate to provider tool calls
+            conversation_id: Conversation ID for context propagation
+            llm_model: LLM model name for context propagation
+            history_index: Conversation turn index
         """
         index_info = cls._find_index(
             klass=ProviderIndexInfo,
@@ -1180,6 +1262,16 @@ class ToolkitService:
         provider_toolkits = ProviderToolkitsFactory.get_toolkits_for_provider(provider_id)
         tool_names = [tool.name for toolkit in assistant.toolkits for tool in toolkit.tools]
 
+        invoke_headers = cls._build_provider_headers(
+            request_headers=request_headers,
+            conversation_id=conversation_id,
+            assistant_id=assistant.id,
+            llm_model=llm_model,
+            history_index=history_index,
+            temperature=assistant.temperature,
+            top_p=assistant.top_p,
+        )
+
         for toolkit in provider_toolkits:
             context_tools = toolkit().get_datasource_tools(datasource=index_info)
 
@@ -1190,6 +1282,7 @@ class ToolkitService:
                         user=user,
                         request_uuid=request_uuid,
                         datasource=index_info,
+                        invoke_headers=invoke_headers,
                     )
                     for tool in context_tools
                     if tool.base_name in tool_names

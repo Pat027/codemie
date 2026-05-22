@@ -608,6 +608,48 @@ class TestToolkitService:
         # Assertions
         assert len(result) == 1
 
+    @patch("codemie.service.tools.toolkit_service.ProviderToolkitsFactory")
+    def test_add_tools_with_creds_propagates_request_headers(
+        self, mock_provider_factory, mock_assistant, mock_user, mock_request
+    ):
+        """_build_invoke_headers is called and the pre-built dict reaches provider tool constructors."""
+        mock_provider_toolkit = Mock()
+        mock_provider_toolkit.get_tools_ui_info.return_value = {"toolkit": "my_provider_toolkit"}
+        mock_provider_factory.get_toolkits.return_value = [mock_provider_toolkit]
+
+        mock_tool_class = Mock()
+        mock_provider_toolkit.get_toolkit.return_value.get_tools.return_value = [mock_tool_class]
+
+        mock_assistant.toolkits = [Mock(toolkit="my_provider_toolkit", tools=[Mock(name="some_tool")])]
+        mock_assistant.temperature = 0.7
+        mock_assistant.top_p = None
+        mock_request.conversation_id = "conv-abc"
+        mock_request.history_index = 2
+        mock_request.tools_config = None
+
+        request_headers = {"X-Tenant-ID": "tenant-1"}
+
+        ToolkitService.add_tools_with_creds(
+            assistant=mock_assistant,
+            user=mock_user,
+            llm_model="gpt-4o",
+            request_uuid="req-uuid",
+            request=mock_request,
+            request_headers=request_headers,
+            skip_filtering=True,
+        )
+
+        mock_tool_class.assert_called_once()
+        call_kwargs = mock_tool_class.call_args.kwargs
+        invoke_headers = call_kwargs.get("invoke_headers")
+        assert invoke_headers is not None
+        assert invoke_headers.get("X-Tenant-ID") == "tenant-1"
+        assert invoke_headers.get("X-Conversation-Id") == "conv-abc"
+        assert invoke_headers.get("X-Conversation-Message-Id") == "2"
+        assert invoke_headers.get("X-Assistant-Id") == mock_assistant.id
+        assert invoke_headers.get("X-Assistant-LLM-Model") == "gpt-4o"
+        assert invoke_headers.get("X-Assistant-Temperature") is not None
+
     @patch("codemie.service.tools.toolkit_service.KBToolkit")
     def test_add_kb_tools(self, mock_kb_toolkit, mock_assistant):
         """Test _add_kb_tools adds knowledge base tools."""
@@ -677,6 +719,8 @@ class TestToolkitService:
         mock_toolkit_tool.name = "test_tool"
         mock_toolkit.tools = [mock_toolkit_tool]
         mock_assistant.toolkits = [mock_toolkit]
+        mock_assistant.temperature = None
+        mock_assistant.top_p = None
 
         # Mock _find_index
         with patch.object(ToolkitService, '_find_index', return_value=mock_index):
@@ -686,6 +730,58 @@ class TestToolkitService:
         # Assertions
         assert len(tools) == 1
         assert tools[0] == mock_tool_instance
+
+    @patch("codemie.service.tools.toolkit_service.ProviderToolkitsFactory")
+    def test_add_provider_context_tools_propagates_request_headers(
+        self, mock_provider_factory, mock_assistant, mock_user
+    ):
+        """request_headers must reach datasource tool constructors."""
+        mock_index = Mock()
+        mock_index.provider_fields.provider_id = "test-provider"
+
+        mock_tool_class = Mock()
+        mock_tool_class.base_name = "some_tool"
+        mock_toolkit_instance = Mock()
+        mock_toolkit_instance.get_datasource_tools.return_value = [mock_tool_class]
+        mock_toolkit_class = Mock(return_value=mock_toolkit_instance)
+        mock_provider_factory.get_toolkits_for_provider.return_value = [mock_toolkit_class]
+
+        mock_tool_item = Mock()
+        mock_tool_item.name = "some_tool"
+        mock_toolkit_details = Mock()
+        mock_toolkit_details.tools = [mock_tool_item]
+        mock_assistant.toolkits = [mock_toolkit_details]
+        mock_assistant.project = "proj"
+        mock_assistant.id = "asst-99"
+        mock_assistant.temperature = 0.8
+        mock_assistant.top_p = None
+
+        request_headers = {"X-Custom": "val"}
+
+        with patch.object(ToolkitService, '_find_index', return_value=mock_index):
+            tools = []
+            ToolkitService._add_provider_context_tools(
+                tools,
+                mock_assistant,
+                Mock(name="some-context"),
+                mock_user,
+                "req-uuid",
+                request_headers=request_headers,
+                conversation_id="conv-xyz",
+                llm_model="gpt-4o",
+                history_index=3,
+            )
+
+        mock_tool_class.assert_called_once()
+        call_kwargs = mock_tool_class.call_args.kwargs
+        invoke_headers = call_kwargs.get("invoke_headers")
+        assert invoke_headers is not None
+        assert invoke_headers.get("X-Custom") == "val"
+        assert invoke_headers.get("X-Conversation-Id") == "conv-xyz"
+        assert invoke_headers.get("X-Conversation-Message-Id") == "3"
+        assert invoke_headers.get("X-Assistant-Id") == "asst-99"
+        assert invoke_headers.get("X-Assistant-LLM-Model") == "gpt-4o"
+        assert invoke_headers.get("X-Assistant-Temperature") == "0.8"
 
     @patch("codemie.service.tools.toolkit_service.CodeToolkit")
     def test_add_code_tools(self, mock_code_toolkit, mock_assistant, mock_request):

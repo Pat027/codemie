@@ -298,7 +298,7 @@ class AssistantHealthCheckService:
             # Extract headers if needed
             from codemie.rest_api.utils.request_utils import extract_custom_headers
 
-            request_headers = extract_custom_headers(raw_request, test_request.propagate_headers) if raw_request else {}
+            request_headers = extract_custom_headers(raw_request) if raw_request else None
 
             try:
                 # Build and execute the agent with the test message

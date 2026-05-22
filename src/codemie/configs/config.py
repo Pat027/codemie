@@ -436,9 +436,8 @@ class Config(BaseSettings):
     # MCP Client configuration
     MCP_CLIENT_TIMEOUT: float = 300.0  # Timeout in seconds for MCP client requests
 
-    # MCP Header Propagation configuration
-    # Comma-separated list of header names (case-insensitive) that should NOT be propagated to MCP servers
-    MCP_BLOCKED_HEADERS: str = (
+    # Comma-separated header names (case-insensitive) blocked from forwarding to downstream services (MCP, providers)
+    FORWARDED_HEADERS_BLOCKLIST: str = (
         "authorization,cookie,set-cookie,x-api-key,x-auth-token,x-internal-secret,x-internal-token"
     )
 

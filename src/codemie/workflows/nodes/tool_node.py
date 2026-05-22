@@ -197,7 +197,7 @@ class ToolNode(BaseNode[AgentMessages]):
             project_name=self.workflow_config.project,
             execution_id=self.execution_id,
         )
-        toolkits = ToolkitService.get_toolkit_methods()
+        toolkits = ToolkitService.get_toolkit_methods(request_headers=self.request_headers)
 
         file_objects = (
             build_unique_file_objects_list(
