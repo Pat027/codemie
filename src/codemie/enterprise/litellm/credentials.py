@@ -135,13 +135,13 @@ def _resolve_litellm_user_credentials_uncached(
         # credential — returning it would incorrectly activate user_credentials_bypass mode.
         if getattr(setting, "setting_type", None) != SettingType.PROJECT.value:
             return _build_resolved(setting, credentials)
-        logger.debug(
+        logger.info(
             f"credential_event=skipped_project_scoped_setting username={username!r} "
             f"user_id={user_id!r} project_name={project_name!r} "
             f"alias={getattr(setting, 'alias', None)!r}"
         )
     else:
-        logger.debug(
+        logger.info(
             f"credential_event=no_user_litellm_credentials username={username!r} "
             f"user_id={user_id!r} project_name={project_name!r}"
         )

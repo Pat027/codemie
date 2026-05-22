@@ -18,6 +18,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel
 
+from codemie.configs import logger
+
 
 class RuntimeBudgetMode(StrEnum):
     USER_CREDENTIALS_BYPASS = "user_credentials_bypass"
@@ -38,13 +40,26 @@ def select_runtime_budget_mode(
     project_member_tracking_enabled: bool,
     resolved_project_budget: bool,
 ) -> RuntimeBudgetSelection:
+    logger.info(
+        f"budget_event=runtime_mode_selection_inputs component=runtime_budget_selection "
+        f"project_name={project_name!r} has_user_litellm_credentials={has_user_litellm_credentials} "
+        f"resolved_project_budget={resolved_project_budget} "
+        f"project_member_tracking_enabled={project_member_tracking_enabled}"
+    )
     if has_user_litellm_credentials:
-        return RuntimeBudgetSelection(mode=RuntimeBudgetMode.USER_CREDENTIALS_BYPASS)
-    if project_name and resolved_project_budget and project_member_tracking_enabled:
-        return RuntimeBudgetSelection(
+        selection = RuntimeBudgetSelection(mode=RuntimeBudgetMode.USER_CREDENTIALS_BYPASS)
+    elif project_name and resolved_project_budget and project_member_tracking_enabled:
+        selection = RuntimeBudgetSelection(
             mode=RuntimeBudgetMode.PROJECT_BUDGET_WITH_MEMBER_TRACKING,
             project_member_tracking_enabled=True,
         )
-    if project_name and resolved_project_budget:
-        return RuntimeBudgetSelection(mode=RuntimeBudgetMode.PROJECT_BUDGET_PROJECT_ONLY)
-    return RuntimeBudgetSelection(mode=RuntimeBudgetMode.GLOBAL_OR_PERSONAL_BUDGET)
+    elif project_name and resolved_project_budget:
+        selection = RuntimeBudgetSelection(mode=RuntimeBudgetMode.PROJECT_BUDGET_PROJECT_ONLY)
+    else:
+        selection = RuntimeBudgetSelection(mode=RuntimeBudgetMode.GLOBAL_OR_PERSONAL_BUDGET)
+    logger.info(
+        f"budget_event=runtime_mode_selected component=runtime_budget_selection "
+        f"project_name={project_name!r} mode={selection.mode!r} "
+        f"project_member_tracking_enabled={selection.project_member_tracking_enabled}"
+    )
+    return selection

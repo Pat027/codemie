@@ -101,7 +101,7 @@ class BudgetResolutionService:
         )
         if ctx is None:
             _resolution_cache[cache_key] = None
-            logger.debug(
+            logger.info(
                 f"budget_event=budget_resolution_global_fallback component=budget_resolution_service "
                 f"user_id={user_id!r} project_name={project_name!r} "
                 f"budget_category={budget_category.value!r} reason=project_budget_not_found"
@@ -121,7 +121,7 @@ class BudgetResolutionService:
             member_provider_metadata=ctx.member_provider_metadata,
         )
         _resolution_cache[cache_key] = resolved
-        logger.debug(
+        logger.info(
             f"budget_event=project_budget_resolved component=budget_resolution_service "
             f"user_id={user_id!r} project_name={project_name!r} "
             f"budget_category={budget_category.value!r} budget_id={resolved.budget_id!r} "
@@ -205,7 +205,7 @@ class BudgetResolutionService:
 
         if row is None:
             _resolution_cache[cache_key] = None
-            logger.debug(
+            logger.info(
                 f"budget_event=budget_resolution_global_fallback component=budget_resolution_service path=sync "
                 f"user_id={user_id!r} project_name={project_name!r} "
                 f"budget_category={budget_category.value!r} reason=project_budget_not_found"
@@ -225,7 +225,7 @@ class BudgetResolutionService:
             member_provider_metadata=row["member_meta"] or {},
         )
         _resolution_cache[cache_key] = resolved
-        logger.debug(
+        logger.info(
             f"budget_event=project_budget_resolved component=budget_resolution_service path=sync "
             f"user_id={user_id!r} project_name={project_name!r} "
             f"budget_category={budget_category.value!r} budget_id={resolved.budget_id!r} "

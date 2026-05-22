@@ -120,10 +120,11 @@ async def ensure_project_member_runtime_ready(
             budget_category=budget_category,
         )
         if resolved.scope != BudgetScope.PROJECT:
-            logger.debug(
+            logger.warning(
                 f"budget_event=runtime_member_sync_skipped component=project_member_runtime_sync "
                 f"user_id={user_id!r} username={user_email!r} project_name={project_name!r} "
-                f"budget_category={budget_category.value!r} scope={resolved.scope.value!r} reason=global_scope"
+                f"budget_category={budget_category.value!r} scope={resolved.scope.value!r} reason=global_scope "
+                f"hint=project_budget_not_resolved_for_user"
             )
             return
 

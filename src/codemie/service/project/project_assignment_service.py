@@ -134,6 +134,12 @@ class ProjectAssignmentService:
 
             budget = session.get(Budget, assignment.budget_id)
             if budget is None:
+                logger.warning(
+                    f"budget_event=project_member_budget_allocation_skipped component=project_assignment_service "
+                    f"user_id={user_id!r} project_name={project_name!r} "
+                    f"budget_id={assignment.budget_id!r} budget_category={assignment.budget_category!r} "
+                    f"reason=budget_row_missing hint=pmba_will_not_be_created_for_this_category"
+                )
                 continue
             soft_budget, max_budget = ProjectAssignmentService._get_member_added_allocation_amounts(
                 session, project_name, assignment.budget_category, assignment.budget_id, budget
@@ -154,8 +160,9 @@ class ProjectAssignmentService:
             )
             session.add(allocation)
             logger.info(
-                f"project_member_budget_allocation_created_pending_provider_sync: "
-                f"user_id={user_id!r} project={project_name!r} budget={assignment.budget_id!r}"
+                f"budget_event=project_member_budget_allocation_created component=project_assignment_service "
+                f"user_id={user_id!r} project_name={project_name!r} budget_id={assignment.budget_id!r} "
+                f"budget_category={assignment.budget_category!r} sync_status=pending_provider_sync"
             )
 
     @staticmethod

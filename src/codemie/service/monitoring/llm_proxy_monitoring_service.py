@@ -348,20 +348,25 @@ class LLMProxyMonitoringService(BaseMonitoringService):
             # Langfuse SDK has built-in error handling and graceful degradation
             logger.warning(f"Error sending LangFuse trace: {str(e)}")
 
+    # Keys in request_info that must never appear in logs or metric attributes.
+    _SENSITIVE_REQUEST_INFO_KEYS = frozenset(
+        {"budget_provider_api_key", "budget_provider_headers", "budget_provider_base_url"}
+    )
+
     @classmethod
     def _sanitize_request_info(cls, request_info: dict, endpoint: str = "") -> dict:
         """
-        Sanitize request_info to prevent memory bloat.
+        Sanitize request_info to prevent memory bloat and credential leakage.
 
-        Limits string lengths and removes potentially large fields to ensure
-        bounded memory usage for metrics and traces.
+        Strips sensitive fields (API keys, provider headers) and limits string
+        lengths to ensure bounded memory usage for metrics and traces.
 
         Args:
             request_info: Raw request information dictionary
             endpoint: API endpoint path (used to determine if model validation is needed)
 
         Returns:
-            Sanitized dictionary with size-limited values
+            Sanitized dictionary with size-limited values and no sensitive keys
         """
         sanitized = {}
 
@@ -372,6 +377,8 @@ class LLMProxyMonitoringService(BaseMonitoringService):
         model_validation_endpoints = {"/v1/models", "/models", "/v1/health", "/health"}
 
         for key, value in request_info.items():
+            if key in cls._SENSITIVE_REQUEST_INFO_KEYS:
+                continue
             if value is None:
                 continue
 

@@ -330,7 +330,7 @@ def _configure_direct_runtime_overrides(
     request_params: dict[str, Any],
 ) -> None:
     if creds:
-        logger.debug(
+        logger.info(
             f"budget_event=runtime_mode_selected component=litellm_llm_factory "
             f"user_id={user_id!r} username={user_email!r} "
             f"mode={RuntimeBudgetMode.USER_CREDENTIALS_BYPASS.value!r} reason=own_credentials"
@@ -375,7 +375,7 @@ def _configure_direct_runtime_overrides(
             runtime_api_key=project_runtime_api_key,
             runtime_base_url=project_runtime_base_url,
         )
-        logger.debug(
+        logger.info(
             f"budget_event=runtime_provider_overrides_applied component=litellm_llm_factory "
             f"user_id={user_id!r} username={user_email!r} model={llm_model_details.base_name!r} "
             f"api_key_present={project_runtime_api_key is not None} "
@@ -390,7 +390,7 @@ def _configure_direct_runtime_overrides(
 
     from .dependencies import check_user_budget
 
-    logger.debug(
+    logger.info(
         f"budget_event=runtime_mode_selected component=litellm_llm_factory "
         f"user_id={user_id!r} username={user_email!r} model={llm_model_details.base_name!r} "
         f"mode={RuntimeBudgetMode.GLOBAL_OR_PERSONAL_BUDGET.value!r} "
@@ -508,7 +508,7 @@ def _probe_direct_project_budget_scopes(project_name: str, user_id: str) -> set[
             member_provider_metadata=row["member_meta"] or {},
         )
 
-    logger.debug(
+    logger.info(
         f"budget_event=project_budget_availability_probed component=litellm_llm_factory "
         f"user_id={user_id!r} project_name={project_name!r} project_scopes={sorted(scope.value for scope in scopes)!r}"
     )
@@ -581,7 +581,7 @@ def _resolve_direct_project_budget_runtime(
     from codemie.service.settings.settings import SettingsService
 
     project_name = litellm_context.current_project
-    logger.debug(
+    logger.info(
         f"budget_event=runtime_category_selected component=litellm_llm_factory "
         f"user_id={user_id!r} username={user_email!r} project_name={project_name!r} "
         f"budget_category={category.value!r} model={llm_model_details.base_name!r}"
@@ -601,7 +601,7 @@ def _resolve_direct_project_budget_runtime(
         project_name=project_name,
         budget_category=category,
     )
-    logger.debug(
+    logger.info(
         f"budget_event=runtime_budget_resolved component=litellm_llm_factory "
         f"user_id={user_id!r} username={user_email!r} project_name={project_name!r} "
         f"budget_category={category.value!r} scope={resolved.scope.value!r} "
@@ -613,7 +613,7 @@ def _resolve_direct_project_budget_runtime(
         resolved, user_id=user_id, user_email=user_email, model=llm_model_details.base_name
     )
     if provider_result is None:
-        logger.debug(
+        logger.info(
             f"budget_event=runtime_project_budget_resolution_skipped component=litellm_llm_factory "
             f"user_id={user_id!r} username={user_email!r} project_name={project_name!r} "
             f"budget_category={category.value!r} model={llm_model_details.base_name!r} "
@@ -628,7 +628,7 @@ def _resolve_direct_project_budget_runtime(
         resolved_project_budget=True,
     )
     runtime_user = provider_result.body_overrides.get("user")
-    logger.debug(
+    logger.info(
         f"budget_event=runtime_mode_selected component=litellm_llm_factory "
         f"user_id={user_id!r} username={user_email!r} project_name={project_name!r} "
         f"budget_category={category.value!r} model={llm_model_details.base_name!r} "
