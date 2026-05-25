@@ -183,12 +183,12 @@ class TestSetLLMContext:
         mock_set_dial_creds.assert_not_called()
         mock_settings_service.get_dial_creds.assert_not_called()
 
-        # Verify error logging
-        mock_logger.error.assert_called_once()
-        error_message = mock_logger.error.call_args[0][0]
-        assert f"Cannot get/set current llm credentials for project: {project_name}" in error_message
-        assert f"user: {user_id}" in error_message
-        assert "LiteLLM service error" in error_message
+        # Verify warning logging (context loss is non-fatal; falls back to platform budget)
+        mock_logger.warning.assert_called_once()
+        warning_message = mock_logger.warning.call_args[0][0]
+        assert f"project={project_name!r}" in warning_message
+        assert user_id in warning_message
+        assert "LiteLLM service error" in warning_message
 
     @patch('codemie.service.llm_service.utils.set_litellm_context')
     @patch('codemie.service.llm_service.utils.set_dial_credentials')
@@ -229,12 +229,12 @@ class TestSetLLMContext:
         # Verify set_dial_credentials was not called due to exception
         mock_set_dial_creds.assert_not_called()
 
-        # Verify error logging
-        mock_logger.error.assert_called_once()
-        error_message = mock_logger.error.call_args[0][0]
-        assert f"Cannot get/set current llm credentials for project: {project_name}" in error_message
-        assert f"user: {user_id}" in error_message
-        assert "DIAL service error" in error_message
+        # Verify warning logging (context loss is non-fatal; falls back to platform budget)
+        mock_logger.warning.assert_called_once()
+        warning_message = mock_logger.warning.call_args[0][0]
+        assert f"project={project_name!r}" in warning_message
+        assert user_id in warning_message
+        assert "DIAL service error" in warning_message
 
     @patch('codemie.service.llm_service.utils.set_litellm_context')
     @patch('codemie.service.llm_service.utils.set_dial_credentials')
@@ -276,9 +276,9 @@ class TestSetLLMContext:
         # Verify set_dial_credentials was not called due to early exception
         mock_set_dial_creds.assert_not_called()
 
-        # Verify error logging
-        mock_logger.error.assert_called_once()
-        error_message = mock_logger.error.call_args[0][0]
-        assert f"Cannot get/set current llm credentials for project: {project_name}" in error_message
-        assert f"user: {user_id}" in error_message
-        assert "Context setting error" in error_message
+        # Verify warning logging (context loss is non-fatal; falls back to platform budget)
+        mock_logger.warning.assert_called_once()
+        warning_message = mock_logger.warning.call_args[0][0]
+        assert f"project={project_name!r}" in warning_message
+        assert user_id in warning_message
+        assert "Context setting error" in warning_message

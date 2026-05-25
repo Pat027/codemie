@@ -491,12 +491,22 @@ def update_workflow_execution_output(
     summary="Request output changes with LLM",
 )
 def request_workflow_execution_output_changes(
-    workflow_id: str, execution_id: str, body: WorkflowExecutionOutputChangeRequest, user: User = Depends(authenticate)
+    workflow_id: str,
+    execution_id: str,
+    body: WorkflowExecutionOutputChangeRequest,
+    raw_request: Request,
+    user: User = Depends(authenticate),
 ):
+    from codemie.configs.logger import set_logging_info
+    from codemie.service.llm_service.utils import set_llm_context
+
     workflow_config = WorkflowService().get_workflow(workflow_id)
 
     if not Ability(user).can(Action.READ, workflow_config):
         raise_access_denied("view")
+
+    set_logging_info(uuid=raw_request.state.uuid, user_id=user.id, user_email=user.username)
+    set_llm_context(None, user.current_project, user)
 
     try:
         result = WorkflowOutputChangeRequestService.run(

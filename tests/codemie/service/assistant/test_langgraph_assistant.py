@@ -193,9 +193,8 @@ class TestLangGraphAgent:
         monkeypatch.setattr(agent, "_invoke_agent", raise_exception)
         monkeypatch.setattr(agent, "_get_inputs", lambda: {})
 
-        # Mock logger to verify error logging
         with (
-            patch("codemie.agents.langgraph_agent.logger.error") as mock_logger_error,
+            patch("codemie.agents.langgraph_agent.set_llm_context"),
             patch("codemie.agents.langgraph_agent.handle_agent_exception") as mock_handle_exception,
             patch("codemie.agents.langgraph_agent.time", side_effect=[1.0, 2.0]),
             patch("codemie.agents.langgraph_agent.BackgroundTasksService") as mock_bgtasks,
@@ -213,7 +212,6 @@ class TestLangGraphAgent:
             # Assert
             assert int(result.time_elapsed) == 1
             mock_handle_exception.assert_called_once_with(fake_exception)
-            mock_logger_error.assert_called()
             mock_update.assert_called_once_with(
                 task_id="abc123",
                 status="FAILED",

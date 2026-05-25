@@ -72,6 +72,7 @@ def set_llm_context(assistant: AssistantBase | None, fallback_project_name: str 
         dial_creds = SettingsService.get_dial_creds(effective_project)
         set_dial_credentials(dial_creds)
     except Exception as e:
-        logger.error(
-            f"Cannot get/set current llm credentials for project: {effective_project}, user: {user.id} due to: {str(e)}"
+        logger.warning(
+            f"set_llm_context failed for project={effective_project!r} user={user.username!r} ({user.id}): {e} — "
+            f"LLM calls will fall back to platform budget without project attribution"
         )

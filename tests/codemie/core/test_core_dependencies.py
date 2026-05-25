@@ -73,7 +73,7 @@ class TestLLMClientWrapper:
 
 class TestGetLLMByCredentialsUserFallback:
     """
-    Fallback to logging_user_id when current_user_email context variable is not set.
+    Fallback to get_current_user() when current_user_email context variable is not set.
 
     This ensures that tools creating internal LLM instances use the correct user's budget
     for LiteLLM tracking, even when the current_user_email context variable is not set
@@ -90,6 +90,7 @@ class TestGetLLMByCredentialsUserFallback:
             patch('codemie.core.dependecies.logging_user_id') as mock_logging_user_id,
             patch('codemie.enterprise.litellm.get_litellm_chat_model') as mock_get_litellm,
             patch('codemie.core.dependecies.logger') as mock_logger,
+            patch('codemie.rest_api.security.user_context.get_current_user') as mock_get_current_user,
         ):
             # Setup mock LLM model details
             mock_model_details = Mock()
@@ -99,8 +100,11 @@ class TestGetLLMByCredentialsUserFallback:
             # Setup mock LiteLLM context
             mock_litellm_context.get.return_value = None
 
-            # Setup mock logging_user_id (default: not set)
+            # Setup mock logging_user_id (not consulted for email resolution)
             mock_logging_user_id.get.return_value = None
+
+            # Default: no current user in request state
+            mock_get_current_user.return_value = None
 
             # Setup mock LiteLLM chat model
             mock_llm = Mock()
@@ -114,7 +118,14 @@ class TestGetLLMByCredentialsUserFallback:
                 'get_litellm_chat_model': mock_get_litellm,
                 'logger': mock_logger,
                 'mock_llm': mock_llm,
+                'get_current_user': mock_get_current_user,
             }
+
+    def _make_current_user(self, email: str | None = None, username: str | None = None) -> Mock:
+        user = Mock()
+        user.email = email
+        user.username = username
+        return user
 
     def test_normal_flow_with_valid_user_email(self, mock_dependencies):
         """Test normal flow when current_user_email context variable is set correctly"""
@@ -124,144 +135,128 @@ class TestGetLLMByCredentialsUserFallback:
         # Execute
         get_llm_by_credentials(llm_model="gpt-4")
 
-        # Verify: LiteLLM called with correct user email
+        # Verify: LiteLLM called with correct user email (no fallback needed)
         mock_dependencies['get_litellm_chat_model'].assert_called_once()
         call_kwargs = mock_dependencies['get_litellm_chat_model'].call_args[1]
         assert call_kwargs['user_email'] == "john@example.com"
 
     def test_fallback_when_context_is_unknown(self, mock_dependencies):
-        """Test fallback when current_user_email returns 'unknown' (ContextVar default)"""
-        # Setup: Context variable returns "unknown", logging_user_id has the user's ID
+        """Test fallback to get_current_user() when current_user_email returns 'unknown'"""
         mock_dependencies['current_user_email'].get.return_value = "unknown"
-        mock_dependencies['logging_user_id'].get.return_value = "user-123"
+        mock_dependencies['get_current_user'].return_value = self._make_current_user(email="user@example.com")
 
-        # Execute
         get_llm_by_credentials(llm_model="gpt-4")
 
-        # Verify: LiteLLM called with fallback user id
-        mock_dependencies['get_litellm_chat_model'].assert_called_once()
         call_kwargs = mock_dependencies['get_litellm_chat_model'].call_args[1]
-        assert call_kwargs['user_email'] == "user-123"
+        assert call_kwargs['user_email'] == "user@example.com"
 
     def test_fallback_when_context_is_dash(self, mock_dependencies):
-        """Test fallback when current_user_email returns '-' (function default)"""
-        # Setup: Context variable returns "-", logging_user_id has the user's ID
+        """Test fallback to get_current_user() when current_user_email returns '-'"""
         mock_dependencies['current_user_email'].get.return_value = "-"
-        mock_dependencies['logging_user_id'].get.return_value = "user-123"
+        mock_dependencies['get_current_user'].return_value = self._make_current_user(email="user@example.com")
 
-        # Execute
         get_llm_by_credentials(llm_model="gpt-4")
 
-        # Verify: LiteLLM called with fallback user id
         call_kwargs = mock_dependencies['get_litellm_chat_model'].call_args[1]
-        assert call_kwargs['user_email'] == "user-123"
+        assert call_kwargs['user_email'] == "user@example.com"
 
     def test_fallback_when_context_is_empty(self, mock_dependencies):
-        """Test fallback when current_user_email returns empty string"""
-        # Setup: Context variable returns empty string, logging_user_id has the user's ID
+        """Test fallback to get_current_user() when current_user_email returns empty string"""
         mock_dependencies['current_user_email'].get.return_value = ""
-        mock_dependencies['logging_user_id'].get.return_value = "user-123"
+        mock_dependencies['get_current_user'].return_value = self._make_current_user(email="user@example.com")
 
-        # Execute
         get_llm_by_credentials(llm_model="gpt-4")
 
-        # Verify: LiteLLM called with fallback user id
         call_kwargs = mock_dependencies['get_litellm_chat_model'].call_args[1]
-        assert call_kwargs['user_email'] == "user-123"
+        assert call_kwargs['user_email'] == "user@example.com"
 
     def test_fallback_when_context_is_none(self, mock_dependencies):
-        """Test fallback when current_user_email returns None"""
-        # Setup: Context variable returns None, logging_user_id has the user's ID
+        """Test fallback to get_current_user() when current_user_email returns None"""
         mock_dependencies['current_user_email'].get.return_value = None
-        mock_dependencies['logging_user_id'].get.return_value = "user-123"
+        mock_dependencies['get_current_user'].return_value = self._make_current_user(email="user@example.com")
 
-        # Execute
         get_llm_by_credentials(llm_model="gpt-4")
 
-        # Verify: LiteLLM called with fallback user id
         call_kwargs = mock_dependencies['get_litellm_chat_model'].call_args[1]
-        assert call_kwargs['user_email'] == "user-123"
+        assert call_kwargs['user_email'] == "user@example.com"
 
-    def test_no_fallback_when_logging_user_id_not_set(self, mock_dependencies):
-        """Test graceful handling when both context and logging_user_id are empty (system operations)"""
-        # Setup: Context variable returns "unknown", logging_user_id also not set
+    def test_fallback_uses_username_when_email_absent(self, mock_dependencies):
+        """Test fallback uses username when current user has no email"""
         mock_dependencies['current_user_email'].get.return_value = "unknown"
-        mock_dependencies['logging_user_id'].get.return_value = None
+        mock_dependencies['get_current_user'].return_value = self._make_current_user(
+            email=None, username="user@example.com"
+        )
 
-        # Execute
         get_llm_by_credentials(llm_model="gpt-4")
 
-        # Verify: LiteLLM called with original "unknown" value (no fallback possible)
+        call_kwargs = mock_dependencies['get_litellm_chat_model'].call_args[1]
+        assert call_kwargs['user_email'] == "user@example.com"
+
+    def test_no_fallback_when_no_current_user(self, mock_dependencies):
+        """Test graceful handling when current_user_email is invalid and no request user (system operations)"""
+        mock_dependencies['current_user_email'].get.return_value = "unknown"
+        mock_dependencies['get_current_user'].return_value = None
+
+        get_llm_by_credentials(llm_model="gpt-4")
+
+        # No valid user: original "unknown" value is passed through unchanged
         call_kwargs = mock_dependencies['get_litellm_chat_model'].call_args[1]
         assert call_kwargs['user_email'] == "unknown"
 
-    def test_no_fallback_when_logging_user_id_is_dash(self, mock_dependencies):
-        """Test graceful handling when logging_user_id is '-' (not yet set)"""
-        # Setup: Context variable returns "-", logging_user_id also defaults to "-"
+    def test_no_fallback_when_no_current_user_dash(self, mock_dependencies):
+        """Test graceful handling when current_user_email is '-' and no request user"""
         mock_dependencies['current_user_email'].get.return_value = "-"
-        mock_dependencies['logging_user_id'].get.return_value = "-"
+        mock_dependencies['get_current_user'].return_value = None
 
-        # Execute
         get_llm_by_credentials(llm_model="gpt-4")
 
-        # Verify: LiteLLM called with original "-" value (no valid fallback)
         call_kwargs = mock_dependencies['get_litellm_chat_model'].call_args[1]
         assert call_kwargs['user_email'] == "-"
 
     def test_fallback_with_different_llm_models(self, mock_dependencies):
         """Test fallback works with different LLM models"""
-        # Setup: Context variable returns "unknown", logging_user_id has the user's ID
         mock_dependencies['current_user_email'].get.return_value = "unknown"
-        mock_dependencies['logging_user_id'].get.return_value = "user-123"
+        mock_dependencies['get_current_user'].return_value = self._make_current_user(email="user@example.com")
 
-        # Test with different model names
         for model_name in ["gpt-4", "gpt-3.5-turbo", "claude-3-opus"]:
             mock_dependencies['get_litellm_chat_model'].reset_mock()
 
-            # Execute
             get_llm_by_credentials(llm_model=model_name)
 
-            # Verify: Correct user id used regardless of model
             call_kwargs = mock_dependencies['get_litellm_chat_model'].call_args[1]
-            assert call_kwargs['user_email'] == "user-123"
+            assert call_kwargs['user_email'] == "user@example.com"
 
     def test_fallback_preserves_other_parameters(self, mock_dependencies):
         """Test that fallback doesn't affect other parameters"""
-        # Setup: Context variable returns "unknown", logging_user_id has the user's ID
         mock_dependencies['current_user_email'].get.return_value = "unknown"
-        mock_dependencies['logging_user_id'].get.return_value = "user-123"
+        mock_dependencies['get_current_user'].return_value = self._make_current_user(email="user@example.com")
 
-        # Execute with various parameters
         get_llm_by_credentials(
             llm_model="gpt-4", temperature=0.7, top_p=0.9, streaming=False, request_id="test-request-123"
         )
 
-        # Verify: All parameters passed correctly
         call_kwargs = mock_dependencies['get_litellm_chat_model'].call_args[1]
-        assert call_kwargs['user_email'] == "user-123"
+        assert call_kwargs['user_email'] == "user@example.com"
         assert call_kwargs['temperature'] == 0.7
         assert call_kwargs['top_p'] == 0.9
         assert not call_kwargs['streaming']
 
     def test_integration_scenario_toolkit_initialization(self, mock_dependencies):
         """
-        Integration test simulating the real bug scenario:
-        Toolkit initialization happens before agent sets logging context
+        Integration test: toolkit initialization happens before agent sets logging context.
+        get_current_user() must resolve the email from the active request state.
         """
-        # Scenario: Toolkit being initialized, agent hasn't set logging context yet
-        # Context variable still has default value from middleware
+        # Context variable still holds the middleware default — agent hasn't set it yet
         mock_dependencies['current_user_email'].get.return_value = "-"
 
-        # logging_user_id IS set (set at auth time via set_logging_info)
-        mock_dependencies['logging_user_id'].get.return_value = "user-123"
+        # Request state has the authenticated user
+        mock_dependencies['get_current_user'].return_value = self._make_current_user(email="user@example.com")
 
-        # Toolkit calls get_llm_by_credentials to create LLM for tools
         get_llm_by_credentials(llm_model="gpt-4")
 
-        # Verify: Tool will use correct user's budget
         call_kwargs = mock_dependencies['get_litellm_chat_model'].call_args[1]
-        assert call_kwargs['user_email'] == "user-123"
+        assert call_kwargs['user_email'] == "user@example.com"
 
-        # Verify: This fixes the bug where tools were charged to "-" user
+        # Verify: UUID is NOT used (that was the original bug)
         assert call_kwargs['user_email'] != "-"
         assert call_kwargs['user_email'] != "unknown"

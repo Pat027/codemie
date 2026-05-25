@@ -18,21 +18,20 @@ from codemie.service.llm_service.llm_service import llm_service
 from codemie.core.dependecies import get_llm_by_credentials
 from codemie.templates.workflow_output_change_prompt import PROMPT
 
-LLM_MODEL = llm_service.default_llm_model
-LLM = get_llm_by_credentials(llm_model=LLM_MODEL)
-
 
 class WorkflowOutputChangeRequestService:
     """Based on workflow execution output, ask LLM to change the output according to the request."""
 
     @staticmethod
     def run(original_output: str, changes_request: str) -> str:
+        llm_model = llm_service.default_llm_model
+        llm = get_llm_by_credentials(llm_model=llm_model)
         chat_request = AssistantChatRequest(text=changes_request)
         response = PureChatChain(
             request=chat_request,
             system_prompt=PROMPT.format(output=original_output),
-            llm_model=LLM_MODEL,
-            llm=LLM,
+            llm_model=llm_model,
+            llm=llm,
         ).generate()
 
         return response.generated

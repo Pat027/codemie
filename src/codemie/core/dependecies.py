@@ -194,19 +194,12 @@ def _should_wrap_llm_client(llm_model_details: LLMModel, llm: Any) -> bool:
 
 
 def _resolve_user_email(user_email: str | None) -> str | None:
-    # Context variable may be "unknown"/"−"/empty when tools create LLMs at toolkit init
-    # (before agent sets logging context). Fall back to request.state.user for correct
-    # LiteLLM budget attribution. Safe because all user contexts point to same user.
     if not user_email or user_email in ("-", "unknown"):
-        uid = logging_user_id.get(None)
-        if uid and uid != "-":
-            return uid
-
         from codemie.rest_api.security.user_context import get_current_user
 
         current_user = get_current_user()
         if current_user:
-            return current_user.email or current_user.username or current_user.id
+            return current_user.email or current_user.username or None
 
     return user_email
 
