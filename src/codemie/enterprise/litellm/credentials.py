@@ -69,7 +69,15 @@ def resolve_litellm_user_credentials(
     cache_key = _build_cache_key(user_id, project_name, llm_model, integration_id)
     if cache_key in _user_credentials_cache:
         cached = _user_credentials_cache[cache_key]
-        return None if cached is _NO_USER_CREDENTIALS else cached
+        result = None if cached is _NO_USER_CREDENTIALS else cached
+        logger.info(
+            f"credential_event=user_litellm_credentials_cache_hit username={username!r} "
+            f"user_id={user_id!r} project_name={project_name!r} model={llm_model!r} "
+            f"resolved={result is not None} "
+            f"is_personal={(result.is_personal if result is not None else None)!r} "
+            f"alias={(result.alias if result is not None else None)!r}"
+        )
+        return result
 
     try:
         resolved = _resolve_litellm_user_credentials_uncached(
@@ -88,6 +96,13 @@ def resolve_litellm_user_credentials(
         resolved = None
 
     _user_credentials_cache[cache_key] = resolved if resolved is not None else _NO_USER_CREDENTIALS
+    logger.info(
+        f"credential_event=user_litellm_credentials_resolved username={username!r} "
+        f"user_id={user_id!r} project_name={project_name!r} model={llm_model!r} "
+        f"resolved={resolved is not None} "
+        f"is_personal={(resolved.is_personal if resolved is not None else None)!r} "
+        f"alias={(resolved.alias if resolved is not None else None)!r}"
+    )
     return resolved
 
 

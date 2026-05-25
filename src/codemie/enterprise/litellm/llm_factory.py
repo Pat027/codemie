@@ -540,6 +540,11 @@ def _resolve_direct_budget_category(
         get_premium_username(user_email, llm_model) is not None
         and CoreBudgetCategory.PREMIUM_MODELS in availability.project_scopes
     ):
+        logger.info(
+            f"budget_event=runtime_category_selected component=litellm_llm_factory "
+            f"username={user_email!r} model={llm_model!r} "
+            f"budget_category={CoreBudgetCategory.PREMIUM_MODELS.value!r} reason=project_premium_scope"
+        )
         return CoreBudgetCategory.PREMIUM_MODELS
 
     if not availability.project_scopes:
@@ -550,8 +555,18 @@ def _resolve_direct_budget_category(
         and premium_budget_id
         and (not availability.project_scopes or CoreBudgetCategory.PREMIUM_MODELS in availability.project_scopes)
     ):
+        logger.info(
+            f"budget_event=runtime_category_selected component=litellm_llm_factory "
+            f"username={user_email!r} model={llm_model!r} "
+            f"budget_category={CoreBudgetCategory.PREMIUM_MODELS.value!r} reason=premium_model_no_project_scope"
+        )
         return CoreBudgetCategory.PREMIUM_MODELS
 
+    logger.info(
+        f"budget_event=runtime_category_selected component=litellm_llm_factory "
+        f"username={user_email!r} model={llm_model!r} "
+        f"budget_category={CoreBudgetCategory.PLATFORM.value!r} reason=platform_default"
+    )
     return CoreBudgetCategory.PLATFORM
 
 
@@ -564,6 +579,12 @@ def _resolve_direct_project_budget_runtime(
 ) -> tuple[str | None, dict[str, str], str | None, str | None]:
     """Resolve project budget headers for direct LiteLLM chat model usage."""
     if not litellm_context or not litellm_context.current_project or not user_id or not user_email:
+        logger.info(
+            f"budget_event=budget_resolution_global_fallback component=litellm_llm_factory path=sync "
+            f"user_id={user_id!r} username={user_email!r} "
+            f"project_name={(litellm_context.current_project if litellm_context else None)!r} "
+            f"model={llm_model_details.base_name!r} reason=missing_context_or_project"
+        )
         return None, {}, None, None
 
     from codemie.service.budget.budget_resolution_service import budget_resolution_service
@@ -594,6 +615,13 @@ def _resolve_direct_project_budget_runtime(
             user_email=user_email,
             project_name=project_name,
             budget_category=category,
+        )
+    else:
+        logger.info(
+            f"budget_event=runtime_member_sync_skipped component=litellm_llm_factory path=sync "
+            f"user_id={user_id!r} username={user_email!r} project_name={project_name!r} "
+            f"budget_category={category.value!r} model={llm_model_details.base_name!r} "
+            f"reason=member_tracking_disabled"
         )
 
     resolved = budget_resolution_service.resolve_sync(

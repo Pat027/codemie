@@ -610,13 +610,21 @@ async def _create_body_stream_with_optional_injection(
         AsyncGenerator: Body stream (modified or original)
     """
     if user_credentials is not None and user_credentials.is_personal:
-        logger.debug(
+        logger.info(
             f"budget_event=runtime_mode_selected component=proxy_router user_id={user.id!r} "
             f"username={user.username!r} project_name={request_info.get(PROJECT)!r} "
             f"mode={RuntimeBudgetMode.USER_CREDENTIALS_BYPASS.value!r} "
             f"reason=user_credentials setting_alias={user_credentials.alias!r}"
         )
         return await _resolve_bypass_mode_stream(body_bytes)
+
+    if user_credentials is not None:
+        logger.info(
+            f"budget_event=runtime_mode_selected component=proxy_router user_id={user.id!r} "
+            f"username={user.username!r} project_name={request_info.get(PROJECT)!r} "
+            f"mode=budget_resolution alias={user_credentials.alias!r} "
+            f"reason=non_personal_credentials_bypass_skipped"
+        )
 
     availability = await _resolve_budget_availability(user, request_info)
     category, username, tracking_budget_id, llm_model = _resolve_tracking_identity(

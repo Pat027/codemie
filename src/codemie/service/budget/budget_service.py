@@ -924,7 +924,7 @@ class BudgetService:
         categories = [c.value for c in BudgetCategory]
         # Fast path: all categories already in cache
         if all((user_id, cat) in _budget_assignment_cache for cat in categories):
-            logger.debug(
+            logger.info(
                 f"budget_event=budget_assignment_batch_cache_hit component=budget_service user_id={user_id!r} "
                 f"budget_categories={categories!r}"
             )
@@ -932,7 +932,7 @@ class BudgetService:
 
         # Cache miss for at least one category — fetch all in one query
         missing_categories = [cat for cat in categories if (user_id, cat) not in _budget_assignment_cache]
-        logger.debug(
+        logger.info(
             f"budget_event=budget_assignment_batch_cache_miss component=budget_service user_id={user_id!r} "
             f"missing_categories={missing_categories!r}"
         )
@@ -942,7 +942,7 @@ class BudgetService:
             assignment_map: dict[str, str | None] = {a.category: a.budget_id for a in assignments}
             for cat in categories:
                 _budget_assignment_cache[(user_id, cat)] = assignment_map.get(cat)
-            logger.debug(
+            logger.info(
                 f"budget_event=budget_assignment_batch_resolved component=budget_service user_id={user_id!r} "
                 f"budget_categories={categories!r} resolved_assignments={assignment_map!r}"
             )
@@ -963,14 +963,14 @@ class BudgetService:
 
         categories = [c.value for c in BudgetCategory]
         if all((user_id, cat) in _budget_assignment_cache for cat in categories):
-            logger.debug(
+            logger.info(
                 f"budget_event=budget_assignment_batch_cache_hit component=budget_service path=sync "
                 f"user_id={user_id!r} budget_categories={categories!r}"
             )
             return {cat: _budget_assignment_cache[(user_id, cat)] for cat in categories}
 
         missing_categories = [cat for cat in categories if (user_id, cat) not in _budget_assignment_cache]
-        logger.debug(
+        logger.info(
             f"budget_event=budget_assignment_batch_cache_miss component=budget_service path=sync "
             f"user_id={user_id!r} missing_categories={missing_categories!r}"
         )
@@ -984,7 +984,7 @@ class BudgetService:
             assignment_map = dict(rows)
             for cat in categories:
                 _budget_assignment_cache[(user_id, cat)] = assignment_map.get(cat)
-            logger.debug(
+            logger.info(
                 f"budget_event=budget_assignment_batch_resolved component=budget_service path=sync "
                 f"user_id={user_id!r} budget_categories={categories!r} resolved_assignments={assignment_map!r}"
             )

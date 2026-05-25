@@ -362,35 +362,54 @@ def check_user_budget(user_email: str, budget_id: str | None = None, user_id: st
 
     litellm = get_litellm_service_or_none()
     if litellm is None:
-        logger.debug(f"{_LITELLM_NOT_AVAILABLE_MSG}, skipping budget check")
+        logger.info(
+            f"budget_event=personal_budget_check_skipped component=dependencies "
+            f"username={user_email!r} user_id={user_id!r} budget_id={budget_id!r} "
+            f"reason=litellm_unavailable"
+        )
         return None
 
-    logger.debug(f"Budget check for {user_email}")
+    logger.info(
+        f"budget_event=personal_budget_check_started component=dependencies "
+        f"username={user_email!r} user_id={user_id!r} budget_id={budget_id!r}"
+    )
 
     try:
         # Try cache first
         customer = litellm._get_cached_customer(user_email)
 
         if customer:
-            logger.debug(f"Using cached customer info for {user_email}")
+            logger.info(
+                f"budget_event=personal_budget_check_cache_hit component=dependencies "
+                f"username={user_email!r} user_id={user_id!r} budget_id={budget_id!r}"
+            )
         else:
-            # Cache miss - fetch from LiteLLM
-            logger.debug(f"Cache miss for {user_email}, performing full budget check")
+            logger.info(
+                f"budget_event=personal_budget_check_cache_miss component=dependencies "
+                f"username={user_email!r} user_id={user_id!r} budget_id={budget_id!r}"
+            )
             if budget_id is None:
                 customer = litellm.get_or_create_customer_with_budget(user_email)
             else:
                 customer = litellm.get_or_create_customer_with_budget(user_email, budget_id=budget_id)
 
             if customer:
-                # Cache the customer
                 litellm._cache_customer(user_email, customer)
             else:
-                logger.warning(f"Budget check failed for {user_email} - allowing request (fail open)")
+                logger.warning(
+                    f"budget_event=personal_budget_check_failed component=dependencies "
+                    f"username={user_email!r} user_id={user_id!r} budget_id={budget_id!r} "
+                    f"reason=empty_customer_result action=fail_open"
+                )
                 return None
 
         # Check budget limits
         if not customer.litellm_budget_table:
-            logger.warning(f"No budget table for {user_email} - allowing request")
+            logger.warning(
+                f"budget_event=personal_budget_check_no_table component=dependencies "
+                f"username={user_email!r} user_id={user_id!r} budget_id={budget_id!r} "
+                f"reason=no_budget_table action=allow"
+            )
             return customer
 
         current_spend = customer.spend
@@ -398,12 +417,19 @@ def check_user_budget(user_email: str, budget_id: str | None = None, user_id: st
         soft_limit = budget_table.soft_budget
         hard_limit = budget_table.max_budget
 
-        logger.debug(f"Budget check for {user_email}: spend={current_spend}, soft={soft_limit}, hard={hard_limit}")
+        logger.info(
+            f"budget_event=personal_budget_check_completed component=dependencies "
+            f"username={user_email!r} user_id={user_id!r} budget_id={budget_id!r} "
+            f"spend={current_spend!r} soft_limit={soft_limit!r} hard_limit={hard_limit!r}"
+        )
 
         # Check hard budget limit
         if hard_limit is not None and current_spend >= hard_limit:
-            message = f"User {user_email} exceeded hard budget: {current_spend} >= {hard_limit}"
-            logger.warning(message)
+            logger.warning(
+                f"budget_event=personal_budget_hard_limit_exceeded component=dependencies "
+                f"username={user_email!r} user_id={user_id!r} budget_id={budget_id!r} "
+                f"spend={current_spend!r} hard_limit={hard_limit!r}"
+            )
             send_log_metric(
                 LLM_HARD_BUDGET_LIMIT,
                 attributes={
@@ -417,7 +443,11 @@ def check_user_budget(user_email: str, budget_id: str | None = None, user_id: st
 
         # Check soft budget limit
         if soft_limit is not None and current_spend >= soft_limit:
-            logger.warning(f"User {user_email} exceeded soft budget: {current_spend} >= {soft_limit}")
+            logger.warning(
+                f"budget_event=personal_budget_soft_limit_exceeded component=dependencies "
+                f"username={user_email!r} user_id={user_id!r} budget_id={budget_id!r} "
+                f"spend={current_spend!r} soft_limit={soft_limit!r}"
+            )
             send_log_metric(
                 LLM_SOFT_BUDGET_LIMIT,
                 attributes={
@@ -432,7 +462,12 @@ def check_user_budget(user_email: str, budget_id: str | None = None, user_id: st
         return customer
 
     except Exception as e:
-        logger.error(f"Error during budget check for {user_email}: {e}")
+        logger.error(
+            f"budget_event=personal_budget_check_failed component=dependencies "
+            f"username={user_email!r} user_id={user_id!r} budget_id={budget_id!r} "
+            f"error={e}",
+            exc_info=True,
+        )
         return None
 
 
