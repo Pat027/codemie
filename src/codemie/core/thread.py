@@ -49,8 +49,6 @@ class ThreadedGenerator:
         item = self.queue.get()
         if item is StopIteration:
             raise item
-        if isinstance(item, BaseException):
-            raise item
         return item
 
     def send(self, data):
@@ -105,12 +103,8 @@ class ThreadedGenerator:
                 else:
                     self.thoughts.append(thought_object)
 
-    def close(self, error: BaseException | None = None):
-        if self.closed:
-            return
+    def close(self):
         self.closed = True
-        if error is not None:
-            self.queue.put(error)
         self.queue.put(StopIteration)
 
     def is_closed(self):
