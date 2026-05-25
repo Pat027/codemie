@@ -20,9 +20,10 @@
 ## Ticket Adapter
 
 **Status**: configured
-**Adapter**: BriAnnA CodeMie assistant via `codemie assistants chat`
-**Lookup**: Invoke BriAnnA with the ticket key or URL and request summary, description, acceptance criteria, status, assignee, issue type, and relevant links. Use `--conversation-id` for multi-step flows.
-**Create**: Invoke BriAnnA with a complete ticket payload or attach the approved story/local work-item file. Do not use conversational references such as "as drafted" unless the same `--conversation-id` is used and the create call still includes the full final payload.
+**Adapter**: `brianna` skill — invoke via the `Skill` tool with the approved story content or file path as the argument. Do not hardcode the underlying command or assistant ID.
+**Lookup**: Invoke the `brianna` skill with the ticket key or URL and request summary, description, acceptance criteria, status, assignee, issue type, and relevant links. Use `--conversation-id` for multi-turn flows.
+**Create**: Invoke the `brianna` skill with the complete ticket payload or the approved story file attached. Do not use conversational references such as "as drafted" unless `--conversation-id` is used and the create call includes the full final payload.
+**Multi-turn follow-up**: pass `--conversation-id <id>` returned from the first call to maintain context across calls.
 **Output**: Jira ticket key and URL.
 
 ## Source Control And Review
