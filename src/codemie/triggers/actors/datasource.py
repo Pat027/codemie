@@ -71,6 +71,7 @@ def reindex_code(payload: CodeReindexTask):
     Raises:
         HTTPException: If the specified repository is not found.
     """
+    IndexInfo.stamp_reindex_triggered_at(payload.index_info.id)
 
     logger.info(
         REINDEX_START_MSG,
@@ -121,6 +122,7 @@ def reindex_jira(payload: JiraReindexTask):
     Raises:
         HTTPException: If Jira credentials are not found for the project.
     """
+    IndexInfo.stamp_reindex_triggered_at(payload.index_info.id)
 
     logger.info(
         REINDEX_START_MSG,
@@ -179,6 +181,7 @@ def reindex_confluence(payload: ConfluenceReindexTask):
     Raises:
         HTTPException: If Confluence credentials or index information are not found.
     """
+    IndexInfo.stamp_reindex_triggered_at(payload.index_info.id)
 
     logger.info(
         REINDEX_START_MSG,
@@ -255,6 +258,7 @@ def reindex_google(payload: GoogleReindexTask):
     Raises:
         HTTPException: If Google Docs index information or link is missing.
     """
+    IndexInfo.stamp_reindex_triggered_at(payload.index_info.id)
 
     logger.info(
         REINDEX_START_MSG,
@@ -307,6 +311,8 @@ def reindex_azure_devops_wiki(payload: AzureDevOpsWikiReindexTask):
     Args:
         payload: The task payload containing all necessary information for reindexing.
     """
+    IndexInfo.stamp_reindex_triggered_at(payload.index_info.id)
+
     logger.info(
         REINDEX_START_MSG,
         payload.index_info.index_type,
@@ -381,6 +387,8 @@ def reindex_azure_devops_work_item(payload: AzureDevOpsWorkItemReindexTask):
     Args:
         payload: The task payload containing all necessary information for reindexing.
     """
+    IndexInfo.stamp_reindex_triggered_at(payload.index_info.id)
+
     logger.info(
         REINDEX_START_MSG,
         payload.index_info.index_type,
@@ -720,6 +728,8 @@ def resume_stale_datasource(index_info: IndexInfo) -> None:
     except Exception as e:
         logger.warning(f"Could not verify datasource {index_info.id} existence, skipping resume: {e}")
         return
+
+    IndexInfo.stamp_reindex_triggered_at(index_info.id)
 
     index_type = index_info.index_type
 

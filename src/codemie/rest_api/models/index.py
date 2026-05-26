@@ -279,6 +279,7 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
     )
     is_fetching: Optional[bool] = False
     is_queued: bool = SQLField(default=False)
+    last_reindex_triggered_at: Optional[datetime] = SQLField(default=None, nullable=True)
     setting_id: Optional[str] = None
     tokens_usage: Optional[TokensUsage] = SQLField(default=None, sa_column=Column(PydanticType(TokensUsage)))
     processing_info: Optional[Dict] = SQLField(default_factory=dict, sa_column=Column(JSONB))
@@ -943,6 +944,19 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
             result = session.execute(stmt)
             session.commit()
             return result.rowcount == 1
+
+    @classmethod
+    def stamp_reindex_triggered_at(cls, index_id: str) -> None:
+        """Persist last_reindex_triggered_at without bumping update_date.
+
+        Uses a raw SQL UPDATE so the staleness watermark (update_date) is not
+        disturbed — the STALE detection in SearchKBTool relies on
+        last_reindex_triggered_at > update_date.
+        """
+        stmt = sa_update(cls).where(cls.id == index_id).values(last_reindex_triggered_at=datetime.now())
+        with Session(cls.get_engine()) as session:
+            session.execute(stmt)
+            session.commit()
 
     @classmethod
     def filter_by_project_and_repo(cls, project_name: str, repo_name: str) -> Sequence["IndexInfo"]:

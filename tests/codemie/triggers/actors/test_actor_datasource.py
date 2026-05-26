@@ -787,3 +787,147 @@ class TestResumeSharepoint:
             _resume_sharepoint(index_info, user, "req-1")
 
         mock_processor.resume.assert_called_once()
+
+
+class TestReindexActorStampsTriggeredAt:
+    """Each reindex actor must stamp last_reindex_triggered_at before any processor logic.
+
+    Stamping uses IndexInfo.stamp_reindex_triggered_at (raw SQL, no update_date bump),
+    so index_info.update() must NOT be called by the stamping step.
+    """
+
+    def _make_payload(self, index_type="knowledge_base_jira"):
+        mock_info = MagicMock(spec=IndexInfo)
+        mock_info.last_reindex_triggered_at = None
+        mock_info.index_type = index_type
+        mock_info.setting_id = "sid"
+        mock_info.description = "desc"
+        mock_info.project_space_visible = True
+        mock_info.embeddings_model = "ada-002"
+        mock_info.jira = MagicMock(jql="project = TEST")
+        mock_info.confluence = MagicMock()
+        mock_info.google_doc_link = "https://docs.google.com/document/d/abc"
+        mock_info.azure_devops_wiki = MagicMock(wiki_query="", wiki_name=None)
+        mock_info.azure_devops_work_item = MagicMock(wiql_query="")
+        mock_info.created_by = MagicMock(id="user123")
+
+        mock_payload = MagicMock()
+        mock_payload.index_info = mock_info
+        mock_payload.resource_id = "rid"
+        mock_payload.project_name = "proj"
+        mock_payload.resource_name = "repo"
+        mock_payload.repo_id = "repoid"
+        mock_payload.jql = "project = TEST"
+        mock_payload.azure_devops_work_item_index_info = MagicMock(wiql_query="")
+        return mock_payload
+
+    @patch.object(IndexInfo, "stamp_reindex_triggered_at")
+    @patch("codemie.triggers.actors.datasource.datasource_concurrency_manager")
+    @patch("codemie.triggers.actors.datasource.CodeDatasourceProcessor")
+    @patch("codemie.core.models.GitRepo.get_by_fields")
+    def test_reindex_code_stamps_triggered_at(self, mock_get_repo, mock_processor_cls, mock_concurrency, mock_stamp):
+        from codemie.triggers.actors.datasource import reindex_code
+
+        mock_get_repo.return_value = MagicMock()
+        payload = self._make_payload(index_type="code")
+
+        reindex_code(payload)
+
+        mock_stamp.assert_called_once_with(payload.index_info.id)
+        payload.index_info.update.assert_not_called()
+
+    @patch.object(IndexInfo, "stamp_reindex_triggered_at")
+    @patch("codemie.triggers.actors.datasource.datasource_concurrency_manager")
+    @patch("codemie.triggers.actors.datasource.JiraDatasourceProcessor")
+    @patch("codemie.triggers.actors.datasource.SettingsService")
+    def test_reindex_jira_stamps_triggered_at(self, mock_settings, mock_processor_cls, mock_concurrency, mock_stamp):
+        from codemie.triggers.actors.datasource import reindex_jira
+
+        mock_settings.get_jira_creds.return_value = MagicMock()
+        payload = self._make_payload(index_type="knowledge_base_jira")
+
+        reindex_jira(payload)
+
+        mock_stamp.assert_called_once_with(payload.index_info.id)
+        payload.index_info.update.assert_not_called()
+
+    @patch.object(IndexInfo, "stamp_reindex_triggered_at")
+    @patch("codemie.triggers.actors.datasource.datasource_concurrency_manager")
+    @patch("codemie.triggers.actors.datasource.IndexKnowledgeBaseConfluenceConfig")
+    @patch("codemie.triggers.actors.datasource.ConfluenceDatasourceProcessor")
+    @patch("codemie.triggers.actors.datasource.SettingsService")
+    def test_reindex_confluence_stamps_triggered_at(
+        self, mock_settings, mock_processor_cls, mock_kb_config, mock_concurrency, mock_stamp
+    ):
+        from codemie.triggers.actors.datasource import reindex_confluence
+
+        mock_settings.get_confluence_creds.return_value = MagicMock()
+        mock_kb_config.from_confluence_index_info.return_value = MagicMock()
+        payload = self._make_payload(index_type="knowledge_base_confluence")
+
+        reindex_confluence(payload)
+
+        mock_stamp.assert_called_once_with(payload.index_info.id)
+        payload.index_info.update.assert_not_called()
+
+    @patch.object(IndexInfo, "stamp_reindex_triggered_at")
+    @patch.object(IndexInfo, "find_by_id", return_value=MagicMock())
+    def test_resume_stale_datasource_stamps_triggered_at(self, mock_find_by_id, mock_stamp):
+        from codemie.triggers.actors.datasource import resume_stale_datasource
+
+        index_info = MagicMock(spec=IndexInfo)
+        index_info.last_reindex_triggered_at = None
+        index_info.index_type = "knowledge_base_file"  # unsupported — exits early after stamp
+        index_info.created_by = MagicMock(id="user123")
+
+        resume_stale_datasource(index_info)
+
+        mock_stamp.assert_called_once_with(index_info.id)
+        index_info.update.assert_not_called()
+
+    @patch.object(IndexInfo, "stamp_reindex_triggered_at")
+    @patch("codemie.triggers.actors.datasource.datasource_concurrency_manager")
+    @patch("codemie.triggers.actors.datasource.GoogleDocDatasourceProcessor")
+    def test_reindex_google_stamps_triggered_at(self, mock_processor_cls, mock_concurrency, mock_stamp):
+        from codemie.triggers.actors.datasource import reindex_google
+
+        payload = self._make_payload(index_type="llm_routing_google")
+
+        reindex_google(payload)
+
+        mock_stamp.assert_called_once_with(payload.index_info.id)
+        payload.index_info.update.assert_not_called()
+
+    @patch.object(IndexInfo, "stamp_reindex_triggered_at")
+    @patch("codemie.triggers.actors.datasource.datasource_concurrency_manager")
+    @patch("codemie.triggers.actors.datasource.AzureDevOpsWikiDatasourceProcessor")
+    @patch("codemie.triggers.actors.datasource.SettingsService")
+    def test_reindex_azure_devops_wiki_stamps_triggered_at(
+        self, mock_settings, mock_processor_cls, mock_concurrency, mock_stamp
+    ):
+        from codemie.triggers.actors.datasource import reindex_azure_devops_wiki
+
+        mock_settings.get_azure_devops_creds.return_value = MagicMock()
+        payload = self._make_payload(index_type="knowledge_base_azure_devops_wiki")
+
+        reindex_azure_devops_wiki(payload)
+
+        mock_stamp.assert_called_once_with(payload.index_info.id)
+        payload.index_info.update.assert_not_called()
+
+    @patch.object(IndexInfo, "stamp_reindex_triggered_at")
+    @patch("codemie.triggers.actors.datasource.datasource_concurrency_manager")
+    @patch("codemie.triggers.actors.datasource.AzureDevOpsWorkItemDatasourceProcessor")
+    @patch("codemie.triggers.actors.datasource.SettingsService")
+    def test_reindex_azure_devops_work_item_stamps_triggered_at(
+        self, mock_settings, mock_processor_cls, mock_concurrency, mock_stamp
+    ):
+        from codemie.triggers.actors.datasource import reindex_azure_devops_work_item
+
+        mock_settings.get_azure_devops_creds.return_value = MagicMock()
+        payload = self._make_payload(index_type="knowledge_base_azure_devops_work_item")
+
+        reindex_azure_devops_work_item(payload)
+
+        mock_stamp.assert_called_once_with(payload.index_info.id)
+        payload.index_info.update.assert_not_called()

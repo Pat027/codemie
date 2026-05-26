@@ -38,7 +38,7 @@ class KBToolkit(BaseToolkit):
     @classmethod
     def get_tools(cls, kb_index: IndexInfo, llm_model: str) -> List[BaseTool]:
         search_tool = SearchKBTool(
-            kb_index=kb_index,
+            index_info=kb_index,
             llm_model=llm_model,
         )
 

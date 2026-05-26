@@ -17,6 +17,7 @@ from typing_extensions import TypedDict
 
 from codemie_tools.base.codemie_tool import CodeMieTool
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.tools import ToolException
 from pydantic import BaseModel, Field
 
 from codemie_tools.base.constants import SOURCE_DOCUMENT_KEY, SOURCE_FIELD_KEY, FILE_CONTENT_FIELD_KEY
@@ -25,11 +26,13 @@ from codemie.agents.tools.code.tools_models import (
     ReadFilesWithSummaryInput,
 )
 from codemie.agents.tools.code.tools_vars import READ_FILES_TOOL, READ_FILES_WITH_SUMMARY_TOOL
+from codemie.agents.tools.datasource_health_mixin import DatasourceHealthMixin
 from codemie.agents.utils import get_repo_files_by_search_phrase_path
 from codemie.configs import logger, config
 from codemie.core.constants import REQUEST_ID
 from codemie.core.dependecies import get_llm_by_credentials
 from codemie.core.models import CodeFields
+from codemie.rest_api.models.index import IndexInfo
 from codemie.service.llm_service.llm_service import llm_service
 from codemie.templates.coding_prompts import CODE_SUMMARY_PROMPT
 
@@ -46,12 +49,19 @@ def build_chain(llm_model: str, request_id: str):
     return summary_chain
 
 
-class BaseReadFileTool(CodeMieTool):
+class BaseReadFileTool(CodeMieTool, DatasourceHealthMixin):
     """Base class for file reading tools with common functionality."""
 
     code_fields: CodeFields = Field(exclude=True)
+    index_info: Optional[IndexInfo] = Field(default=None, exclude=True)
     tokens_size_limit: int = config.MAX_CODE_TOOLS_OUTPUT_SIZE
     throw_truncated_error: bool = False
+
+    def _run(self, *args, **kwargs):
+        if self.index_info and self.index_info.error:
+            raise ToolException(self._build_health_notice())
+        result = super()._run(*args, **kwargs)
+        return self._wrap_result(result, self._build_health_notice())
 
     def format_result(self, result: FileResult) -> str:
         """Format a single result into a string."""

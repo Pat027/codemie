@@ -58,7 +58,7 @@ def test_get_search_tool_kb_index():
         result = ToolExecutionService.get_search_tool(datasource, request)
 
     # Assert
-    mock_kb_tool.assert_called_once_with(kb_index=datasource, llm_model="gpt-4")
+    mock_kb_tool.assert_called_once_with(index_info=datasource, llm_model="gpt-4")
     assert result == "kb_tool"
 
 

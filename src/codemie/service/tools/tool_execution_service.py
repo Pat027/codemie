@@ -226,7 +226,7 @@ class ToolExecutionService:
     def get_search_tool(cls, datasource: IndexInfo, request: DatasourceSearchInvokeRequest):
         if not datasource.is_code_index():
             return SearchKBTool(
-                kb_index=datasource,
+                index_info=datasource,
                 llm_model=request.llm_model,
             )
         if not request.code_search_params:
@@ -346,7 +346,7 @@ class ToolExecutionService:
 
         kb_index = next(iter(kb_search_result))
         return SearchKBTool(
-            kb_index=kb_index,
+            index_info=kb_index,
             llm_model=request.llm_model,
         )
 

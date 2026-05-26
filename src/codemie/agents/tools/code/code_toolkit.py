@@ -34,6 +34,7 @@ from codemie.agents.tools.code.tools_vars import (
     READ_FILES_WITH_SUMMARY_TOOL,
     CODE_SEARCH_BY_PATHS_TOOL,
 )
+from codemie.agents.tools.datasource_health_mixin import DatasourceHealthMixin
 from codemie.agents.utils import adapt_tool_name
 from codemie.core.models import CodeFields, ChatMessage
 from codemie.core.thread import ThreadedGenerator
@@ -93,8 +94,9 @@ class CodeToolkit(BaseToolkit):
         with_filtering: Optional[bool] = False,
     ):
         tool_metadata = CODE_SEARCH_TOOL_V2 if with_filtering else CODE_SEARCH_TOOL
+        index_info = CodeToolkit._get_index_info(code_fields)
         name = CodeToolkit._tool_name(tool_metadata, code_fields)
-        description = CodeToolkit._tool_description(tool_metadata, code_fields, is_react)
+        description = CodeToolkit._tool_description(tool_metadata, code_fields, is_react, index_info)
 
         return SearchCodeRepoTool(
             name=name,
@@ -104,12 +106,14 @@ class CodeToolkit(BaseToolkit):
             top_k=top_k,
             user_input=user_input,
             with_filtering=with_filtering,
+            index_info=index_info,
         )
 
     @staticmethod
     def search_code_by_path_tool(code_fields: CodeFields, top_k: int, is_react: bool = True, user_input: str = None):
+        index_info = CodeToolkit._get_index_info(code_fields)
         name = CodeToolkit._tool_name(CODE_SEARCH_BY_PATHS_TOOL, code_fields)
-        description = CodeToolkit._tool_description(CODE_SEARCH_BY_PATHS_TOOL, code_fields, is_react)
+        description = CodeToolkit._tool_description(CODE_SEARCH_BY_PATHS_TOOL, code_fields, is_react, index_info)
 
         return SearchCodeRepoByPathsTool(
             name=name,
@@ -118,15 +122,17 @@ class CodeToolkit(BaseToolkit):
             code_fields=code_fields,
             top_k=top_k,
             user_input=user_input,
+            index_info=index_info,
         )
 
     @staticmethod
     def get_repo_tree_tool(
         code_fields: CodeFields, is_react: bool = True, user_input: str = None, with_filtering: Optional[bool] = False
     ):
+        index_info = CodeToolkit._get_index_info(code_fields)
         if with_filtering:
             name = CodeToolkit._tool_name(REPO_TREE_TOOL_V2, code_fields)
-            description = CodeToolkit._tool_description(REPO_TREE_TOOL_V2, code_fields, is_react)
+            description = CodeToolkit._tool_description(REPO_TREE_TOOL_V2, code_fields, is_react, index_info)
 
             return GetRepoFileTreeToolV2(
                 code_fields=code_fields,
@@ -134,36 +140,52 @@ class CodeToolkit(BaseToolkit):
                 description=description,
                 with_filtering=with_filtering,
                 user_input=user_input,
+                index_info=index_info,
             )
         else:
             name = CodeToolkit._tool_name(REPO_TREE_TOOL, code_fields)
-            description = CodeToolkit._tool_description(REPO_TREE_TOOL, code_fields, is_react)
+            description = CodeToolkit._tool_description(REPO_TREE_TOOL, code_fields, is_react, index_info)
 
             return GetRepoFileTreeTool(
-                code_fields=code_fields, name=name, description=description, with_filtering=with_filtering
+                code_fields=code_fields,
+                name=name,
+                description=description,
+                with_filtering=with_filtering,
+                index_info=index_info,
             )
 
     @staticmethod
     def read_files_tool(code_fields: CodeFields, is_react: bool = True):
+        index_info = CodeToolkit._get_index_info(code_fields)
         name = CodeToolkit._tool_name(READ_FILES_TOOL, code_fields)
-        description = CodeToolkit._tool_description(READ_FILES_TOOL, code_fields, is_react)
+        description = CodeToolkit._tool_description(READ_FILES_TOOL, code_fields, is_react, index_info)
 
         return ReadFileFromStorageTool(
             code_fields=code_fields,
             name=name,
             description=description,
+            index_info=index_info,
         )
 
     @staticmethod
     def read_files_with_summary_tool(code_fields: CodeFields, is_react: bool = True):
+        index_info = CodeToolkit._get_index_info(code_fields)
         name = CodeToolkit._tool_name(READ_FILES_WITH_SUMMARY_TOOL, code_fields)
-        description = CodeToolkit._tool_description(READ_FILES_WITH_SUMMARY_TOOL, code_fields, is_react)
+        description = CodeToolkit._tool_description(READ_FILES_WITH_SUMMARY_TOOL, code_fields, is_react, index_info)
 
         return ReadFileFromStorageWithSummaryTool(
             code_fields=code_fields,
             name=name,
             description=description,
+            index_info=index_info,
         )
+
+    @staticmethod
+    def _get_index_info(code_fields: CodeFields) -> Optional[IndexInfo]:
+        results = IndexInfo.filter_by_project_and_repo(
+            project_name=code_fields.app_name, repo_name=code_fields.repo_name
+        )
+        return results[0] if results else None
 
     @staticmethod
     def _tool_name(tool: BaseTool, code_fields: CodeFields):
@@ -171,15 +193,14 @@ class CodeToolkit(BaseToolkit):
         return adapt_tool_name(template, code_fields.repo_name)
 
     @staticmethod
-    def _tool_description(tool: BaseTool, code_fields: CodeFields, is_react: bool):
-        index_info = IndexInfo.filter_by_project_and_repo(
-            project_name=code_fields.app_name, repo_name=code_fields.repo_name
-        )[0]
-
+    def _tool_description(
+        tool: BaseTool, code_fields: CodeFields, is_react: bool, index_info: Optional[IndexInfo] = None
+    ):
         base_description = tool.description
         if is_react and hasattr(tool, "react_description") and tool.react_description:
             base_description = tool.react_description
 
-        repo_description = f"\n\tName: {code_fields.repo_name}\n \t{index_info.description}\n"
+        repo_description = f"\n\tName: {code_fields.repo_name}\n \t{index_info.description if index_info else ''}\n"
+        health_prefix = DatasourceHealthMixin._build_description_health_prefix(index_info) if index_info else ""
 
-        return base_description.format(repo_description)
+        return health_prefix + base_description.format(repo_description)

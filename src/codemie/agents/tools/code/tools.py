@@ -14,9 +14,12 @@
 
 from typing import List, Optional, Type
 from pydantic import BaseModel, Field
+from langchain_core.tools import ToolException
 
 from codemie_tools.base.codemie_tool import CodeMieTool
 
+from codemie.agents.tools.datasource_health_mixin import DatasourceHealthMixin
+from codemie.rest_api.models.index import IndexInfo
 from codemie.agents.tools.code.tools_models import (
     SearchInput,
     FilteredDocuments,
@@ -45,12 +48,13 @@ from codemie.service.search_and_rerank import SearchAndRerankCode
 from codemie.templates.coding_prompts import REPO_TREE_FILTER_RELEVANCE_PROMPT
 
 
-class GetRepoFileTreeTool(CodeMieTool, BaseCodeToolMixin):
+class GetRepoFileTreeTool(CodeMieTool, DatasourceHealthMixin, BaseCodeToolMixin):
     base_name: str = REPO_TREE_TOOL.name
     name: str = REPO_TREE_TOOL.name
     description: str = REPO_TREE_TOOL.description
     args_schema: Optional[Type[BaseModel]] = GetRepoTreeInput
     tokens_size_limit: int = 20000
+    index_info: Optional[IndexInfo] = Field(default=None, exclude=True)
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -59,11 +63,17 @@ class GetRepoFileTreeTool(CodeMieTool, BaseCodeToolMixin):
         else:
             self.metadata = {TOOL_TYPE: ToolType.PLUGIN}
 
+    def _run(self, *args, **kwargs):
+        result = super()._run(*args, **kwargs)
+        return self._wrap_result(result, self._build_health_notice())
+
     def execute(self, *args, **kwargs):
+        if self.index_info and self.index_info.error:
+            raise ToolException(self._build_health_notice())
         return get_repo_tree(code_fields=self.code_fields)
 
 
-class GetRepoFileTreeToolV2(CodeMieTool, CodeRepoBaseToolMixin):
+class GetRepoFileTreeToolV2(CodeMieTool, DatasourceHealthMixin, CodeRepoBaseToolMixin):
     code_fields: CodeFields = Field(exclude=True)
     base_name: str = REPO_TREE_TOOL_V2.name
     name: str = REPO_TREE_TOOL_V2.name
@@ -72,8 +82,15 @@ class GetRepoFileTreeToolV2(CodeMieTool, CodeRepoBaseToolMixin):
     tokens_size_limit: int = 20000
     max_tokens_per_batch: int = 50000
     user_input: Optional[str] = Field(default="", exclude=True)
+    index_info: Optional[IndexInfo] = Field(default=None, exclude=True)
+
+    def _run(self, *args, **kwargs):
+        result = super()._run(*args, **kwargs)
+        return self._wrap_result(result, self._build_health_notice())
 
     def execute(self, query: str, file_path: Optional[str] = None):
+        if self.index_info and self.index_info.error:
+            raise ToolException(self._build_health_notice())
         if file_path:
             repo_tree = get_repo_tree_by_search_phrase_path(code_fields=self.code_fields, file_path=file_path)
             if not repo_tree:
@@ -110,16 +127,23 @@ class GetRepoFileTreeToolV2(CodeMieTool, CodeRepoBaseToolMixin):
             return sources
 
 
-class SearchCodeRepoTool(CodeMieTool, SearchCodeRepoBaseToolMixin):
+class SearchCodeRepoTool(CodeMieTool, DatasourceHealthMixin, SearchCodeRepoBaseToolMixin):
     base_name: str = CODE_SEARCH_TOOL.name
     name: str = CODE_SEARCH_TOOL.name
     description: str = CODE_SEARCH_TOOL.description
     handle_tool_error: bool = True
     args_schema: Type[BaseModel] = SearchInput
+    index_info: Optional[IndexInfo] = Field(default=None, exclude=True)
+
+    def _run(self, *args, **kwargs):
+        result = super()._run(*args, **kwargs)
+        return self._wrap_result(result, self._build_health_notice())
 
     def execute(
         self, query: str, keywords_list: Optional[List[str]] = None, file_path: Optional[List[str]] = None, *args
     ):
+        if self.index_info and self.index_info.error:
+            raise ToolException(self._build_health_notice())
         keywords_list = keywords_list or []
         file_path = file_path or []
         search_results = SearchAndRerankCode(
@@ -147,12 +171,17 @@ class SearchCodeRepoTool(CodeMieTool, SearchCodeRepoBaseToolMixin):
         return self._filter_and_format_documents(search_results, calculate_tokens_count=self.calculate_tokens_count)
 
 
-class SearchCodeRepoByPathsTool(CodeMieTool, SearchCodeRepoBaseToolMixin):
+class SearchCodeRepoByPathsTool(CodeMieTool, DatasourceHealthMixin, SearchCodeRepoBaseToolMixin):
     base_name: str = CODE_SEARCH_BY_PATHS_TOOL.name
     name: str = CODE_SEARCH_BY_PATHS_TOOL.name
     description: str = CODE_SEARCH_BY_PATHS_TOOL.description
     handle_tool_error: bool = True
     args_schema: Type[BaseModel] = SearchInputByPaths
+    index_info: Optional[IndexInfo] = Field(default=None, exclude=True)
+
+    def _run(self, *args, **kwargs):
+        result = super()._run(*args, **kwargs)
+        return self._wrap_result(result, self._build_health_notice())
 
     def execute(
         self,
@@ -162,6 +191,8 @@ class SearchCodeRepoByPathsTool(CodeMieTool, SearchCodeRepoBaseToolMixin):
         limit_docs_count: Optional[int] = None,
         *args,
     ):
+        if self.index_info and self.index_info.error:
+            raise ToolException(self._build_health_notice())
         file_path = file_path or []
         search_results = SearchAndRerankCode(
             query=query,

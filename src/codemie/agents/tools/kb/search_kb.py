@@ -16,6 +16,7 @@ from typing import Type, List, Optional
 
 from pydantic import BaseModel, Field
 from langchain_core.documents import Document
+from langchain_core.tools import ToolException
 
 from codemie_tools.base.constants import SOURCE_DOCUMENT_KEY, SOURCE_FIELD_KEY, FILE_CONTENT_FIELD_KEY
 from codemie_tools.base.codemie_tool import CodeMieTool
@@ -23,6 +24,7 @@ from codemie_tools.base.models import ToolMetadata
 from codemie.agents.callbacks.agent_invoke_callback import AgentInvokeCallback
 from codemie.agents.callbacks.agent_streaming_callback import AgentStreamingCallback
 from codemie.agents.utils import adapt_tool_name
+from codemie.agents.tools.datasource_health_mixin import DatasourceHealthMixin
 from codemie.configs import logger
 from codemie.core.constants import REQUEST_ID
 from codemie.core.dependecies import get_llm_by_credentials
@@ -57,7 +59,7 @@ class LLMRouting(BaseModel):
     )
 
 
-class SearchKBTool(CodeMieTool):
+class SearchKBTool(CodeMieTool, DatasourceHealthMixin):
     truncate_message: str = (
         "The query provided to this tool is overly broad, which resulted in a truncated output. "
         "**Please ask the user to narrow down their query or provide more specific details about what they need.** "
@@ -65,7 +67,7 @@ class SearchKBTool(CodeMieTool):
         "Bellow is the truncated output:\n"
     )
 
-    kb_index: Optional[IndexInfo] = None
+    index_info: Optional[IndexInfo] = None
     llm_model: Optional[str] = None
     base_name: str = "search_kb"
     name_template: str = base_name + "_{}"
@@ -80,36 +82,44 @@ class SearchKBTool(CodeMieTool):
     description: str = description_template.format("default")
     args_schema: Type[BaseModel] = SearchInput
 
-    def __init__(self, kb_index: IndexInfo, llm_model: str):
+    def __init__(self, index_info: IndexInfo, llm_model: str):
         super().__init__()
-        self.kb_index = kb_index
+        self.index_info = index_info
         self.llm_model = llm_model
-        self.name = adapt_tool_name(self.name_template, kb_index.repo_name)
-        self.description = self.description_template.format(kb_index.description)
+        self.name = adapt_tool_name(self.name_template, index_info.repo_name)
+        self.description = self._build_description_health_prefix(index_info) + self.description_template.format(
+            index_info.description
+        )
 
     def execute(self, query: str, **kwargs):
-        if self.kb_index and ("llm_routing" in self.kb_index.index_type):
-            return self.process_llm_routing_index(query=query, kb_index=self.kb_index)
+        if self.index_info and self.index_info.error:
+            raise ToolException(self._build_health_notice())
+        notice = self._build_health_notice()
 
-        if self.kb_index and (self.kb_index.index_type == IndexInfoType.KB_BEDROCK.value):
-            return self.process_knowledge_base_bedrock_index(query=query, kb_index=self.kb_index)
+        if self.index_info and ("llm_routing" in self.index_info.index_type):
+            return self._wrap_result(self.process_llm_routing_index(query=query, kb_index=self.index_info), notice)
+
+        if self.index_info and (self.index_info.index_type == IndexInfoType.KB_BEDROCK.value):
+            return self._wrap_result(
+                self.process_knowledge_base_bedrock_index(query=query, kb_index=self.index_info), notice
+            )
         else:
             request_id = self.metadata.get(REQUEST_ID)
 
-            if self.kb_index.index_type == FullDatasourceTypes.PLATFORM_ASSISTANT.value:
+            if self.index_info.index_type == FullDatasourceTypes.PLATFORM_ASSISTANT.value:
                 search_class = SearchAndRerankMarketplace
             else:
                 search_class = SearchAndRerankKB
 
             data = search_class(
                 query=query,
-                kb_index=self.kb_index,
+                kb_index=self.index_info,
                 llm_model=self.llm_model,
                 top_k=10,  # TODO: make it configurable
                 request_id=request_id,
             ).execute()
 
-        return self.format_response(data)
+        return self._wrap_result(self.format_response(data), notice)
 
     def format_document(self, doc):
         source = doc.metadata['source']
@@ -124,9 +134,8 @@ class SearchKBTool(CodeMieTool):
 
     def format_response(self, documents: List[Document]):
         try:
-            if isinstance(documents, tuple):
-                return str(documents[1]) + "\n" + "\n".join(self.format_document(doc) for doc in documents[0])
-            return "\n".join(self.format_document(doc) for doc in documents)
+            docs = documents[0] if isinstance(documents, tuple) else documents
+            return "\n".join(self.format_document(doc) for doc in docs)
         except Exception as e:
             logger.error(f"Error while formatting response: {e}")
             return documents
