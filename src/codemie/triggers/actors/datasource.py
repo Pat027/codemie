@@ -710,6 +710,17 @@ _RESUME_DISPATCH: dict = {
 
 def resume_stale_datasource(index_info: IndexInfo) -> None:
     """Resume a stuck in-progress datasource index job detected by the watchdog."""
+
+    # Guard: Don't resume if datasource was deleted
+    try:
+        fresh_check = IndexInfo.find_by_id(index_info.id)
+        if not fresh_check:
+            logger.info(f"Datasource {index_info.id} no longer exists (deleted), skipping resume")
+            return
+    except Exception as e:
+        logger.warning(f"Could not verify datasource {index_info.id} existence, skipping resume: {e}")
+        return
+
     index_type = index_info.index_type
 
     if index_type in UNSUPPORTED_RESUME_TYPES:

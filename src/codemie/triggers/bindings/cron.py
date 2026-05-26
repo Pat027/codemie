@@ -207,8 +207,12 @@ class Cron:
 
     def __run_resume(self, index_info: IndexInfo) -> None:
         """Run a stale resume in a thread pool worker, removing the in-flight marker on completion."""
+        from codemie.rest_api.models.index import IndexDeletedException
+
         try:
             resume_stale_datasource(index_info)
+        except IndexDeletedException:
+            logger.info(f"Datasource {index_info.id} was deleted during resume, stopping gracefully")
         except Exception as e:
             logger.error(f"Stale indexing watchdog: failed to resume index_id={index_info.id}: {e}", exc_info=True)
         finally:

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import json
 import logging
 import time
@@ -202,11 +203,12 @@ class BaseDatasourceProcessor(ABC):
                 self._notify_callbacks_on_complete(result)
             except IndexDeletedException as ex:
                 record_exception_on_span(ex)
-                logger.error(f"Stopping, index was deleted for datasource {self.index.repo_name}", exc_info=True)
+                logger.info(f"Stopping, index was deleted for datasource {self.index.repo_name}")
                 self.client.indices.delete(
                     index=self._index_name, ignore=[400, 404]
                 )  # Ensure embeddings index is deleted
-                self._on_process_end()  # Clear any sensitive state (e.g. OAuth tokens)
+                with contextlib.suppress(IndexDeletedException):
+                    self._on_process_end()  # Clear any sensitive state (e.g. OAuth tokens)
                 self._notify_callbacks_on_error(ex)
                 return
             except GuardrailBlockedException as ex:
@@ -259,7 +261,10 @@ class BaseDatasourceProcessor(ABC):
 
     def _notify_callbacks_on_error(self, ex: Exception) -> None:
         for callback in self.callbacks:
-            callback.on_error(ex)
+            try:
+                callback.on_error(ex)
+            except IndexDeletedException:
+                logger.debug(f"Datasource {self.index.id} deleted, skipping error callback")
 
     def _update_complete_state_estimate(
         self, index: IndexInfo, initial_complete_state: int, total_raw_docs: int, total_source_docs: int
@@ -643,6 +648,14 @@ class BaseDatasourceProcessor(ABC):
                 total_raw_docs += len(docs_batch)
                 total_source_docs += batch_source_count
                 self._update_complete_state_estimate(index, initial_complete_state, total_raw_docs, total_source_docs)
+
+                # Check if datasource was deleted during batch processing
+                try:
+                    index.update()
+                except IndexDeletedException:
+                    logger.info(f"Datasource {index.id} was deleted during batch processing, stopping")
+                    raise
+
                 docs_batch.clear()
 
         if docs_batch:
@@ -651,6 +664,14 @@ class BaseDatasourceProcessor(ABC):
             total_raw_docs += len(docs_batch)
             total_source_docs += batch_source_count
             self._update_complete_state_estimate(index, initial_complete_state, total_raw_docs, total_source_docs)
+
+            # Check if datasource was deleted during final batch
+            try:
+                index.update()
+            except IndexDeletedException:
+                logger.info(f"Datasource {index.id} was deleted during final batch, stopping")
+                raise
+
         return loaded_docs
 
     def _process_batch(self, docs: list[Document], index: IndexInfo, store) -> int:

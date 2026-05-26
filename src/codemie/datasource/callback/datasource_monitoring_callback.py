@@ -20,7 +20,7 @@ from langchain_core.documents import Document
 
 from codemie.core.utils import calculate_tokens
 from codemie.datasource.callback.base_datasource_callback import DatasourceProcessorCallback
-from codemie.rest_api.models.index import IndexInfo
+from codemie.rest_api.models.index import IndexDeletedException, IndexInfo
 from codemie.rest_api.security.user import User
 from codemie.service.llm_service.llm_service import llm_service
 from codemie.service.monitoring.datasource_monitoring_service import DatasourceMonitoringService
@@ -99,7 +99,11 @@ class DatasourceMonitoringCallback(DatasourceProcessorCallback):
         if self.request_uuid:
             usage_summary = request_summary_manager.get_summary(self.request_uuid)
             self.index.tokens_usage = usage_summary.tokens_usage
-            self.index.update()
+            try:
+                self.index.update()
+            except IndexDeletedException:
+                request_summary_manager.clear_summary(self.request_uuid)
+                return
 
             # Send individual tokens usage metrics per model if we have LLM runs
             # This allows per-model breakdown in Kibana/Elasticsearch
@@ -137,7 +141,11 @@ class DatasourceMonitoringCallback(DatasourceProcessorCallback):
         if self.request_uuid:
             usage_summary = request_summary_manager.get_summary(self.request_uuid)
             self.index.tokens_usage = usage_summary.tokens_usage
-            self.index.update()
+            try:
+                self.index.update()
+            except IndexDeletedException:
+                request_summary_manager.clear_summary(self.request_uuid)
+                return
 
             # Send individual tokens usage metrics per model even on error
             error_attrs = {"error": "true", "error_class": exception.__class__.__name__}

@@ -551,7 +551,7 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
         if self.provider_fields:
             self.provider_fields.otp = otp
             flag_modified(self, 'provider_fields')
-            self.save()
+            self.update()
         else:
             raise IncompatibleIndexTypeException("OTP can be generated only for Provider type indexes")
         return otp
@@ -560,7 +560,7 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
         if self.provider_fields:
             self.provider_fields.otp = None
             flag_modified(self, 'provider_fields')
-            self.save()
+            self.update()
 
     @model_validator(mode='before')
     @classmethod

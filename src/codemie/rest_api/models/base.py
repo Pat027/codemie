@@ -29,6 +29,7 @@ from codemie.clients.postgres import PostgresClient
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.mutable import MutableList
+from sqlalchemy.orm.exc import StaleDataError
 
 
 class CommonBaseModel(SQLModel):
@@ -522,6 +523,8 @@ class BaseModelWithSQLSupport(CommonBaseModel):
                 raise ValueError(validation_message)
 
         with Session(self.get_engine()) as session:
+            if session.get(type(self), self.id) is None:
+                raise StaleDataError(f"Record {self.id} has been deleted")
             session.merge(self)
             session.commit()
         return PostResponse(id=self.id)
