@@ -2902,6 +2902,39 @@ async def get_user_spending(
     return _create_response(response_data, SummariesResponse)
 
 
+async def _resolve_admin_budget_subject(user: "User", user_id: str) -> tuple[str, str | None]:
+    """Look up target user for admin budget view; raise if not found or not authorized."""
+    if not config.ENABLE_USER_MANAGEMENT:
+        raise ExtendedHTTPException(
+            code=status.HTTP_400_BAD_REQUEST,
+            message="user_id parameter requires ENABLE_USER_MANAGEMENT to be enabled.",
+            help="Remove the user_id parameter or enable user management.",
+        )
+    from codemie.clients.postgres import get_session
+    from codemie.repository.user_project_repository import user_project_repository
+    from codemie.service.user.user_management_service import UserManagementService
+
+    def _lookup():
+        with get_session() as session:
+            db_user = UserManagementService.get_user_by_id(session, user_id)
+            project_names = user_project_repository.get_project_names_for_user(session, user_id) if db_user else []
+        return db_user, project_names
+
+    target_user_db, target_project_names = await asyncio.to_thread(_lookup)
+    if target_user_db is None:
+        raise ExtendedHTTPException(
+            code=status.HTTP_404_NOT_FOUND,
+            message=f"User {user_id} not found.",
+            help="Verify the user_id and try again.",
+        )
+    _authorize_admin_budget_view(user, target_project_names)
+    subject_label = target_user_db.email or target_user_db.username
+    if not subject_label:
+        logger.warning(f"No email or username for target user={target_user_db.id}; budget lookup may return no data")
+    logger.info(f"Admin budget view: caller={user.id} viewing target={user_id}")
+    return str(target_user_db.id), subject_label
+
+
 @router.get(
     "/budget_usage",
     status_code=status.HTTP_200_OK,
@@ -2940,40 +2973,12 @@ async def get_user_budget_usage(
 
     # --- Resolve subject (target user or caller) ---
     if user_id is not None:
-        if not config.ENABLE_USER_MANAGEMENT:
-            raise ExtendedHTTPException(
-                code=status.HTTP_400_BAD_REQUEST,
-                message="user_id parameter requires ENABLE_USER_MANAGEMENT to be enabled.",
-                help="Remove the user_id parameter or enable user management.",
-            )
-        from codemie.clients.postgres import get_session
-        from codemie.repository.user_project_repository import user_project_repository
-        from codemie.service.user.user_management_service import UserManagementService
-
-        def _lookup_target_user():
-            with get_session() as session:
-                db_user = UserManagementService.get_user_by_id(session, user_id)
-                project_names = (
-                    user_project_repository.get_project_names_for_user(session, user_id) if db_user is not None else []
-                )
-            return db_user, project_names
-
-        target_user_db, target_project_names = await asyncio.to_thread(_lookup_target_user)
-        if target_user_db is None:
-            raise ExtendedHTTPException(
-                code=status.HTTP_404_NOT_FOUND,
-                message=f"User {user_id} not found.",
-                help="Verify the user_id and try again.",
-            )
-
-        _authorize_admin_budget_view(user, target_project_names)
-
-        subject_user_id = target_user_db.id
-        subject_label = target_user_db.email or target_user_db.username or target_user_db.id
-        logger.info(f"Admin budget view: caller={user.id} viewing target={user_id}")
+        subject_user_id, subject_label = await _resolve_admin_budget_subject(user, user_id)
     else:
         subject_user_id = user.id
-        subject_label = user.email or user.username or user.id
+        subject_label = user.email or user.username
+        if not subject_label:
+            logger.warning(f"No email or username for user={user.id}; budget lookup may return no data")
         logger.info(f"User {user.id} requesting budget usage analytics")
 
     try:
