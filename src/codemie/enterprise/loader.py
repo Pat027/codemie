@@ -66,6 +66,26 @@ def has_langfuse() -> bool:
     return HAS_LANGFUSE
 
 
+# Phoenix (Arize) — check if enterprise support package is installed.
+# The PhoenixObservabilityProvider itself lives in codemie.enterprise.observability.phoenix_provider.
+try:
+    import codemie_enterprise.phoenix  # noqa: F401
+
+    HAS_PHOENIX = True
+except ImportError:
+    HAS_PHOENIX = False
+
+
+# Generic observability flag — True if any backend (Langfuse, Phoenix, …) is available.
+# External code should check this instead of tool-specific HAS_LANGFUSE / HAS_PHOENIX.
+HAS_LLM_OBSERVABILITY: bool = HAS_LANGFUSE or HAS_PHOENIX
+
+
+def has_llm_observability() -> bool:
+    """Return True if any LLM observability backend is available (Langfuse, Phoenix, …)."""
+    return HAS_LLM_OBSERVABILITY
+
+
 # LiteLLM imports
 try:
     from codemie_enterprise.litellm import (
@@ -188,8 +208,12 @@ def has_mcp_auth() -> bool:
 
 # Export all
 __all__ = [
-    # LangFuse
+    # LangFuse (kept for backward compatibility)
     "HAS_LANGFUSE",
+    "has_langfuse",
+    # Generic observability (use these instead of tool-specific flags)
+    "HAS_LLM_OBSERVABILITY",
+    "has_llm_observability",
     "LangFuseConfig",
     "LangFuseService",
     "TraceContext",
@@ -198,7 +222,6 @@ __all__ = [
     "build_workflow_metadata",
     "build_agent_metadata",
     "observe",
-    "has_langfuse",
     # LiteLLM
     "HAS_LITELLM",
     "BudgetTable",

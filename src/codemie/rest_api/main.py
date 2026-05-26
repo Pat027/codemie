@@ -26,10 +26,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 from codemie.configs import config
 from codemie.configs.config import ENV_LOCAL
-from codemie.enterprise.langfuse import (
-    initialize_langfuse_from_config,
-    set_global_langfuse_service,
-)
+from codemie.enterprise.observability import get_observability_provider
 from codemie.enterprise.litellm import (
     close_llm_proxy_client,
     initialize_litellm_from_config,
@@ -257,11 +254,11 @@ async def _initialize_plugin_service():
         return None
 
 
-def _initialize_enterprise_services(app: FastAPI) -> tuple:
-    """Initialize Langfuse and LiteLLM enterprise services."""
-    langfuse_service = initialize_langfuse_from_config()
-    app.state.langfuse_service = langfuse_service
-    set_global_langfuse_service(langfuse_service)
+def _initialize_enterprise_services(app: FastAPI):
+    """Initialize observability and LiteLLM enterprise services."""
+    observability_provider = get_observability_provider()
+    observability_provider.initialize()
+    app.state.observability_provider = observability_provider
 
     litellm_service = initialize_litellm_from_config()
     app.state.litellm_service = litellm_service
@@ -280,8 +277,6 @@ def _initialize_enterprise_services(app: FastAPI) -> tuple:
 
         register_budget_enforcement_provider(LiteLLMBudgetEnforcementProvider(litellm_service))
         logger.info("LiteLLM budget enforcement provider registered")
-
-    return langfuse_service, litellm_service
 
 
 def _setup_litellm_features():
@@ -460,7 +455,7 @@ async def _run_keycloak_migration() -> None:
         # Non-fatal: log and continue. App starts regardless.
 
 
-async def _shutdown_services(app: FastAPI, langfuse_service, tasks: list):
+async def _shutdown_services(app: FastAPI, tasks: list):
     """Shutdown all services and background tasks."""
     from codemie.service.llm_proxy.provider_registry import get_active_llm_proxy_provider
 
@@ -468,9 +463,10 @@ async def _shutdown_services(app: FastAPI, langfuse_service, tasks: list):
 
     await shutdown_mcp_auth()
 
-    if langfuse_service is not None:
-        langfuse_service.shutdown()
-        logger.info("LangFuse service shutdown complete")
+    observability_provider = getattr(app.state, "observability_provider", None)
+    if observability_provider is not None:
+        observability_provider.shutdown()
+        logger.info("Observability provider shutdown complete")
 
     get_active_llm_proxy_provider().close()
 
@@ -533,7 +529,7 @@ async def lifespan(app: FastAPI):
     initialize_mcp_auth()
 
     # Initialize enterprise services
-    langfuse_service, litellm_service = _initialize_enterprise_services(app)
+    _initialize_enterprise_services(app)
 
     # Setup LiteLLM features
     _setup_litellm_features()
@@ -588,7 +584,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Cleanup on shutdown
-    await _shutdown_services(app, langfuse_service, tasks)
+    await _shutdown_services(app, tasks)
 
 
 def custom_openapi():

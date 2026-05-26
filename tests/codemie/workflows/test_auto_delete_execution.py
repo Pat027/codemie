@@ -202,7 +202,7 @@ class TestAutoDeleteExecution:
 class TestAutoDeleteInExecutionStream:
     """Test that auto-delete integrates correctly in _execute_workflow_stream."""
 
-    @patch('codemie.workflows.workflow.clear_workflow_trace_context')
+    @patch('codemie.workflows.workflow.get_observability_provider')
     @patch.object(WorkflowExecutor, '_auto_delete_execution')
     @patch.object(WorkflowExecutor, '_run_workflow_execution')
     @patch.object(WorkflowExecutor, '_build_graph_config')
@@ -221,7 +221,7 @@ class TestAutoDeleteInExecutionStream:
 
         mock_auto_delete.assert_called_once()
 
-    @patch('codemie.workflows.workflow.clear_workflow_trace_context')
+    @patch('codemie.workflows.workflow.get_observability_provider')
     @patch.object(WorkflowExecutor, '_auto_delete_execution')
     @patch.object(WorkflowExecutor, '_run_workflow_execution')
     @patch.object(WorkflowExecutor, '_build_graph_config')
@@ -240,7 +240,7 @@ class TestAutoDeleteInExecutionStream:
 
         mock_auto_delete.assert_not_called()
 
-    @patch('codemie.workflows.workflow.clear_workflow_trace_context')
+    @patch('codemie.workflows.workflow.get_observability_provider')
     @patch.object(WorkflowExecutor, '_auto_delete_execution')
     @patch.object(WorkflowExecutor, '_run_workflow_execution', side_effect=Exception("workflow error"))
     @patch.object(WorkflowExecutor, '_build_graph_config')
