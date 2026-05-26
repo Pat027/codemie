@@ -850,12 +850,7 @@ class LangGraphAgent(WorkspaceAwareAgent):
         logger.debug(f"Invoking task. Agent={self.agent_name}. Inputs={self._serialize_inputs_for_log(inputs)}")
         set_llm_context(self.assistant, None, self.user)
         try:
-            import contextlib
-
-            run_config = self._get_run_config()
-            trace_ctx = run_config.pop("_trace_ctx", contextlib.nullcontext())
-            with trace_ctx:
-                output = self._stream_graph(inputs, config=run_config)
+            output = self._stream_graph(inputs, config=self._get_run_config())
 
             # Include tool errors and callback errors collected during execution
             response = GenerationResult(
@@ -928,13 +923,10 @@ class LangGraphAgent(WorkspaceAwareAgent):
         return not any(isinstance(cb, type(candidate)) for cb in callbacks)
 
     def _agent_streaming(self, chunks_collector: list[str]) -> str | dict | BaseModel:
-        import contextlib
-
         inputs = self._get_inputs()
-        run_config = self._get_run_config()
-        trace_ctx = run_config.pop("_trace_ctx", contextlib.nullcontext())
-        with trace_ctx:
-            result = self._stream_graph(inputs, run_config, chunks_collector)
+        config = self._get_run_config()
+
+        result = self._stream_graph(inputs, config, chunks_collector)
         return result
 
     def _get_system_prompt(self, from_request: bool = False):

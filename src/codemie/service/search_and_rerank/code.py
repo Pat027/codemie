@@ -20,14 +20,9 @@ from codemie.configs import logger
 from codemie.core.dependecies import get_indexed_repo, get_embeddings_model, get_repo_from_fields
 from codemie.core.models import CodeFields
 from codemie.service.llm_service.llm_service import llm_service
-from codemie.enterprise.observability import get_observability_provider
+from codemie.enterprise.loader import observe
 from codemie.service.search_and_rerank.base import SearchAndRerankBase, es_response_to_document
 from codemie.service.search_and_rerank.rrf import RRF
-
-# NOTE: observe is captured at import time from the singleton provider.
-# Tests that switch providers via reset_provider() must do so BEFORE this module
-# is imported, or mock at the decorator level rather than via reset_provider().
-observe = get_observability_provider().make_observe_decorator()
 
 DocumentSearchResult = Tuple[Document, float, int]
 

@@ -22,7 +22,6 @@ from .dependencies import (
     set_global_langfuse_service,
     get_langfuse_service,
     get_langfuse_callback_handler,
-    get_langfuse_trace_context,
     require_langfuse_client,
     get_langfuse_client_or_none,
 )
@@ -43,7 +42,6 @@ __all__ = [
     "set_global_langfuse_service",
     "get_langfuse_service",
     "get_langfuse_callback_handler",
-    "get_langfuse_trace_context",
     "require_langfuse_client",
     "get_langfuse_client_or_none",
     # Workflow traces

@@ -155,12 +155,12 @@ def get_global_langfuse_service() -> Optional["LangFuseService"]:
 
 def get_langfuse_service(request: Request) -> Optional["LangFuseService"]:
     """
-    Get LangFuse service instance.
+    Get LangFuse service from application state.
 
     Returns None if enterprise feature not available or not initialized.
 
     Args:
-        request: FastAPI request object (accepted for API compatibility; not used internally)
+        request: FastAPI request object
 
     Returns:
         LangFuseService instance if available, None otherwise
@@ -176,7 +176,7 @@ def get_langfuse_service(request: Request) -> Optional["LangFuseService"]:
     """
     if not HAS_LANGFUSE:
         return None
-    return get_global_langfuse_service()
+    return getattr(request.app.state, "langfuse_service", None)
 
 
 def get_langfuse_callback_handler():
@@ -211,55 +211,6 @@ def get_langfuse_callback_handler():
         return None
 
     return service.get_callback_handler()
-
-
-def get_langfuse_trace_context(
-    trace_name: str | None = None,
-    user_id: str | None = None,
-    session_id: str | None = None,
-    tags: list[str] | None = None,
-):
-    """
-    Return a context manager that sets trace attributes on the root Langfuse trace.
-
-    When Langfuse is enabled, delegates to LangFuseService.get_propagate_attributes_context().
-    When Langfuse is disabled or unavailable, returns contextlib.nullcontext() so that
-    call sites require no conditional logic.
-
-    Args:
-        trace_name: Human-readable name shown in Langfuse UI.
-        user_id:    User identifier.
-        session_id: Session identifier.
-        tags:       List of tag strings.
-
-    Returns:
-        Context manager (propagate_attributes or nullcontext).
-
-    Usage:
-        ctx = get_langfuse_trace_context(
-            trace_name=agent_name,
-            user_id=username,
-            session_id=conversation_id,
-            tags=tags,
-        )
-        with ctx:
-            response = agent_executor.invoke(inputs, config=run_config)
-    """
-    import contextlib
-
-    if not is_langfuse_enabled():
-        return contextlib.nullcontext()
-
-    service = get_global_langfuse_service()
-    if service is None:
-        return contextlib.nullcontext()
-
-    return service.get_propagate_attributes_context(
-        trace_name=trace_name,
-        user_id=user_id,
-        session_id=session_id,
-        tags=tags,
-    )
 
 
 def require_langfuse_client(request: Request):

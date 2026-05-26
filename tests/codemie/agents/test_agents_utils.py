@@ -684,15 +684,12 @@ class TestLangfuseLiteLLMErrorOutputCallback:
 
 
 class TestGetRunConfigLangfuseCallbacks:
-    @patch("codemie.agents.utils.get_observability_provider")
-    def test_includes_error_output_callback_after_langfuse_handler(self, mock_get_provider):
+    @patch("codemie.agents.utils.build_agent_metadata_with_workflow_context", return_value={"k": "v"})
+    @patch("codemie.agents.utils.get_langfuse_callback_handler")
+    @patch("codemie.agents.utils._should_enable_langfuse_tracing", return_value=True)
+    def test_includes_error_output_callback_after_langfuse_handler(self, _mock_tracing, mock_handler, _mock_meta):
         handler = MagicMock()
-        mock_provider = MagicMock()
-        mock_provider.should_trace_request.return_value = True
-        mock_provider.get_callback_handler.return_value = handler
-        mock_provider.is_enabled.return_value = True
-        mock_provider.build_agent_metadata.return_value = {"k": "v"}
-        mock_get_provider.return_value = mock_provider
+        mock_handler.return_value = handler
         cfg = get_run_config(
             request=None,
             llm_model="gpt-test",

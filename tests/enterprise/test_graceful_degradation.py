@@ -62,7 +62,8 @@ def test_evaluation_service_requires_enterprise(mock_enterprise_not_installed):
     from codemie.enterprise.langfuse import require_langfuse_client
     from codemie.core.exceptions import ExtendedHTTPException
 
-    mock_request = MagicMock()  # request is accepted for API compat; not used internally
+    mock_request = MagicMock()
+    mock_request.app.state.langfuse_service = None
 
     with pytest.raises(ExtendedHTTPException) as exc_info:
         require_langfuse_client(mock_request)

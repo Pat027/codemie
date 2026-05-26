@@ -106,8 +106,8 @@ class LLMProxyMonitoringService(BaseMonitoringService):
                     error_message=error_message,
                 )
 
-            # Track observability trace (synchronous, non-blocking)
-            cls._track_observability_trace(
+            # Track LangFuse trace (synchronous, non-blocking)
+            cls._track_langfuse_trace(
                 user=user,
                 endpoint=endpoint,
                 request_info=request_info,
@@ -229,7 +229,7 @@ class LLMProxyMonitoringService(BaseMonitoringService):
             logger.warning(f"Error tracking error metric: {str(e)}")
 
     @classmethod
-    def _track_observability_trace(
+    def _track_langfuse_trace(
         cls,
         user: User,
         endpoint: str,
@@ -242,10 +242,7 @@ class LLMProxyMonitoringService(BaseMonitoringService):
         error_message: Optional[str] = None,
     ):
         """
-        Internal method to send an observability trace for LiteLLM proxy requests.
-
-        Currently supports Langfuse only (guarded by LLM_PROXY_LANGFUSE_TRACES).
-        Phoenix support for LiteLLM proxy monitoring is a follow-up enhancement.
+        Internal method to send LangFuse trace.
 
         Performance optimized: Uses singleton Langfuse client, no blocking flush(), simplified trace structure.
 

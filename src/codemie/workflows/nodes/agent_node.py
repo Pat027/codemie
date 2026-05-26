@@ -15,8 +15,8 @@
 from typing import Type, Optional, Any
 
 from codemie.agents.assistant_agent import AIToolsAgent, TaskResult
-from codemie.configs import logger
-from codemie.enterprise.observability import get_observability_provider
+from codemie.configs import logger, config
+from codemie.enterprise.langfuse import get_workflow_trace_context
 from codemie.core.exceptions import TaskException
 from codemie.core.thought_queue import ThoughtQueue
 from codemie.rest_api.security.user import User
@@ -228,9 +228,8 @@ class AgentNode(BaseNode[AgentMessages]):
 
         # Retrieve workflow trace context for trace unification
         trace_context = None
-        provider = get_observability_provider()
-        if provider.is_enabled():
-            trace_context = provider.get_workflow_trace_context(self.execution_id)
+        if config.LANGFUSE_TRACES:
+            trace_context = get_workflow_trace_context(self.execution_id)
 
         return initialize_assistant(
             workflow_assistant=workflow_assistant,
