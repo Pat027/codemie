@@ -208,6 +208,33 @@ def _maybe_update_budget_reset(
     return True
 
 
+def _compute_spend_delta_safe(
+    assignment: Any,
+    fresh_spend: Decimal,
+    prev_row: Any,
+    budget: Any,
+    now: datetime,
+    subject_label: str,
+) -> tuple | None:
+    """Return (daily_spend, cumulative_spend), or None to skip the row."""
+    from codemie.service.spend_tracking.spend_collector_service import InvalidSpendSnapshotError
+
+    try:
+        daily_spend, cumulative_spend = _compute_spend_delta(fresh_spend, prev_row, budget=budget, snapshot_at=now)
+    except InvalidSpendSnapshotError as exc:
+        logger.warning(
+            f"Skipping invalid budget snapshot for budget_id={assignment.budget_id!r} "
+            f"subject={subject_label}: {exc}"
+        )
+        return None
+    if daily_spend == Decimal("0"):
+        logger.debug(
+            f"Zero daily delta for budget_id={assignment.budget_id!r} subject={subject_label}; skipping insert"
+        )
+        return None
+    return daily_spend, cumulative_spend
+
+
 def _collect_spend_rows(
     session: Any,
     fetch_assignments: list,
@@ -220,7 +247,6 @@ def _collect_spend_rows(
     now: datetime,
 ) -> tuple[list, list, bool]:
     """Process LiteLLM fetch results into tracking rows, unchanged IDs, and budget-update flag."""
-    from codemie.service.spend_tracking.spend_collector_service import InvalidSpendSnapshotError
     from codemie.service.spend_tracking.spend_models import ProjectSpendTracking
 
     rows_to_insert: list = []
@@ -238,27 +264,19 @@ def _collect_spend_rows(
         if _maybe_update_budget_reset(session, assignment.budget_id, budget, result.get("budget_reset_at")):
             has_budget_updates = True
         existing = current_spend_map.get(assignment.budget_id)
-        if existing is not None and round(existing.budget_period_spend, 4) == round(fresh_spend, 4):
+        spend_unchanged = existing is not None and round(existing.budget_period_spend, 4) == round(fresh_spend, 4)
+        if spend_unchanged:
             logger.debug(
                 f"Spend unchanged for budget_id={assignment.budget_id} "
                 f"category={assignment.category} spend={fresh_spend}, touching spend_date."
             )
             unchanged_budget_ids.append(assignment.budget_id)
             continue
-        prev_row = existing or prev_day_map.get(assignment.category)
-        try:
-            daily_spend, cumulative_spend = _compute_spend_delta(fresh_spend, prev_row, budget=budget, snapshot_at=now)
-        except InvalidSpendSnapshotError as exc:
-            logger.warning(
-                f"Skipping invalid budget snapshot for budget_id={assignment.budget_id!r} "
-                f"subject={subject_label}: {exc}"
-            )
+        prev_row = existing if existing is not None else prev_day_map.get(assignment.category)
+        delta = _compute_spend_delta_safe(assignment, fresh_spend, prev_row, budget, now, subject_label)
+        if delta is None:
             continue
-        if daily_spend == Decimal("0"):
-            logger.debug(
-                f"Zero daily delta for budget_id={assignment.budget_id!r} subject={subject_label}; skipping insert"
-            )
-            continue
+        daily_spend, cumulative_spend = delta
         rows_to_insert.append(
             ProjectSpendTracking(
                 id=uuid.uuid4(),

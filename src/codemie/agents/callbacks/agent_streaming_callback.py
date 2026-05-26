@@ -33,7 +33,7 @@ from codemie.agents.callbacks.callback_utils import (
 from codemie.chains.base import StreamedGenerationResult, Thought, ThoughtOutputFormat, ThoughtAuthorType
 from codemie.core.constants import OUTPUT_FORMAT, ToolNamePrefix
 from codemie.configs import logger
-from codemie.configs.logger import set_logging_info
+from codemie.configs.logger import current_user_email, set_logging_info
 from codemie.core.thread import ThreadedGenerator
 from codemie.core.utils import extract_text_from_llm_output
 from codemie.core.thought_queue import ThoughtQueue
@@ -291,6 +291,7 @@ class AgentStreamingCallback(StreamingStdOutCallbackHandler):
         set_logging_info(
             uuid=self.gen.context.request_uuid,
             user_id=self.gen.context.user_id,
+            user_email=current_user_email.get(),
         )
         logger.debug(msg)
 

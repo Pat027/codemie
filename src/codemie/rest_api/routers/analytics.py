@@ -2930,7 +2930,11 @@ async def _resolve_admin_budget_subject(user: "User", user_id: str) -> tuple[str
     _authorize_admin_budget_view(user, target_project_names)
     subject_label = target_user_db.email or target_user_db.username
     if not subject_label:
-        logger.warning(f"No email or username for target user={target_user_db.id}; budget lookup may return no data")
+        raise ExtendedHTTPException(
+            code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            message=f"User {user_id} has no email or username; budget lookup cannot be performed.",
+            help="Ensure the target user has a valid email or username configured.",
+        )
     logger.info(f"Admin budget view: caller={user.id} viewing target={user_id}")
     return str(target_user_db.id), subject_label
 
@@ -2978,7 +2982,11 @@ async def get_user_budget_usage(
         subject_user_id = user.id
         subject_label = user.email or user.username
         if not subject_label:
-            logger.warning(f"No email or username for user={user.id}; budget lookup may return no data")
+            raise ExtendedHTTPException(
+                code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                message="Your account has no email or username; budget lookup cannot be performed.",
+                help="Ensure your account has a valid email or username configured.",
+            )
         logger.info(f"User {user.id} requesting budget usage analytics")
 
     try:

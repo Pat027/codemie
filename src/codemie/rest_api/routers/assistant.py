@@ -2885,7 +2885,7 @@ def _llm_validate_on_marketplace_publish(
     request_id = raw_request.state.uuid if hasattr(raw_request.state, "uuid") else None
 
     # Set user context for LLM budget tracking during validation workflow
-    user_email = user.username or user.id
+    user_email = user.email or user.username or None
     set_logging_info(
         uuid=request_id or "unknown",
         user_id=user.id,
@@ -2907,7 +2907,7 @@ def _llm_validate_on_marketplace_publish(
     # Validation failed
     logger.info(
         f"Assistant publication blocked due to quality validation failure. "
-        f"Assistant ID: {assistant.id}, User ID: {user.id}, "
+        f"Assistant ID: {assistant.id}, User ID: {user.id}, User Email: {user_email}, "
         f"Decision: {quality_validation_result.decision}, "
     )
     raise ExtendedHTTPException(
