@@ -985,7 +985,9 @@ class TestCreateBodyStreamWithOptionalInjection:
                     )
 
         assert result == "stream"
-        mock_check_user_budget.assert_called_once_with(user_email="user@example.com", budget_id=None, user_id=user.id)
+        mock_check_user_budget.assert_called_once_with(
+            user_email="user@example.com", budget_id="default", user_id=user.id
+        )
 
     @pytest.mark.asyncio
     async def test_non_premium_web_request_uses_platform_budget_even_when_cli_configured(self):
@@ -1033,7 +1035,7 @@ class TestCreateBodyStreamWithOptionalInjection:
         assert result == "stream"
         mock_check_user_budget.assert_called_once_with(
             user_email="user@example.com",
-            budget_id=None,
+            budget_id="platform-budget",
             user_id="user-1",
         )
         mock_inject.assert_called_once_with(

@@ -388,15 +388,19 @@ def _configure_direct_runtime_overrides(
         )
         return
 
-    from .dependencies import check_user_budget
+    from .budget_categories import BudgetCategory as LiteLLMBudgetCategory
+    from .dependencies import check_user_budget, get_category_budget_id
 
+    platform_budget_id = (
+        _get_direct_request_category_budget_id(user_id, LiteLLMBudgetCategory.PLATFORM) if user_id else None
+    ) or get_category_budget_id(LiteLLMBudgetCategory.PLATFORM)
     logger.info(
         f"budget_event=runtime_mode_selected component=litellm_llm_factory "
         f"user_id={user_id!r} username={user_email!r} model={llm_model_details.base_name!r} "
         f"mode={RuntimeBudgetMode.GLOBAL_OR_PERSONAL_BUDGET.value!r} "
         f"litellm_customer_key={user_email!r}"
     )
-    customer = check_user_budget(user_email=user_email, user_id=user_id)
+    customer = check_user_budget(user_email=user_email, user_id=user_id, budget_id=platform_budget_id)
     request_params["model_kwargs"] = {"user": user_email}
     _mirror_platform_budget_assignment(user_id=user_id, customer=customer)
 

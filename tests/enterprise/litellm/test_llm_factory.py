@@ -106,7 +106,7 @@ class TestCreateLiteLLMChatModel:
 
                                     # Should have checked budget
                                     mock_check_budget.assert_called_once_with(
-                                        user_email="test@example.com", user_id=None
+                                        user_email="test@example.com", user_id=None, budget_id="default"
                                     )
 
     def test_skips_budget_check_when_has_credentials(self):
@@ -226,7 +226,7 @@ class TestCreateLiteLLMEmbeddingModel:
 
                                         # Should have checked budget
                                         mock_check_budget.assert_called_once_with(
-                                            user_email="test@example.com", user_id=None
+                                            user_email="test@example.com", user_id=None, budget_id="default"
                                         )
 
 

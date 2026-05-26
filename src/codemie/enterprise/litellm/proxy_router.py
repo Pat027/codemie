@@ -678,7 +678,7 @@ async def _create_body_stream_with_optional_injection(
         )
         return _stream_body_bytes(body_bytes)
 
-    budget_id = tracking_budget_id if category != BudgetCategory.PLATFORM else None
+    budget_id = tracking_budget_id or get_category_budget_id(category)
     await budget_service.track_proxy_budget_assignment_for_request(
         user_id=user.id,
         category=category,
