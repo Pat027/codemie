@@ -484,7 +484,12 @@ class AIToolsAgent(WorkspaceAwareAgent):
             if self.is_pure_chain():
                 response = self.agent_executor.invoke(inputs)
             else:
-                response = self.agent_executor.invoke(inputs, config=self._get_run_config())
+                import contextlib
+
+                run_config = self._get_run_config()
+                trace_ctx = run_config.pop("_trace_ctx", contextlib.nullcontext())
+                with trace_ctx:
+                    response = self.agent_executor.invoke(inputs, config=run_config)
 
         logger.debug(f"Invoking task. Agent={self.agent_name}. Response={self._serialize_response_for_log(response)}")
         return response
@@ -667,14 +672,19 @@ class AIToolsAgent(WorkspaceAwareAgent):
                 logger.error(f"Error during Bedrock assistant invocation: {str(e)}", exc_info=True)
             return
 
-        stream = self.agent_executor.stream(self._get_inputs(), config=self._get_run_config())
-        for chunk in stream:
-            if self.thread_generator.is_closed():
-                logger.info(f"Stopping agent {self.agent_name}, user is disconnected")
-                break
-            if not chunk:
-                continue
-            AIToolsAgent.process_chunk(chunk, chunks_collector)
+        import contextlib
+
+        run_config = self._get_run_config()
+        trace_ctx = run_config.pop("_trace_ctx", contextlib.nullcontext())
+        with trace_ctx:
+            stream = self.agent_executor.stream(self._get_inputs(), config=run_config)
+            for chunk in stream:
+                if self.thread_generator.is_closed():
+                    logger.info(f"Stopping agent {self.agent_name}, user is disconnected")
+                    break
+                if not chunk:
+                    continue
+                AIToolsAgent.process_chunk(chunk, chunks_collector)
 
     @staticmethod
     def process_chunk(chunk, chunks_collector: List[str]):

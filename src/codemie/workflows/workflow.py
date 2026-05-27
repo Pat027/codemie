@@ -40,11 +40,7 @@ from codemie.chains.base import (
     Thought,
 )
 from codemie.configs import logger, config
-from codemie.enterprise.langfuse import (
-    clear_workflow_trace_context,
-    create_workflow_trace_context,
-    get_langfuse_callback_handler,
-)
+from codemie.enterprise.observability import get_observability_provider
 from codemie.core.exceptions import InterruptedException
 from codemie.core.otel_tracing import get_otel_context_for_thread, propagated_span, record_exception_on_span
 from codemie.core.thought_queue import ThoughtQueue
@@ -865,7 +861,7 @@ class WorkflowExecutor:
                 if self.delete_on_completion:
                     self._auto_delete_execution()
                 # Clear trace context to prevent memory leaks
-                clear_workflow_trace_context(self.execution_id)
+                get_observability_provider().clear_workflow_trace_context(self.execution_id)
                 VirtualAssistantService.delete_by_execution_id(self.execution_id)
 
     def _start_thought_consumer_if_enabled(self, enable_verbose_consumer: bool):
@@ -885,11 +881,17 @@ class WorkflowExecutor:
             callbacks=[],
         )
 
-        if langfuse_handler := get_langfuse_callback_handler():
-            graph_config["callbacks"].append(langfuse_handler)
+        provider = get_observability_provider()
 
+        if handler := provider.get_callback_handler():
+            if isinstance(handler, list):
+                graph_config["callbacks"].extend(handler)
+            else:
+                graph_config["callbacks"].append(handler)
+
+        if provider.is_enabled():
             # Create trace context for workflow trace unification
-            trace_context = create_workflow_trace_context(
+            trace_context = provider.create_workflow_trace_context(
                 execution_id=self.execution_id,
                 workflow_id=self.workflow_config.id,
                 workflow_name=self.workflow_config.name,
@@ -898,8 +900,8 @@ class WorkflowExecutor:
                 tags=self.tags,
             )
 
-            # Add metadata from trace context
-            if trace_context and trace_context.metadata:
+            # Add metadata from trace context (Langfuse-specific keys; Phoenix uses OTEL attributes)
+            if trace_context and getattr(trace_context, "metadata", None):
                 graph_config["run_name"] = trace_context.metadata.get("run_name")
                 if "metadata" not in graph_config:
                     graph_config["metadata"] = {}

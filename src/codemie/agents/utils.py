@@ -28,15 +28,11 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.tools import ToolException
 
 from codemie.clients.elasticsearch import ElasticSearchClient
-from codemie.configs import logger, config
+from codemie.configs import logger
 from codemie.core.constants import METADATA_CHUNK_NUM, METADATA_FILE_NAME, METADATA_FILE_PATH, METADATA_SOURCE
 from codemie.core.errors import LiteLLMErrorClassifier
-from codemie.enterprise.langfuse import (
-    get_langfuse_callback_handler,
-    get_langfuse_client_or_none,
-    is_langfuse_enabled,
-    build_agent_metadata_with_workflow_context,
-)
+from codemie.enterprise.langfuse import get_langfuse_client_or_none
+from codemie.enterprise.observability import get_observability_provider
 from codemie.core.dependecies import get_indexed_repo
 from codemie.core.models import CodeFields, AssistantChatRequest
 
@@ -330,29 +326,32 @@ def get_run_config(
 ) -> Dict[str, Any]:
     """
     Creates a run configuration based on the request, model, and agent name.
-    Extracts langfuse_tags from request metadata if available and sets up Langfuse configuration.
+    Extracts tags from request metadata if available and sets up observability configuration.
 
     The function supports disabling traces on a per-request basis by setting
-    langfuse_traces_enabled="false" in request metadata, which overrides the global
-    config.LANGFUSE_TRACES setting.
+    observability_traces_enabled (or langfuse_traces_enabled for Langfuse) in request metadata,
+    which overrides the global provider enable setting.
 
     Args:
-        request: The AssistantChatRequest, which may contain metadata with langfuse_tags
-                and langfuse_traces_enabled.
+        request: The AssistantChatRequest, which may contain metadata with tags
+                and observability_traces_enabled.
         llm_model: The name of the LLM model being used.
         agent_name: The name of the agent being run.
-        conversation_id: Optional conversation ID for Langfuse session tracking.
-        username: Optional username for Langfuse user tracking.
-        additional_tags: Optional list of additional tags to add to langfuse_tags.
+        conversation_id: Optional conversation ID for session tracking.
+        username: Optional username for user tracking.
+        additional_tags: Optional list of additional tags.
         assistant_version: Optional assistant version number to include in tags.
-        trace_context: Optional TraceContext for workflow trace unification. When provided,
+        trace_context: Optional trace context for workflow trace unification. When provided,
                       agent traces are nested under the workflow trace.
 
     Returns:
         A dictionary with run configuration parameters.
     """
+    provider = get_observability_provider()
+    request_metadata = request.metadata if (request and request.metadata) else None
+
     # If tracing is disabled globally or overridden by request, return empty config
-    if not _should_enable_langfuse_tracing(request):
+    if not provider.should_trace_request(request_metadata):
         return {}
 
     # If no conversation_id provided (needed for session tracking), return empty config
@@ -360,68 +359,56 @@ def get_run_config(
         return {}
 
     # Collect all tags from different sources
-    langfuse_tags = _collect_langfuse_tags(llm_model, agent_name, additional_tags, request, assistant_version)
+    tags = _collect_trace_tags(llm_model, agent_name, additional_tags, request, assistant_version)
 
-    # Get LangFuse callback handler from centralized function
-    langfuse_callback_handler = get_langfuse_callback_handler()
-    if not langfuse_callback_handler:
+    # Get callback handler(s) — None for auto-instrumentation providers (e.g., Phoenix uses OTEL)
+    # Provider may return a single handler or a list of handlers.
+    handler = provider.get_callback_handler()
+    callbacks: list[Any] = []
+    if isinstance(handler, list):
+        callbacks.extend(handler)
+    elif handler is not None:
+        callbacks.append(handler)
+
+    if callbacks:
+        callbacks.append(error_output_callback)  # LiteLLM error tracking (supplements callbacks)
+    elif not provider.is_enabled():
+        # No callbacks and provider disabled — nothing to trace
         return {}
 
-    # Build metadata using centralized builder (handles workflow context)
-    metadata = build_agent_metadata_with_workflow_context(
+    # Build metadata (provider-specific keys for session/user/tag attribution)
+    metadata = provider.build_agent_metadata(
         agent_name=agent_name,
         conversation_id=conversation_id,
         llm_model=llm_model,
         username=username,
-        tags=langfuse_tags,
+        tags=tags,
         trace_context=trace_context,
     )
 
     # Log trace type
-    if trace_context and hasattr(trace_context, 'workflow_id'):
+    if trace_context and hasattr(trace_context, "workflow_id"):
         logger.info(f"NESTED TRACE: agent='{agent_name}', execution_id={trace_context.execution_id}")
     else:
         logger.debug(f"STANDALONE TRACE: agent='{agent_name}'")
 
-    # Return the complete run config
+    # Obtain a provider-agnostic trace context manager (sets trace name, user, session, tags)
+    trace_ctx = provider.get_trace_context(
+        trace_name=agent_name,
+        user_id=username,
+        session_id=conversation_id,
+        tags=tags,
+    )
+
     return {
-        "callbacks": [langfuse_callback_handler, error_output_callback],
+        "callbacks": callbacks,
         "run_name": agent_name,
         "metadata": metadata,
+        "_trace_ctx": trace_ctx,
     }
 
 
-def _should_enable_langfuse_tracing(request: Optional[AssistantChatRequest]) -> bool:
-    """
-    Determine if Langfuse tracing should be enabled based on enterprise availability, config, and request metadata.
-    Priority: HAS_LANGFUSE > config.LANGFUSE_TRACES > request.metadata.langfuse_traces_enabled
-    """
-    # Check if LangFuse is available and enabled (handles HAS_LANGFUSE + config.LANGFUSE_TRACES)
-    if not is_langfuse_enabled():
-        return False
-
-    # Extract and evaluate request-specific override
-    trace_setting = request.metadata.get("langfuse_traces_enabled") if (request and request.metadata) else None
-
-    if trace_setting is not None:
-        logger.info(
-            f"Request metadata contains 'langfuse_traces_enabled': {trace_setting}. "
-            f"Conversation ID: {request.conversation_id if request else 'N/A'}"
-        )
-
-        if isinstance(trace_setting, str):
-            trace_setting = trace_setting.strip().lower() == "true"
-        elif not isinstance(trace_setting, bool):
-            logger.warning("Unsupported type for 'langfuse_traces_enabled'; defaulting to False.")
-            trace_setting = False
-
-        return trace_setting
-
-    # Default to global tracing setting
-    return config.LANGFUSE_TRACES
-
-
-def _collect_langfuse_tags(
+def _collect_trace_tags(
     llm_model: str,
     agent_name: str,
     additional_tags: Optional[List[str]],
@@ -429,7 +416,7 @@ def _collect_langfuse_tags(
     assistant_version: Optional[int] = None,
 ) -> List[str]:
     """
-    Collect Langfuse tags from all available sources: default, additional_tags, request metadata, and assistant version.
+    Collect trace tags from all available sources: default, additional_tags, request metadata, and assistant version.
     Default tags are prefixed with their type for better categorization.
     Additional and user-provided tags also should be having prefix with tag's name
     """

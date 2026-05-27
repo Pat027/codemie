@@ -20,6 +20,7 @@ from .loader import (
     HAS_IDP,
     HAS_LANGFUSE,
     HAS_LITELLM,
+    HAS_LLM_OBSERVABILITY,
     HAS_MCP_AUTH,
     HAS_PLUGIN,
     LangFuseConfig,
@@ -44,6 +45,7 @@ from .loader import (
     has_idp,
     has_langfuse,
     has_litellm,
+    has_llm_observability,
     has_mcp_auth,
     has_plugin,
 )
@@ -115,8 +117,9 @@ from .idp import (
 __all__ = [
     # Constants
     "HAS_IDP",
-    "HAS_LANGFUSE",
+    "HAS_LANGFUSE",  # kept for backward compatibility; prefer HAS_LLM_OBSERVABILITY
     "HAS_LITELLM",
+    "HAS_LLM_OBSERVABILITY",
     "HAS_MCP_AUTH",
     "HAS_PLUGIN",
     # Classes and Types
@@ -140,8 +143,9 @@ __all__ = [
     "build_agent_metadata",
     "build_workflow_metadata",
     "enterprise_mcp_auth_alembic_locations",
-    "has_langfuse",
+    "has_langfuse",  # kept for backward compatibility; prefer has_llm_observability
     "has_litellm",
+    "has_llm_observability",
     "has_plugin",
     # LangFuse functions
     "build_agent_metadata_with_workflow_context",

@@ -463,6 +463,16 @@ class Config(BaseSettings):
         "opentelemetry.instrumentation.httpx",
     ]
 
+    # Observability provider selection: "langfuse" | "phoenix" | "none"
+    # Backward-compat: if unset/none AND LANGFUSE_TRACES=True, Langfuse is used automatically.
+    OBSERVABILITY_PROVIDER: str = "none"
+
+    # Phoenix (Arize) settings — used when OBSERVABILITY_PROVIDER=phoenix
+    PHOENIX_HOST: str = "http://localhost:6006"
+    PHOENIX_PROJECT_NAME: str = "codemie"
+    PHOENIX_API_KEY: str | None = None
+    PHOENIX_BATCH_SPAN_PROCESSOR: bool = True
+
     # ===========================================
     # OpenTelemetry Configuration
     # ===========================================

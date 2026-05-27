@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from opentelemetry import context
 
 from codemie.agents.assistant_agent import AIToolsAgent
 from codemie.agents.langgraph_agent import LangGraphAgent
@@ -74,7 +75,7 @@ def _langgraph_agent() -> LangGraphAgent:
     agent.request = SimpleNamespace(file_names=[], text="run", history=[])
     agent.thread_generator = MagicMock()
     agent.thread_context = {}
-    agent._otel_context = None
+    agent._otel_context = context.get_current()
     agent.tool_error_callback = MagicMock()
     agent.tool_error_callback.has_errors.return_value = False
     agent._get_inputs = MagicMock(return_value={})
