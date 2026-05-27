@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -89,6 +90,27 @@ class OIDCTokenExchangeService:
         self._cache: TTLCache[str, str] = TTLCache(maxsize=config.TOKEN_CACHE_MAX_SIZE, ttl=config.TOKEN_CACHE_TTL)
         logger.info(f"OIDCTokenExchangeService initialized with cache_ttl={config.TOKEN_CACHE_TTL}s")
 
+    @staticmethod
+    def _build_auth(base_data: dict) -> tuple[dict, dict]:
+        """Return (data, headers) for the configured client auth method.
+
+        - keycloak (client_secret_post): credentials in request body, no extra headers.
+        - okta (client_secret_basic): credentials in Authorization header, removed from body.
+        """
+        if config.TOKEN_EXCHANGE_SERVICE == "okta":
+            credentials = base64.b64encode(
+                f"{config.TOKEN_EXCHANGE_CLIENT_ID}:{config.TOKEN_EXCHANGE_CLIENT_SECRET}".encode()
+            ).decode()
+            data = {k: v for k, v in base_data.items() if k not in ("client_id", "client_secret")}
+            headers = {
+                "Authorization": f"Basic {credentials}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            }
+            return data, headers
+
+        # client_secret_post — credentials stay in the body (Keycloak default)
+        return base_data, {}
+
     async def _aexchange_token(self, subject_token: str, audience: str) -> str:
         """
         POST to Keycloak token endpoint and return the exchanged access_token.
@@ -107,7 +129,7 @@ class OIDCTokenExchangeService:
         current_user = get_current_user()
         user_id = current_user.id if current_user else "unknown"
 
-        data = {
+        base_data = {
             "grant_type": config.TOKEN_EXCHANGE_GRANT_TYPE,
             "client_id": config.TOKEN_EXCHANGE_CLIENT_ID,
             "client_secret": config.TOKEN_EXCHANGE_CLIENT_SECRET,
@@ -115,6 +137,7 @@ class OIDCTokenExchangeService:
             "subject_token_type": config.TOKEN_EXCHANGE_SUBJECT_TOKEN_TYPE,
             "audience": audience,
         }
+        data, headers = self._build_auth(base_data)
 
         try:
             async with httpx.AsyncClient(timeout=config.TOKEN_EXCHANGE_TIMEOUT) as client:
@@ -122,6 +145,7 @@ class OIDCTokenExchangeService:
                 response = await client.post(
                     config.TOKEN_EXCHANGE_URL,
                     data=data,
+                    headers=headers,
                 )
                 response.raise_for_status()
 
@@ -130,7 +154,7 @@ class OIDCTokenExchangeService:
                 if "access_token" not in response_data:
                     raise TokenProviderException(
                         message="OIDC token exchange response missing access_token field",
-                        details="Expected 'access_token' in Keycloak token exchange response JSON",
+                        details="Expected 'access_token' in token exchange response JSON",
                     )
 
                 logger.debug(f"OIDC token exchange succeeded for user_id={user_id} audience={audience}")
@@ -163,7 +187,7 @@ class OIDCTokenExchangeService:
         current_user = get_current_user()
         user_id = current_user.id if current_user else "unknown"
 
-        data = {
+        base_data = {
             "grant_type": config.TOKEN_EXCHANGE_GRANT_TYPE,
             "client_id": config.TOKEN_EXCHANGE_CLIENT_ID,
             "client_secret": config.TOKEN_EXCHANGE_CLIENT_SECRET,
@@ -171,18 +195,19 @@ class OIDCTokenExchangeService:
             "subject_token_type": config.TOKEN_EXCHANGE_SUBJECT_TOKEN_TYPE,
             "audience": audience,
         }
+        data, headers = self._build_auth(base_data)
 
         try:
             async with httpx.AsyncClient(timeout=config.TOKEN_EXCHANGE_TIMEOUT) as client:
                 logger.debug(f"Performing OIDC token exchange for user_id={user_id} audience={audience}")
-                response = await client.post(config.TOKEN_EXCHANGE_URL, data=data)
+                response = await client.post(config.TOKEN_EXCHANGE_URL, data=data, headers=headers)
                 response.raise_for_status()
                 response_data = response.json()
 
                 if "access_token" not in response_data:
                     raise TokenProviderException(
                         message="OIDC token exchange response missing access_token field",
-                        details="Expected 'access_token' in Keycloak token exchange response JSON",
+                        details="Expected 'access_token' in token exchange response JSON",
                     )
 
                 logger.debug(f"OIDC token exchange succeeded for user_id={user_id} audience={audience}")
@@ -232,59 +257,53 @@ class OIDCTokenExchangeService:
         else:
             return asyncio.run(coro)
 
-    def get_exchanged_token(self, audience: str) -> str | None:
-        from codemie.service.security.token_exchange_service import token_exchange_service
-
-        current_user = get_current_user()
-        if not current_user:
-            logger.debug("No current user in context for OIDC token exchange")
+    @staticmethod
+    def _build_refresh_metadata_kwargs(response_data: dict) -> dict | None:
+        refresh_token = response_data.get("refresh_token")
+        if not refresh_token:
             return None
+        return {
+            "token_endpoint": config.TOKEN_EXCHANGE_URL,
+            "client_id": config.TOKEN_EXCHANGE_CLIENT_ID,
+            "client_auth_method": (
+                "client_secret_basic" if config.TOKEN_EXCHANGE_SERVICE == "okta" else "client_secret_post"
+            ),
+            "client_secret": config.TOKEN_EXCHANGE_CLIENT_SECRET or None,
+            "scopes": response_data.get("scope", "").split() or [],
+        }
 
-        user_id = current_user.id
+    def _get_via_tms(self, user_id: str, audience: str, token_exchange_service: Any) -> str | None:
         auth_config_id = f"oidc_exchange:{audience}"
 
-        if self._store is not None:
-            cached = self._store.get(user_id, auth_config_id)
-            if cached is not None:
-                logger.debug(f"OIDC exchange TMS hit for user_id={user_id} audience={audience}")
-                return cached
+        cached = self._store.get(user_id, auth_config_id)
+        if cached is not None:
+            logger.debug(f"OIDC exchange TMS hit for user_id={user_id} audience={audience}")
+            return cached
 
-            logger.debug(f"OIDC exchange TMS miss for user_id={user_id} audience={audience}")
+        logger.debug(f"OIDC exchange TMS miss for user_id={user_id} audience={audience}")
 
-            idp_token = token_exchange_service.get_token_for_current_user()
-            if not idp_token:
-                logger.debug(f"No IdP token available for OIDC exchange for user_id={user_id}")
-                return None
+        idp_token = token_exchange_service.get_token_for_current_user()
+        if not idp_token:
+            logger.debug(f"No IdP token available for OIDC exchange for user_id={user_id}")
+            return None
 
-            exchanged_token, response_data = self._run_async(self._aexchange_token_with_response(idp_token, audience))
-            masked_refresh = "***" if response_data.get("refresh_token") else "N/A"
-            masked_response = {**response_data, "access_token": "***", "refresh_token": masked_refresh}
-            logger.debug(f"OIDC exchange response: {masked_response}")
-            expires_at = self._resolve_expires_at(response_data, exchanged_token)
-            refresh_token = response_data.get("refresh_token")
-            refresh_metadata_kwargs = None
-            if refresh_token:
-                refresh_metadata_kwargs = {
-                    "token_endpoint": config.TOKEN_EXCHANGE_URL,
-                    "client_id": config.TOKEN_EXCHANGE_CLIENT_ID,
-                    "client_auth_method": "client_secret_post",
-                    "client_secret": config.TOKEN_EXCHANGE_CLIENT_SECRET or None,
-                    "scopes": response_data.get("scope", "").split() or [],
-                }
+        exchanged_token, response_data = self._run_async(self._aexchange_token_with_response(idp_token, audience))
+        masked_refresh = "***" if response_data.get("refresh_token") else "N/A"
+        masked_response = {**response_data, "access_token": "***", "refresh_token": masked_refresh}
+        logger.debug(f"OIDC exchange response: {masked_response}")
 
-            self._store.put(
-                user_id,
-                auth_config_id,
-                access_token=exchanged_token,
-                expires_at=expires_at,
-                refresh_token=refresh_token,
-                refresh_metadata_kwargs=refresh_metadata_kwargs,
-                scope=response_data.get("scope"),
-            )
+        self._store.put(
+            user_id,
+            auth_config_id,
+            access_token=exchanged_token,
+            expires_at=self._resolve_expires_at(response_data, exchanged_token),
+            refresh_token=response_data.get("refresh_token"),
+            refresh_metadata_kwargs=self._build_refresh_metadata_kwargs(response_data),
+            scope=response_data.get("scope"),
+        )
+        return exchanged_token
 
-            return exchanged_token
-
-        # Legacy path
+    def _get_via_legacy_cache(self, user_id: str, audience: str, token_exchange_service: Any) -> str | None:
         cache_key = f"oidc_exchange:{user_id}:{audience}"
 
         cached = self._cache.get(cache_key)
@@ -303,6 +322,19 @@ class OIDCTokenExchangeService:
         self._cache[cache_key] = exchanged_token
         logger.debug(f"Cached OIDC exchanged token for user_id={user_id} audience={audience}")
         return exchanged_token
+
+    def get_exchanged_token(self, audience: str) -> str | None:
+        from codemie.service.security.token_exchange_service import token_exchange_service
+
+        current_user = get_current_user()
+        if not current_user:
+            logger.debug("No current user in context for OIDC token exchange")
+            return None
+
+        user_id = current_user.id
+        if self._store is not None:
+            return self._get_via_tms(user_id, audience, token_exchange_service)
+        return self._get_via_legacy_cache(user_id, audience, token_exchange_service)
 
 
 # Module-level singleton instance

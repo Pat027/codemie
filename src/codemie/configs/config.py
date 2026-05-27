@@ -259,12 +259,15 @@ class Config(BaseSettings):
     # OIDC Token Exchange configuration (RFC 8693)
     # Used when an MCP server requires an audience-scoped token via Keycloak token exchange
     # Example: TOKEN_EXCHANGE_URL="https://access.epam.com/auth/realms/plusx/protocol/openid-connect/token"
-    TOKEN_EXCHANGE_URL: str = ""  # Keycloak token endpoint URL
+    TOKEN_EXCHANGE_URL: str = ""  # Keycloak/Okta token endpoint URL
     TOKEN_EXCHANGE_GRANT_TYPE: str = "urn:ietf:params:oauth:grant-type:token-exchange"
     TOKEN_EXCHANGE_CLIENT_ID: str = ""  # OAuth2 client ID
     TOKEN_EXCHANGE_CLIENT_SECRET: str = ""  # OAuth2 client secret
     TOKEN_EXCHANGE_SUBJECT_TOKEN_TYPE: str = "urn:ietf:params:oauth:token-type:access_token"
     TOKEN_EXCHANGE_TIMEOUT: float = 5.0
+    # keycloak: credentials in request body (client_secret_post)
+    # okta: credentials in Authorization header (client_secret_basic)
+    TOKEN_EXCHANGE_SERVICE: str = "keycloak"
 
     # External user configuration
     EXTERNAL_USER_TYPE: str = "external"
