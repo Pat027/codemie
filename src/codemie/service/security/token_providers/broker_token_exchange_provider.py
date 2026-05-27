@@ -199,13 +199,13 @@ class BrokerTokenExchangeProvider(BaseTokenProvider):
 
         except httpx.RequestError as e:
             error_msg = "Broker token exchange request failed"
-            logger.error(f"{error_msg} for user_id={user_id}: {type(e).__name__}")
-            raise TokenProviderException(message=error_msg, details=f"Network error: {type(e).__name__}") from e
+            logger.error(f"{error_msg} for user_id={user_id}: {e}")
+            raise TokenProviderException(message=error_msg, details=f"Network error: {e}") from e
 
         except Exception as e:
             error_msg = "Unexpected error during broker token exchange"
-            logger.exception(f"{error_msg} for user_id={user_id}: {type(e).__name__}")
-            raise TokenProviderException(message=error_msg, details=f"Error type: {type(e).__name__}") from e
+            logger.exception(f"{error_msg} for user_id={user_id}: {e}")
+            raise TokenProviderException(message=error_msg, details=f"Error type: {e}") from e
 
     async def _aget_token(self) -> str | None:
         """
@@ -271,8 +271,8 @@ class BrokerTokenExchangeProvider(BaseTokenProvider):
 
         except Exception as e:
             error_msg = "Failed to complete broker token exchange"
-            logger.exception(f"{error_msg} for user_id={user_id}: {type(e).__name__}")
-            raise TokenProviderException(message=error_msg, details=f"Error type: {type(e).__name__}") from e
+            logger.exception(f"{error_msg} for user_id={user_id}: {e}")
+            raise TokenProviderException(message=error_msg, details=f"Error type: {e}") from e
 
     def get_token(self) -> str | None:
         """

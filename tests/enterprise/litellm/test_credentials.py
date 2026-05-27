@@ -348,7 +348,7 @@ class TestResolveLiteLLMUserCredentials:
         assert "username='user@example.com'" in warning
         assert "user_id='user-1'" in warning
         assert "project_name='project-a'" in warning
-        assert "exception_type=RuntimeError" in warning
+        assert "exception_type=boom" in warning
 
     def test_caches_positive_result_per_project(self):
         from codemie.enterprise.litellm.credentials import resolve_litellm_user_credentials

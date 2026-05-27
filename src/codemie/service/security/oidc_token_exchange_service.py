@@ -148,16 +148,16 @@ class OIDCTokenExchangeService:
 
         except httpx.RequestError as e:
             error_msg = "OIDC token exchange request failed"
-            logger.error(f"{error_msg} for user_id={user_id} audience={audience}: {type(e).__name__}")
-            raise TokenProviderException(message=error_msg, details=f"Network error: {type(e).__name__}") from e
+            logger.error(f"{error_msg} for user_id={user_id} audience={audience}: {e}")
+            raise TokenProviderException(message=error_msg, details=f"Network error: {e}") from e
 
         except TokenProviderException:
             raise
 
         except Exception as e:
             error_msg = "Unexpected error during OIDC token exchange"
-            logger.exception(f"{error_msg} for user_id={user_id} audience={audience}: {type(e).__name__}")
-            raise TokenProviderException(message=error_msg, details=f"Error type: {type(e).__name__}") from e
+            logger.exception(f"{error_msg} for user_id={user_id} audience={audience}: {e}")
+            raise TokenProviderException(message=error_msg, details=f"Error type: {e}") from e
 
     async def _aexchange_token_with_response(self, subject_token: str, audience: str) -> tuple[str, dict]:
         current_user = get_current_user()
@@ -200,16 +200,16 @@ class OIDCTokenExchangeService:
 
         except httpx.RequestError as e:
             error_msg = "OIDC token exchange request failed"
-            logger.error(f"{error_msg} for user_id={user_id} audience={audience}: {type(e).__name__}")
-            raise TokenProviderException(message=error_msg, details=f"Network error: {type(e).__name__}") from e
+            logger.error(f"{error_msg} for user_id={user_id} audience={audience}: {e}")
+            raise TokenProviderException(message=error_msg, details=f"Network error: {e}") from e
 
         except TokenProviderException:
             raise
 
         except Exception as e:
             error_msg = "Unexpected error during OIDC token exchange"
-            logger.exception(f"{error_msg} for user_id={user_id} audience={audience}: {type(e).__name__}")
-            raise TokenProviderException(message=error_msg, details=f"Error type: {type(e).__name__}") from e
+            logger.exception(f"{error_msg} for user_id={user_id} audience={audience}: {e}")
+            raise TokenProviderException(message=error_msg, details=f"Error type: {e}") from e
 
     @staticmethod
     def _resolve_expires_at(response_data: dict, access_token: str) -> datetime | None:

@@ -91,7 +91,7 @@ def resolve_litellm_user_credentials(
         logger.warning(
             f"credential_event=user_litellm_credentials_resolution_failed "
             f"username={username!r} user_id={user_id!r} project_name={project_name!r} "
-            f"exception_type={type(exc).__name__}"
+            f"exception_type={exc}"
         )
         resolved = None
 
