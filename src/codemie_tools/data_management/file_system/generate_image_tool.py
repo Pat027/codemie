@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import base64
+import io
 import uuid
 from typing import Any, Optional, Protocol, Type
 
@@ -40,13 +41,29 @@ def _resolve_image_url(url: str) -> tuple[str | None, str | None]:
 
 
 class ImageGenerator(Protocol):
-    def generate(self, prompt: str) -> tuple[str | None, str | None]:
+    def generate(
+        self,
+        prompt: str,
+        size: str | None = None,
+        output_format: str | None = None,
+    ) -> tuple[str | None, str | None]:
         """Generate an image from a prompt. Returns (url, b64_data)."""
+        ...
+
+    def edit(
+        self,
+        prompt: str,
+        image: bytes,
+        mask: bytes | None = None,
+        size: str | None = None,
+        output_format: str | None = None,
+    ) -> tuple[str | None, str | None]:
+        """Edit or inpaint an image. Returns (url, b64_data)."""
         ...
 
 
 class LiteLLMImageGenerator:
-    """Calls LiteLLM proxy via AzureOpenAI → /images/generations."""
+    """Calls an AzureOpenAI-compatible image endpoint for generations and edits."""
 
     def __init__(self, config: LiteLLMImageConfig) -> None:
         self._model_id = config.model_id
@@ -57,8 +74,45 @@ class LiteLLMImageGenerator:
             timeout=config.timeout,
         )
 
-    def generate(self, prompt: str) -> tuple[str | None, str | None]:
-        item = self._client.images.generate(model=self._model_id, prompt=prompt, n=1).data[0]
+    def generate(
+        self,
+        prompt: str,
+        size: str | None = None,
+        output_format: str | None = None,
+    ) -> tuple[str | None, str | None]:
+        request: dict[str, Any] = {"model": self._model_id, "prompt": prompt, "n": 1}
+        if size:
+            request["size"] = size
+        if output_format:
+            request["output_format"] = output_format
+
+        item = self._client.images.generate(**request).data[0]
+        if item.url:
+            return _resolve_image_url(item.url)
+        return None, item.b64_json
+
+    def edit(
+        self,
+        prompt: str,
+        image: bytes,
+        mask: bytes | None = None,
+        size: str | None = None,
+        output_format: str | None = None,
+    ) -> tuple[str | None, str | None]:
+        image_file = ("image.png", io.BytesIO(image), "image/png")
+        request: dict[str, Any] = {
+            "model": self._model_id,
+            "image": image_file,
+            "prompt": prompt,
+        }
+        if mask is not None:
+            request["mask"] = ("mask.png", io.BytesIO(mask), "image/png")
+        if size:
+            request["size"] = size
+        if output_format:
+            request["output_format"] = output_format
+
+        item = self._client.images.edit(**request).data[0]
         if item.url:
             return _resolve_image_url(item.url)
         return None, item.b64_json
@@ -70,7 +124,12 @@ class ChatModelImageGenerator:
     def __init__(self, model: Any) -> None:
         self._model = model
 
-    def generate(self, prompt: str) -> tuple[str | None, str | None]:
+    def generate(
+        self,
+        prompt: str,
+        size: str | None = None,
+        output_format: str | None = None,
+    ) -> tuple[str | None, str | None]:
         response: AIMessage = self._model.invoke([HumanMessage(content=prompt)])
         if isinstance(response.content, list):
             for part in response.content:
@@ -81,6 +140,16 @@ class ChatModelImageGenerator:
                         return None, b64
         return None, None
 
+    def edit(
+        self,
+        prompt: str,
+        image: bytes,
+        mask: bytes | None = None,
+        size: str | None = None,
+        output_format: str | None = None,
+    ) -> tuple[str | None, str | None]:
+        raise NotImplementedError("This image generator does not support inpainting or image edits.")
+
 
 class GenerateImagesToolInput(BaseModel):
     image_description: str = Field(
@@ -90,8 +159,8 @@ class GenerateImagesToolInput(BaseModel):
 
 class GenerateImageTool(CodeMieTool):
     name: str = GENERATE_IMAGE_TOOL.name
-    description: str = GENERATE_IMAGE_TOOL.description
-    args_schema: Type[BaseModel] = GenerateImagesToolInput
+    description: str = GENERATE_IMAGE_TOOL.description or ""
+    args_schema: Any = GenerateImagesToolInput
     image_generator: Optional[Any] = Field(exclude=True, default=None)
     file_repository: Optional[Any] = Field(exclude=True, default=None)
     user_id: str = ""
@@ -105,7 +174,11 @@ class GenerateImageTool(CodeMieTool):
     def _resolve_output(self, url: str | None, b64_data: str | None) -> str:
         if not url and not b64_data:
             raise ValueError("Image generation returned no image data.")
-        return self._store_b64_image(b64_data) if b64_data else url
+        if b64_data:
+            return self._store_b64_image(b64_data)
+        if url is None:
+            raise ValueError("Image generation returned no image data.")
+        return url
 
     def _store_b64_image(self, b64_data: str) -> str:
         if not self.file_repository:

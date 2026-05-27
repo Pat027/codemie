@@ -56,6 +56,16 @@ def get_llm_models(user: User = Depends(authenticate), include_all: bool = False
     return llm_service.get_allowed_chat_models(user, include_all=include_all)
 
 
+@router.get(
+    "/llm_models/image_generation",
+    response_model=List[LLMModel],
+    response_model_exclude_none=True,
+)
+def get_image_generation_models(user: User = Depends(authenticate), include_all: bool = False) -> List[LLMModel]:
+    """Return the list of image generation models for the authenticated user."""
+    return llm_service.get_allowed_image_generation_models(user, include_all=include_all)
+
+
 # Categories resource
 @router.get(
     "/categories",

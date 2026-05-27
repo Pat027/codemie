@@ -14,6 +14,7 @@
 
 """Unit tests for /v1/projects visibility, creation, assignment, delete, and update endpoints."""
 
+from contextlib import asynccontextmanager
 from datetime import datetime, UTC
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -46,6 +47,11 @@ from codemie.rest_api.routers.projects import (
 from codemie.configs import config
 from codemie.rest_api.security.user import User
 from codemie.service.budget.budget_enums import BudgetCategory
+
+
+@asynccontextmanager
+async def _mock_session_ctx(session):
+    yield session
 
 
 @pytest.fixture
@@ -348,11 +354,13 @@ class TestProjectsVisibilityEndpoints:
     @patch("codemie.rest_api.routers.projects.budget_repository.get_all_keyed_by_id", new_callable=AsyncMock)
     @patch("codemie.rest_api.routers.projects._spend_repo.get_latest_budget_rows_for_project", new_callable=AsyncMock)
     @patch("codemie.rest_api.routers.projects._spend_repo.get_latest_key_spending_for_project", new_callable=AsyncMock)
+    @patch("codemie.rest_api.routers.projects.get_async_session")
     @patch("codemie.rest_api.routers.projects._get_project_detail_sync")
     @pytest.mark.anyio
     async def test_get_project_detail_fetches_spending_for_project_admin(
         self,
         mock_get_project_detail_sync,
+        mock_get_async_session,
         mock_get_latest_key_spending,
         mock_get_latest_budget_rows,
         mock_get_all_keyed_by_id,
@@ -373,6 +381,7 @@ class TestProjectsVisibilityEndpoints:
         mock_get_latest_key_spending.return_value = None
         mock_get_latest_budget_rows.return_value = []
         mock_get_all_keyed_by_id.return_value = {}
+        mock_get_async_session.return_value = _mock_session_ctx(AsyncMock())
         project_admin_user = User(
             id="user-1",
             username="user1",

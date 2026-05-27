@@ -88,6 +88,7 @@ class LLMModel(BaseModel):
     multimodal: Optional[bool] = None
     react_agent: Optional[bool] = None
     enabled: bool
+    supports_image_generation: bool = False
     provider: Optional[LLMProvider] = None
     default: Optional[bool] = False  # Backward compatibility for "default" field
     default_for_categories: list[ModelCategory] = Field(default_factory=list)

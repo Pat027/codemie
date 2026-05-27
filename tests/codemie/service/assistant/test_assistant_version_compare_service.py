@@ -22,6 +22,7 @@ from deepdiff import DeepDiff
 
 from codemie.core.models import CreatedByUser
 from codemie.rest_api.models.assistant import (
+    AssistantRequest,
     AssistantConfiguration,
     AssistantVersionCompareResponse,
     Context,
@@ -41,6 +42,8 @@ def mock_config_v1():
     config.description = "Original Description"
     config.system_prompt = "Original Prompt"
     config.llm_model_type = "gpt-3.5-turbo"
+    config.enable_image_generation = False
+    config.image_generation_model = None
     config.temperature = 0.7
     config.top_p = 0.9
     config.context = []
@@ -61,6 +64,8 @@ def mock_config_v1():
             'description': 'Original Description',
             'system_prompt': 'Original Prompt',
             'llm_model_type': 'gpt-3.5-turbo',
+            'enable_image_generation': False,
+            'image_generation_model': None,
             'temperature': 0.7,
             'top_p': 0.9,
             'context': [],
@@ -88,6 +93,8 @@ def mock_config_v2():
     config.description = "Updated Description"
     config.system_prompt = "Updated Prompt"
     config.llm_model_type = "gpt-4"
+    config.enable_image_generation = True
+    config.image_generation_model = "gpt-image-1"
     config.temperature = 0.8
     config.top_p = 0.95
     config.context = [Context(name="test-repo", context_type=ContextType.CODE)]
@@ -108,6 +115,8 @@ def mock_config_v2():
             'description': 'Updated Description',
             'system_prompt': 'Updated Prompt',
             'llm_model_type': 'gpt-4',
+            'enable_image_generation': True,
+            'image_generation_model': 'gpt-image-1',
             'temperature': 0.8,
             'top_p': 0.95,
             'context': [Context(name="test-repo", context_type=ContextType.CODE)],
@@ -193,6 +202,8 @@ class TestPrepareForComparison:
             'description',
             'system_prompt',
             'llm_model_type',
+            'enable_image_generation',
+            'image_generation_model',
             'temperature',
             'top_p',
             'context',
@@ -211,6 +222,28 @@ class TestPrepareForComparison:
 
         # Verify
         assert isinstance(result, dict)
+
+    @patch('codemie.service.assistant.assistant_version_compare_service.AssistantConfiguration')
+    def test_has_configuration_changes_detects_enable_image_generation(self, mock_config_class, mock_config_v1):
+        mock_config_class.get_current_version.return_value = mock_config_v1
+
+        request = AssistantRequest(
+            name="Assistant",
+            description=mock_config_v1.description,
+            system_prompt=mock_config_v1.system_prompt,
+            llm_model_type=mock_config_v1.llm_model_type,
+            enable_image_generation=True,
+            image_generation_model=mock_config_v1.image_generation_model,
+            temperature=mock_config_v1.temperature,
+            top_p=mock_config_v1.top_p,
+            context=[],
+            toolkits=[],
+            mcp_servers=[],
+            assistant_ids=[],
+            conversation_starters=[],
+        )
+
+        assert AssistantVersionCompareService.has_configuration_changes("assistant-123", request) is True
 
 
 class TestGenerateSummary:

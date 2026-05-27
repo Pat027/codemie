@@ -469,6 +469,20 @@ class AssistantChatRequest(ConfiguredModel):
     content_raw: Optional[str] = Field(default="")
     file_names: Optional[list[str]] = Field(default_factory=list)
     llm_model: Optional[str] = None
+    enable_image_generation: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Enable image generation for this request. "
+            "If omitted, conversation-level or assistant-level configuration is used."
+        ),
+    )
+    image_generation_model: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional image generation model override for this request. "
+            "If omitted, conversation-level, assistant-level, or global configuration is used."
+        ),
+    )
     history: list[ChatMessage] | str = Field(default_factory=list)
     history_index: Optional[int] = Field(default=None)
     mcp_server_single_usage: Optional[bool] = None  # Use conversation default if not specified
@@ -577,6 +591,8 @@ class UpdateConversationRequest(ConfiguredModel):
     name: Optional[str] = None
     active_assistant_id: Optional[str] = None
     llm_model: Optional[str] = None
+    enable_image_generation: Optional[bool] = None
+    image_generation_model: Optional[str] = None
 
 
 class UpdateAiMessageRequest(ConfiguredModel):

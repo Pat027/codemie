@@ -51,6 +51,8 @@ def mock_assistant():
     assistant.system_prompt = "Test Prompt"
     assistant.version_count = 1
     assistant.llm_model_type = "gpt-4"
+    assistant.enable_image_generation = False
+    assistant.image_generation_model = None
     assistant.temperature = 0.7
     assistant.top_p = 0.9
     assistant.context = []
@@ -70,6 +72,8 @@ def mock_assistant():
         "system_prompt": assistant.system_prompt,
         "version_count": assistant.version_count,
         "llm_model_type": assistant.llm_model_type,
+        "enable_image_generation": assistant.enable_image_generation,
+        "image_generation_model": assistant.image_generation_model,
         "temperature": assistant.temperature,
         "top_p": assistant.top_p,
         "context": assistant.context,
@@ -93,6 +97,8 @@ def mock_assistant_request():
         description="Updated Description",
         system_prompt="Updated Prompt",
         llm_model_type="gpt-4",
+        enable_image_generation=True,
+        image_generation_model="gpt-image-1",
         temperature=0.8,
         top_p=0.95,
         context=[],
@@ -113,6 +119,8 @@ def mock_config():
     config.description = "Test Description"
     config.system_prompt = "Test Prompt"
     config.llm_model_type = "gpt-4"
+    config.enable_image_generation = True
+    config.image_generation_model = "gpt-image-1"
     config.temperature = 0.7
     config.top_p = 0.9
     config.context = []
@@ -153,6 +161,8 @@ class TestCreateInitialVersion:
         assert call_kwargs['version_number'] == 1
         assert call_kwargs['description'] == mock_assistant_request.description
         assert call_kwargs['system_prompt'] == mock_assistant_request.system_prompt
+        assert call_kwargs['enable_image_generation'] is True
+        assert call_kwargs['image_generation_model'] == "gpt-image-1"
         assert call_kwargs['change_notes'] == "Initial version"
         mock_config_instance.save.assert_called_once()
 
@@ -181,6 +191,7 @@ class TestCreateInitialVersion:
         call_kwargs = mock_config_class.call_args[1]
         assert call_kwargs['description'] == ""
         assert call_kwargs['system_prompt'] == "Test Prompt"
+        assert call_kwargs['enable_image_generation'] is False
 
     @patch('codemie.service.assistant.assistant_version_service.AssistantConfiguration')
     def test_create_initial_version_with_complex_fields(self, mock_config_class, mock_assistant, mock_user):
@@ -530,6 +541,7 @@ class TestRollbackToVersion:
         assert call_kwargs['description'] == "Old Description"
         assert call_kwargs['system_prompt'] == "Old Prompt"
         assert call_kwargs['llm_model_type'] == "gpt-3.5-turbo"
+        assert call_kwargs['enable_image_generation'] == target_config.enable_image_generation
         assert call_kwargs['temperature'] == 0.5
         assert call_kwargs['top_p'] == 0.8
         assert len(call_kwargs['context']) == 1

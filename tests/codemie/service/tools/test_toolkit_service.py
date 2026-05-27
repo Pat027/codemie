@@ -27,6 +27,7 @@ from codemie.rest_api.models.assistant import Assistant, Context, ContextType, T
 from codemie.rest_api.models.conversation import Conversation
 from codemie.rest_api.models.index import CodeIndexInfo, KnowledgeBaseIndexInfo, ProviderIndexInfo
 from codemie.rest_api.security.user import User
+from codemie_tools.data_management.workspace.tools_vars import GENERATE_WORKSPACE_IMAGE_TOOL_V2
 from codemie.service.tools.toolkit_service import ToolkitService
 
 
@@ -43,8 +44,10 @@ class TestToolkitService:
         assistant.toolkits = []
         assistant.context = []
         assistant.assistant_ids = []
+        assistant.skill_ids = []
         assistant.mcp_servers = []
         assistant.llm_model_type = "gpt-4"
+        assistant.enable_image_generation = False
         assistant.created_by = None
         return assistant
 
@@ -71,6 +74,8 @@ class TestToolkitService:
         request.mcp_server_single_usage = False
         request.enable_web_search = None
         request.enable_code_interpreter = None
+        request.enable_image_generation = None
+        request.image_generation_model = None
         return request
 
     @pytest.fixture
@@ -1209,6 +1214,29 @@ class TestToolkitService:
         mock_lookup_service.build_search_query_with_history.assert_called_once_with(mock_request)
         mock_lookup_service.get_tools_by_query.assert_called_once_with(query="test query")
 
+    @patch("codemie.service.tools.toolkit_service.ToolkitSettingService.get_workspace_image_generation_tool")
+    def test_get_tools_adds_workspace_image_tool_when_enabled(
+        self, mock_get_workspace_image_tool, mock_assistant, mock_request, mock_user
+    ):
+        mock_request.enable_image_generation = True
+        mock_tool = Mock(spec=BaseTool)
+        mock_tool.name = GENERATE_WORKSPACE_IMAGE_TOOL_V2.name
+        mock_get_workspace_image_tool.return_value = mock_tool
+
+        with patch.object(ToolkitService, 'get_core_tools', return_value=[]):
+            with patch.object(ToolkitService, 'add_context_tools', return_value=[]):
+                with patch.object(ToolkitService, '_get_tools', return_value=[]):
+                    result = ToolkitService.get_tools(
+                        assistant=mock_assistant,
+                        request=mock_request,
+                        user=mock_user,
+                        llm_model="gpt-4",
+                        request_uuid="test-uuid",
+                    )
+
+        assert result == [mock_tool]
+        mock_get_workspace_image_tool.assert_called_once_with(mock_assistant, mock_user, mock_request)
+
 
 class TestGetPluginToolsDelegate:
     """Tests for _get_plugin_tools_delegate method."""
@@ -1481,6 +1509,7 @@ class TestMergeSkillToolkits:
         assistant.assistant_ids = []
         assistant.mcp_servers = []
         assistant.llm_model_type = "gpt-4"
+        assistant.enable_image_generation = False
         assistant.created_by = None
         return assistant
 
@@ -1633,6 +1662,8 @@ class TestMergeSkillToolkits:
         mock_request.mcp_server_single_usage = False
         mock_request.enable_web_search = None
         mock_request.enable_code_interpreter = None
+        mock_request.enable_image_generation = None
+        mock_request.image_generation_model = None
         mock_user = Mock(spec=User)
         mock_user.id = "test-user-id"
         mock_user.is_admin = False
@@ -1668,6 +1699,8 @@ class TestMergeSkillToolkits:
         mock_request.mcp_server_single_usage = False
         mock_request.enable_web_search = None
         mock_request.enable_code_interpreter = None
+        mock_request.enable_image_generation = None
+        mock_request.image_generation_model = None
         mock_user = Mock(spec=User)
         mock_user.id = "test-user-id"
         mock_user.is_admin = False

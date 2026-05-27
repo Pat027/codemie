@@ -148,6 +148,7 @@ model_list:
       base_model: azure/gpt-image-1.5-2025-12-16
       label: "GPT Image 1.5"
       forbidden_for_web: true
+      supports_image_generation: true
 
   - model_name: gpt-image-2
     litellm_params:
@@ -159,6 +160,7 @@ model_list:
       base_model: azure/gpt-image-2-2026-04-21
       label: "GPT Image 2"
       forbidden_for_web: true
+      supports_image_generation: true
 
   # Google Vertex AI Models
   - model_name: gemini-3.1-flash-image-preview
@@ -170,6 +172,7 @@ model_list:
       base_model: gemini-3.1-flash-image-preview
       label: "Gemini 3.1 Flash Image Preview"
       forbidden_for_web: true
+      supports_image_generation: true
 
   - model_name: gemini-3.1-pro
     litellm_params:

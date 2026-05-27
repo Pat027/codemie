@@ -101,7 +101,13 @@ def mock_request():
 @pytest.fixture
 def mock_update_request():
     return UpdateConversationRequest(
-        name="New Name", llm_model=LLMService.BASE_NAME_GPT_41, pinned=True, folder="test", active_assistant_id="123"
+        name="New Name",
+        llm_model=LLMService.BASE_NAME_GPT_41,
+        enable_image_generation=True,
+        image_generation_model="gpt-image-1",
+        pinned=True,
+        folder="test",
+        active_assistant_id="123",
     )
 
 
@@ -124,9 +130,28 @@ def test_conversation_service_update(
     mock_touch_folder.assert_called_once_with("test", mock_conversation.user_id)
     assert conversation.conversation_name == "New Name"
     assert conversation.llm_model == LLMService.BASE_NAME_GPT_41
+    assert conversation.enable_image_generation is True
+    assert conversation.image_generation_model == "gpt-image-1"
     assert conversation.pinned
     assert conversation.folder == "test"
     assert conversation.assistant_ids == ["123", "234"]
+
+
+@patch("codemie.service.conversation_service.Conversation.update")
+def test_conversation_service_update_allows_clearing_image_generation_model(mock_update, mock_conversation):
+    mock_update.return_value = True
+    mock_conversation.enable_image_generation = True
+    mock_conversation.image_generation_model = "old-image-model"
+
+    request = UpdateConversationRequest(enable_image_generation=False, image_generation_model=None)
+
+    conversation = ConversationService.update_conversation(
+        mock_conversation,
+        request=request,
+    )
+
+    assert conversation.enable_image_generation is False
+    assert conversation.image_generation_model is None
 
 
 @patch("codemie.service.conversation_service.Conversation.update")
@@ -319,6 +344,8 @@ def test_build_new_conversation_with_assistant(
     mock_assistant.context = ["some context"]
     mock_assistant.conversation_starters = ["Hello", "How can you help?"]
     mock_assistant.toolkits = [mock_toolkit]
+    mock_assistant.enable_image_generation = True
+    mock_assistant.image_generation_model = "gpt-image-1"
 
     mock_get_by_ids.return_value = [mock_assistant]
 
@@ -345,6 +372,8 @@ def test_build_new_conversation_with_assistant(
     assert detail.tools[0].label == "Git"
     assert detail.tools[1].name == "jira"
     assert detail.tools[1].label == "Jira"
+    assert result.enable_image_generation is True
+    assert result.image_generation_model == "gpt-image-1"
 
 
 @patch("codemie.core.workflow_models.workflow_config.WorkflowConfig.get_by_id")

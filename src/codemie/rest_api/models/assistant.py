@@ -276,6 +276,8 @@ class AssistantRequest(BaseModel):
     context: list[Context] = Field(default_factory=list)
     icon_url: Optional[str] = None
     llm_model_type: Optional[str] = None
+    enable_image_generation: Optional[bool] = False
+    image_generation_model: Optional[str] = None
     toolkits: list[ToolKitDetails] = Field(default_factory=list)
     conversation_starters: list[str] = Field(default_factory=list)
     shared: bool = True
@@ -319,7 +321,7 @@ class AssistantRequest(BaseModel):
         """
         if isinstance(data, dict):
             # Remove NULL bytes from string fields to prevent PostgreSQL errors
-            string_fields = ['name', 'description', 'system_prompt', 'plan_prompt', 'slug']
+            string_fields = ['name', 'description', 'system_prompt', 'plan_prompt', 'slug', 'image_generation_model']
             for field in string_fields:
                 if field in data and isinstance(data[field], str):
                     data[field] = data[field].replace('\x00', '')
@@ -553,6 +555,8 @@ class AssistantBase(CommonBaseModel, Owned):
     project: str = SQLField(default=DEMO_PROJECT, index=True)
     icon_url: Optional[str] = SQLField(default=None, index=True)
     llm_model_type: Optional[str] = None
+    enable_image_generation: Optional[bool] = False
+    image_generation_model: Optional[str] = None
     toolkits: list[ToolKitDetails] = SQLField(default_factory=list, sa_column=Column(PydanticListType(ToolKitDetails)))
     conversation_starters: list[str] = SQLField(default_factory=list, sa_column=Column(JSONB))
     shared: bool = SQLField(default=True, index=True)
@@ -1077,6 +1081,8 @@ class AssistantConfiguration(BaseModelWithSQLSupport, table=True):
     description: str
     system_prompt: str
     llm_model_type: Optional[str] = None
+    enable_image_generation: Optional[bool] = False
+    image_generation_model: Optional[str] = None
     temperature: Optional[float] = None
     top_p: Optional[float] = None
 

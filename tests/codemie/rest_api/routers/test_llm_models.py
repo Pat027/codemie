@@ -78,6 +78,7 @@ def test_get_llm_models(mock_llm_service):
                 'top_p': True,
             },
             'label': 'Model A',
+            'supports_image_generation': False,
             'forbidden_for_web': False,
         },
         {
@@ -96,6 +97,7 @@ def test_get_llm_models(mock_llm_service):
                 'top_p': True,
             },
             'label': 'Model B',
+            'supports_image_generation': False,
             'forbidden_for_web': False,
         },
     ]
@@ -218,6 +220,7 @@ def test_get_embeddings_models(mock_llm_service):
                 'top_p': True,
             },
             'label': 'Embedding A',
+            'supports_image_generation': False,
             'forbidden_for_web': False,
         },
         {
@@ -236,6 +239,43 @@ def test_get_embeddings_models(mock_llm_service):
                 'top_p': True,
             },
             'label': 'Embedding B',
+            'supports_image_generation': False,
+            'forbidden_for_web': False,
+        },
+    ]
+
+
+def test_get_image_generation_models(mock_llm_service):
+    mock_llm_service.get_allowed_image_generation_models.return_value = [
+        LLMModel(
+            base_name="image-model",
+            deployment_name="image-model",
+            enabled=True,
+            label="Image Model",
+            supports_image_generation=True,
+        ),
+    ]
+
+    response = client.get("/v1/llm_models/image_generation")
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            'base_name': 'image-model',
+            'default_for_categories': [],
+            'default': False,
+            'deployment_name': 'image-model',
+            'enabled': True,
+            'features': {
+                'max_tokens': True,
+                'parallel_tool_calls': False,
+                'streaming': True,
+                'system_prompt': True,
+                'temperature': True,
+                'tools': True,
+                'top_p': True,
+            },
+            'label': 'Image Model',
+            'supports_image_generation': True,
             'forbidden_for_web': False,
         },
     ]
@@ -294,6 +334,16 @@ class TestIncludeAllParameter:
 
         assert response.status_code == 200
         call_args = mock_llm_service.get_allowed_embedding_models.call_args
+        assert call_args.kwargs['include_all'] is True
+
+    def test_image_generation_models_respects_include_all(self, mock_llm_service):
+        """Image generation endpoint should also respect include_all parameter."""
+        mock_llm_service.get_allowed_image_generation_models.return_value = []
+
+        response = client.get("/v1/llm_models/image_generation?include_all=true")
+
+        assert response.status_code == 200
+        call_args = mock_llm_service.get_allowed_image_generation_models.call_args
         assert call_args.kwargs['include_all'] is True
 
     def test_default_model_respects_include_all(self, mock_llm_service):

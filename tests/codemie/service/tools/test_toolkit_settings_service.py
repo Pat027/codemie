@@ -364,3 +364,39 @@ class TestGetFileSystemToolkit:
         # Assert
         assert len(tools) == 1
         mock_find_code_index.assert_called_once_with("test-project", "test-repo")
+
+
+class TestImageGenerationModelSelection:
+    """Tests for assistant-specific image generation model selection."""
+
+    def test_resolve_image_generation_model_prefers_assistant_value(self, mock_assistant):
+        mock_assistant.image_generation_model = "assistant-image-model"
+
+        with patch(
+            'codemie.service.tools.toolkit_settings_service.config.IMAGE_GENERATION_MODEL', 'global-image-model'
+        ):
+            result = ToolkitSettingService._resolve_image_generation_model(mock_assistant)
+
+        assert result == "assistant-image-model"
+
+    def test_resolve_image_generation_model_falls_back_to_global_value(self, mock_assistant):
+        mock_assistant.image_generation_model = None
+
+        with patch(
+            'codemie.service.tools.toolkit_settings_service.config.IMAGE_GENERATION_MODEL', 'global-image-model'
+        ):
+            result = ToolkitSettingService._resolve_image_generation_model(mock_assistant)
+
+        assert result == "global-image-model"
+
+    def test_resolve_image_generation_model_prefers_request_override(self, mock_assistant):
+        mock_assistant.image_generation_model = "assistant-image-model"
+        mock_request = MagicMock()
+        mock_request.image_generation_model = "request-image-model"
+
+        with patch(
+            'codemie.service.tools.toolkit_settings_service.config.IMAGE_GENERATION_MODEL', 'global-image-model'
+        ):
+            result = ToolkitSettingService._resolve_image_generation_model(mock_assistant, mock_request)
+
+        assert result == "request-image-model"

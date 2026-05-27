@@ -56,6 +56,8 @@ class AssistantVersionCompareService:
             'description': request.description or "",
             'system_prompt': request.system_prompt or "",
             'llm_model_type': request.llm_model_type,
+            'enable_image_generation': request.enable_image_generation,
+            'image_generation_model': request.image_generation_model,
             'temperature': request.temperature,
             'top_p': request.top_p,
             'context': [ctx.model_dump() if hasattr(ctx, 'model_dump') else ctx for ctx in request.context],

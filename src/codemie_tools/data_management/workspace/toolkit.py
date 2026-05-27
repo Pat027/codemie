@@ -23,6 +23,7 @@ from codemie.rest_api.security.user import User
 from codemie.service.agent_workspace_service import AgentWorkspaceService
 from codemie_tools.base.base_toolkit import BaseToolkit
 from codemie_tools.base.models import Tool, ToolKit
+from codemie_tools.data_management.workspace.generate_image_tool_v2 import GenerateWorkspaceImageToolV2
 from codemie_tools.data_management.workspace.tools import (
     DeleteWorkspaceFileTool,
     EditWorkspaceFileTool,
@@ -37,6 +38,7 @@ from codemie_tools.data_management.workspace.tools_vars import (
     DELETE_WORKSPACE_FILE_TOOL,
     EDIT_WORKSPACE_FILE_TOOL,
     EXECUTE_WORKSPACE_SCRIPT_TOOL,
+    GENERATE_WORKSPACE_IMAGE_TOOL_V2,
     GREP_WORKSPACE_FILES_TOOL,
     LIST_WORKSPACE_FILES_TOOL,
     READ_WORKSPACE_FILE_TOOL,
@@ -54,8 +56,9 @@ class AgentWorkspaceToolkitUI(ToolKit):
         Tool.from_metadata(DELETE_WORKSPACE_FILE_TOOL, tool_class=DeleteWorkspaceFileTool),
         Tool.from_metadata(GREP_WORKSPACE_FILES_TOOL, tool_class=GrepWorkspaceFilesTool),
         Tool.from_metadata(EXECUTE_WORKSPACE_SCRIPT_TOOL, tool_class=ExecuteWorkspaceScriptTool),
+        Tool.from_metadata(GENERATE_WORKSPACE_IMAGE_TOOL_V2, tool_class=GenerateWorkspaceImageToolV2),
     ]
-    label: str = "Agent Workspace"
+    label: str | None = "Agent Workspace"
 
 
 class AgentWorkspaceToolkit(BaseToolkit):
@@ -65,6 +68,7 @@ class AgentWorkspaceToolkit(BaseToolkit):
     request: AssistantChatRequest | None = None
     request_uuid: str | None = None
     llm_model: Any | None = None
+    image_generator: Any | None = None
 
     @classmethod
     def get_tools_ui_info(cls):
@@ -121,6 +125,13 @@ class AgentWorkspaceToolkit(BaseToolkit):
                 workspace_service=shared_service,
                 workspace_id=resolved_workspace_id,
             ),
+            GenerateWorkspaceImageToolV2(
+                conversation_id=self.conversation_id,
+                user=self.user,
+                workspace_service=shared_service,
+                workspace_id=resolved_workspace_id,
+                image_generator=self.image_generator,
+            ),
         ]
 
     @classmethod
@@ -132,6 +143,7 @@ class AgentWorkspaceToolkit(BaseToolkit):
         request: AssistantChatRequest | None = None,
         request_uuid: str | None = None,
         llm_model: Any | None = None,
+        image_generator: Any | None = None,
     ) -> "AgentWorkspaceToolkit":
         return cls(
             conversation_id=conversation_id,
@@ -140,4 +152,5 @@ class AgentWorkspaceToolkit(BaseToolkit):
             request=request,
             request_uuid=request_uuid,
             llm_model=llm_model,
+            image_generator=image_generator,
         )

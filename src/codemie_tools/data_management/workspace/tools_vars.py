@@ -70,3 +70,16 @@ EXECUTE_WORKSPACE_SCRIPT_TOOL = ToolMetadata(
     label="Execute workspace script",
     user_description="Allows the AI assistant to run a Python script stored in the persistent conversation workspace.",
 )
+
+GENERATE_WORKSPACE_IMAGE_TOOL_V2 = ToolMetadata(
+    name="generate_workspace_image_v2",
+    description=(
+        "Generate an image from a description, save it into the persistent conversation workspace under images/, "
+        "and return both the workspace-relative path and sandbox link."
+    ),
+    label="Generate workspace image",
+    user_description=(
+        "Allows the AI assistant to generate an image, store it in the persistent conversation workspace, "
+        "and reference it by workspace path or sandbox link."
+    ),
+)

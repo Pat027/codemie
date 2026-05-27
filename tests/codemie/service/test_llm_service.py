@@ -200,6 +200,37 @@ class TestModelVisibilityFiltering:
         assert len(all_models) == 3
         assert any(m.base_name == 'hidden-model' for m in all_models)
 
+    def test_get_allowed_image_generation_models_ignores_forbidden_for_web(self, llm_service):
+        """Image generation models should be returned even if hidden from the web chat picker."""
+        from unittest.mock import Mock
+
+        hidden_image_model = LLMModel(
+            label='Hidden Image Model',
+            base_name='hidden-image-model',
+            deployment_name='hidden-image-model',
+            enabled=True,
+            supports_image_generation=True,
+            forbidden_for_web=True,
+        )
+        visible_image_model = LLMModel(
+            label='Visible Image Model',
+            base_name='visible-image-model',
+            deployment_name='visible-image-model',
+            enabled=True,
+            supports_image_generation=True,
+            forbidden_for_web=False,
+        )
+        llm_service.llm_config.llm_models = [hidden_image_model, visible_image_model]
+
+        user = Mock()
+        user.is_external_user = False
+
+        filtered_models = llm_service.get_allowed_image_generation_models(user, include_all=False)
+
+        assert len(filtered_models) == 2
+        assert any(m.base_name == 'hidden-image-model' for m in filtered_models)
+        assert any(m.base_name == 'visible-image-model' for m in filtered_models)
+
     def test_get_allowed_embedding_models_with_include_all(self, llm_service):
         """get_allowed_embedding_models should respect include_all parameter"""
         from unittest.mock import Mock
@@ -238,3 +269,43 @@ class TestModelVisibilityFiltering:
         # Include all request (include_all=True)
         all_embeddings = service.get_allowed_embedding_models(user, include_all=True)
         assert len(all_embeddings) == 2
+
+    def test_get_allowed_image_generation_models(self, llm_service):
+        """Image generation models should ignore forbidden_for_web and only filter by capability."""
+        from unittest.mock import Mock
+
+        llm_service.llm_config.llm_models = [
+            LLMModel(
+                label='Visible Image Model',
+                base_name='visible-image-model',
+                deployment_name='visible-image-model',
+                enabled=True,
+                supports_image_generation=True,
+                forbidden_for_web=False,
+            ),
+            LLMModel(
+                label='Hidden Image Model',
+                base_name='hidden-image-model',
+                deployment_name='hidden-image-model',
+                enabled=True,
+                supports_image_generation=True,
+                forbidden_for_web=True,
+            ),
+            LLMModel(
+                label='Text Model',
+                base_name='text-model',
+                deployment_name='text-model',
+                enabled=True,
+                supports_image_generation=False,
+                forbidden_for_web=False,
+            ),
+        ]
+
+        user = Mock()
+        user.is_external_user = False
+
+        filtered_models = llm_service.get_allowed_image_generation_models(user, include_all=False)
+        assert [model.base_name for model in filtered_models] == ['visible-image-model', 'hidden-image-model']
+
+        all_models = llm_service.get_allowed_image_generation_models(user, include_all=True)
+        assert [model.base_name for model in all_models] == ['visible-image-model', 'hidden-image-model']

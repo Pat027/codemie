@@ -410,6 +410,17 @@ class LLMService:
         user_models = self.get_allowed_models(user)
         return self._filter_models_by_visibility(user_models.chat_models, include_all)
 
+    def get_allowed_image_generation_models(self, user: 'User', include_all: bool = False) -> List[LLMModel]:
+        """Get list of image generation models allowed for user.
+
+        Image-generation models should remain selectable even when a model is
+        hidden from the general web chat model picker via forbidden_for_web.
+        The include_all flag is therefore intentionally ignored here and kept
+        only for API compatibility.
+        """
+        user_models = self.get_allowed_models(user)
+        return [model for model in user_models.chat_models if model.supports_image_generation]
+
     def get_allowed_embedding_models(self, user: 'User', include_all: bool = False) -> List[LLMModel]:
         """
         Get list of embedding models allowed for user, optionally filtering out web-forbidden models.

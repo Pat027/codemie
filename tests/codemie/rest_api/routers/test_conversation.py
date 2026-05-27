@@ -156,6 +156,40 @@ async def test_get_conversation_by_id(user, conversation):
         mock_get_by_id.assert_called_once_with(conversation.id)
 
 
+@pytest.mark.asyncio
+async def test_update_conversation_with_image_generation_fields(user):
+    conversation = Conversation(
+        id="456",
+        conversation_id="456",
+        name="Test Conversation",
+        enable_image_generation=True,
+        image_generation_model="gpt-image-1",
+    )
+
+    with (
+        patch("codemie.rest_api.routers.conversation.Conversation.get_by_id", return_value=conversation),
+        patch("codemie.rest_api.routers.conversation.Ability.can", return_value=True),
+        patch(
+            "codemie.rest_api.routers.conversation.ConversationService.update_conversation", return_value=conversation
+        ),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            response = await ac.put(
+                "/v1/conversations/456",
+                json={
+                    "enable_image_generation": True,
+                    "image_generation_model": "gpt-image-1",
+                },
+                headers={"Authorization": "Bearer testtoken"},
+            )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["enable_image_generation"] is True
+    assert body["image_generation_model"] == "gpt-image-1"
+
+
 CONVETSATION_MSG_EXPORT_PATH = "/v1/conversations/123/history/0/0/export?export_format=pdf"
 
 

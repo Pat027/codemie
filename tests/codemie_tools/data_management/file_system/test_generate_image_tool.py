@@ -96,6 +96,46 @@ class TestLiteLLMImageGenerator(unittest.TestCase):
             timeout=_CONFIG.timeout,
         )
 
+    @patch("codemie_tools.data_management.file_system.generate_image_tool.AzureOpenAI")
+    def test_generate_passes_size_and_output_format(self, mock_azure_cls):
+        item = MagicMock(url=None, b64_json=_B64_DATA)
+        mock_azure_cls.return_value.images.generate.return_value.data = [item]
+
+        gen = LiteLLMImageGenerator(_CONFIG)
+        gen.generate("A landscape.", size="1536x1024", output_format="png")
+
+        mock_azure_cls.return_value.images.generate.assert_called_once_with(
+            model=_CONFIG.model_id,
+            prompt="A landscape.",
+            n=1,
+            size="1536x1024",
+            output_format="png",
+        )
+
+    @patch("codemie_tools.data_management.file_system.generate_image_tool.AzureOpenAI")
+    def test_edit_passes_image_mask_size_and_output_format(self, mock_azure_cls):
+        item = MagicMock(url=None, b64_json=_B64_DATA)
+        mock_azure_cls.return_value.images.edit.return_value.data = [item]
+
+        gen = LiteLLMImageGenerator(_CONFIG)
+        url, b64 = gen.edit(
+            prompt="Edit this image.",
+            image=b"image-bytes",
+            mask=b"mask-bytes",
+            size="1536x1024",
+            output_format="png",
+        )
+
+        self.assertIsNone(url)
+        self.assertEqual(b64, _B64_DATA)
+        edit_call = mock_azure_cls.return_value.images.edit.call_args.kwargs
+        self.assertEqual(edit_call["model"], _CONFIG.model_id)
+        self.assertEqual(edit_call["prompt"], "Edit this image.")
+        self.assertEqual(edit_call["size"], "1536x1024")
+        self.assertEqual(edit_call["output_format"], "png")
+        self.assertEqual(edit_call["image"][0], "image.png")
+        self.assertEqual(edit_call["mask"][0], "mask.png")
+
 
 class TestChatModelImageGenerator(unittest.TestCase):
     """Unit tests for ChatModelImageGenerator."""
@@ -128,6 +168,11 @@ class TestChatModelImageGenerator(unittest.TestCase):
         url, b64 = gen.generate("A mountain.")
         self.assertIsNone(url)
         self.assertIsNone(b64)
+
+    def test_edit_not_supported(self):
+        gen = ChatModelImageGenerator(self._make_model([]))
+        with self.assertRaises(NotImplementedError):
+            gen.edit("prompt", b"image-bytes")
 
 
 class TestGenerateImageToolResolveOutput(unittest.TestCase):

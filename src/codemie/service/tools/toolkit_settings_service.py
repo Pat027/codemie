@@ -17,6 +17,7 @@ from typing import Any, List, Optional
 from codemie_tools.base.file_object import FileObject
 from codemie_tools.base.models import ToolKit, ToolSet
 from codemie_tools.data_management.file_system.toolkit import FileSystemToolkit
+from codemie_tools.data_management.workspace.generate_image_tool_v2 import GenerateWorkspaceImageToolV2
 from codemie_tools.data_management.workspace.toolkit import AgentWorkspaceToolkit
 from codemie_tools.git.toolkit import GitToolkit
 
@@ -31,6 +32,94 @@ from codemie.rest_api.security.user import User
 
 
 class ToolkitSettingService:
+    @staticmethod
+    def _resolve_image_generation_model(
+        assistant: Optional[Assistant] = None, request: Optional[object] = None
+    ) -> Optional[str]:
+        request_model = getattr(request, "image_generation_model", None)
+        if isinstance(request_model, str) and request_model.strip():
+            return request_model
+
+        assistant_model = getattr(assistant, "image_generation_model", None)
+        if isinstance(assistant_model, str) and assistant_model.strip():
+            return assistant_model
+
+        global_model = config.IMAGE_GENERATION_MODEL
+        if isinstance(global_model, str) and global_model.strip():
+            return global_model
+
+        return None
+
+    @staticmethod
+    def _build_image_generator(assistant: Optional[Assistant] = None, request: Optional[object] = None):
+        from codemie_tools.data_management.file_system.generate_image_tool import (
+            ChatModelImageGenerator,
+            LiteLLMImageConfig,
+            LiteLLMImageGenerator,
+        )
+
+        image_generation_model = ToolkitSettingService._resolve_image_generation_model(assistant, request)
+
+        if config.LLM_PROXY_ENABLED and config.LITE_LLM_URL and image_generation_model:
+            return LiteLLMImageGenerator(
+                LiteLLMImageConfig(
+                    api_base=config.LITE_LLM_URL,
+                    api_key=config.LITE_LLM_APP_KEY,
+                    api_version=config.OPENAI_API_VERSION,
+                    model_id=image_generation_model,
+                    timeout=float(config.LLM_PROXY_TIMEOUT),
+                )
+            )
+
+        if config.AZURE_OPENAI_URL and config.AZURE_OPENAI_API_KEY and image_generation_model:
+            return LiteLLMImageGenerator(
+                LiteLLMImageConfig(
+                    api_base=config.AZURE_OPENAI_URL,
+                    api_key=config.AZURE_OPENAI_API_KEY,
+                    api_version=config.OPENAI_API_VERSION,
+                    model_id=image_generation_model,
+                )
+            )
+
+        if image_generation_model:
+            from codemie.core.dependecies import get_llm_by_credentials_raw
+
+            return ChatModelImageGenerator(model=get_llm_by_credentials_raw(llm_model=image_generation_model))
+
+        return None
+
+    @staticmethod
+    def _build_workspace_image_generator(assistant: Optional[Assistant] = None, request: Optional[object] = None):
+        from codemie_tools.data_management.file_system.generate_image_tool import (
+            LiteLLMImageConfig,
+            LiteLLMImageGenerator,
+        )
+
+        image_generation_model = ToolkitSettingService._resolve_image_generation_model(assistant, request)
+
+        if config.LLM_PROXY_ENABLED and config.LITE_LLM_URL and image_generation_model:
+            return LiteLLMImageGenerator(
+                LiteLLMImageConfig(
+                    api_base=config.LITE_LLM_URL,
+                    api_key=config.LITE_LLM_APP_KEY,
+                    api_version=config.OPENAI_API_VERSION,
+                    model_id=image_generation_model,
+                    timeout=float(config.LLM_PROXY_TIMEOUT),
+                )
+            )
+
+        if config.AZURE_OPENAI_URL and config.AZURE_OPENAI_API_KEY and image_generation_model:
+            return LiteLLMImageGenerator(
+                LiteLLMImageConfig(
+                    api_base=config.AZURE_OPENAI_URL,
+                    api_key=config.AZURE_OPENAI_API_KEY,
+                    api_version=config.OPENAI_API_VERSION,
+                    model_id=image_generation_model,
+                )
+            )
+
+        return None
+
     @classmethod
     def get_git_tools_with_creds(
         cls,
@@ -108,30 +197,7 @@ class ToolkitSettingService:
         configs = {
             "user_id": user.id,
         }
-
-        from codemie_tools.data_management.file_system.generate_image_tool import (
-            ChatModelImageGenerator,
-            LiteLLMImageConfig,
-            LiteLLMImageGenerator,
-        )
-
-        image_generator = None
-        if config.LLM_PROXY_ENABLED and config.LITE_LLM_URL:
-            image_generator = LiteLLMImageGenerator(
-                LiteLLMImageConfig(
-                    api_base=config.LITE_LLM_URL,
-                    api_key=config.LITE_LLM_APP_KEY,
-                    api_version=config.OPENAI_API_VERSION,
-                    model_id=config.IMAGE_GENERATION_MODEL,
-                    timeout=float(config.LLM_PROXY_TIMEOUT),
-                )
-            )
-        elif config.IMAGE_GENERATION_MODEL:
-            from codemie.core.dependecies import get_llm_by_credentials_raw
-
-            image_generator = ChatModelImageGenerator(
-                model=get_llm_by_credentials_raw(llm_model=config.IMAGE_GENERATION_MODEL)
-            )
+        image_generator = cls._build_image_generator(assistant)
         if assistant.context:
             for context in assistant.context:
                 if context.context_type == ContextType.CODE:
@@ -176,7 +242,28 @@ class ToolkitSettingService:
             request=request,
             request_uuid=request_uuid,
             llm_model=llm_model,
+            image_generator=cls._build_workspace_image_generator(assistant, request),
         ).get_tools()
+
+    @classmethod
+    def get_workspace_image_generation_tool(
+        cls,
+        assistant: Assistant,
+        user: User,
+        request,
+    ):
+        if not request or not getattr(request, "conversation_id", None):
+            return None
+
+        image_generator = cls._build_workspace_image_generator(assistant, request)
+        if not image_generator:
+            return None
+
+        return GenerateWorkspaceImageToolV2(
+            conversation_id=request.conversation_id,
+            user=user,
+            image_generator=image_generator,
+        )
 
     @staticmethod
     def _has_assistant_toolkit_tool_by_name(assistant_toolkits: List[ToolKit], tool_name: str):

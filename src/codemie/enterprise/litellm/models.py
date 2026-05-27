@@ -128,6 +128,7 @@ def map_litellm_to_llm_model(litellm_model: dict[str, Any]) -> "LLMModel":
     # Extract model properties
     multimodal = model_info.get("supports_vision", False)
     enabled = model_info.get("enabled", True) is True
+    supports_image_generation = model_info.get("supports_image_generation", False) is True
     react_agent = not model_info.get("supports_function_calling", False)
     label = model_info.get("label", model_info.get("id", model_name))
     forbidden_for_web = model_info.get("forbidden_for_web", False)
@@ -141,6 +142,7 @@ def map_litellm_to_llm_model(litellm_model: dict[str, Any]) -> "LLMModel":
         multimodal=multimodal,
         react_agent=react_agent,
         enabled=enabled,
+        supports_image_generation=supports_image_generation,
         provider=provider,
         features=features,
         default_for_categories=default_for_categories,

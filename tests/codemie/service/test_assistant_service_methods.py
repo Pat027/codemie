@@ -246,6 +246,80 @@ class TestApplyMarketplaceToolMappings:
         assert request.tools_config[1].name == 'mapped_tool'
 
 
+class TestApplyConversationRuntimeOverrides:
+    @patch('codemie.service.assistant_service.Conversation.get_by_id')
+    def test_applies_saved_conversation_image_generation_settings(self, mock_get_by_id):
+        assistant = Mock(spec=Assistant)
+        assistant.enable_image_generation = True
+        assistant.image_generation_model = "assistant-image-model"
+
+        conversation = Mock()
+        conversation.llm_model = "conversation-model"
+        conversation.enable_image_generation = False
+        conversation.image_generation_model = "conversation-image-model"
+        mock_get_by_id.return_value = conversation
+
+        request = AssistantChatRequest(text='Test', file_names=[], conversation_id='conv-1')
+
+        AssistantService._apply_conversation_runtime_overrides(assistant, request)
+
+        assert request.llm_model == "conversation-model"
+        assert request.enable_image_generation is False
+        assert request.image_generation_model == "conversation-image-model"
+        assert assistant.enable_image_generation is False
+        assert assistant.image_generation_model == "conversation-image-model"
+
+    @patch('codemie.service.assistant_service.Conversation.get_by_id')
+    def test_keeps_explicit_request_image_generation_overrides(self, mock_get_by_id):
+        assistant = Mock(spec=Assistant)
+        assistant.enable_image_generation = False
+        assistant.image_generation_model = None
+
+        conversation = Mock()
+        conversation.llm_model = "conversation-model"
+        conversation.enable_image_generation = False
+        conversation.image_generation_model = "conversation-image-model"
+        mock_get_by_id.return_value = conversation
+
+        request = AssistantChatRequest(
+            text='Test',
+            file_names=[],
+            conversation_id='conv-1',
+            llm_model='request-model',
+            enable_image_generation=True,
+            image_generation_model='request-image-model',
+        )
+
+        AssistantService._apply_conversation_runtime_overrides(assistant, request)
+
+        assert request.llm_model == "request-model"
+        assert request.enable_image_generation is True
+        assert request.image_generation_model == "request-image-model"
+        assert assistant.enable_image_generation is True
+        assert assistant.image_generation_model == "request-image-model"
+
+    @patch('codemie.service.assistant_service.Conversation.get_by_id')
+    def test_does_not_override_assistant_with_unset_conversation_image_generation(self, mock_get_by_id):
+        assistant = Mock(spec=Assistant)
+        assistant.enable_image_generation = True
+        assistant.image_generation_model = "assistant-image-model"
+
+        conversation = Mock()
+        conversation.llm_model = None
+        conversation.enable_image_generation = None
+        conversation.image_generation_model = None
+        mock_get_by_id.return_value = conversation
+
+        request = AssistantChatRequest(text='Test', file_names=[], conversation_id='conv-1')
+
+        AssistantService._apply_conversation_runtime_overrides(assistant, request)
+
+        assert request.enable_image_generation is None
+        assert request.image_generation_model is None
+        assert assistant.enable_image_generation is True
+        assert assistant.image_generation_model == "assistant-image-model"
+
+
 class TestPrepareSystemPrompt:
     """Test cases for _prepare_system_prompt helper method."""
 

@@ -40,6 +40,7 @@ from codemie.rest_api.models.assistant import (
     ToolKitDetails,
     get_current_time,
 )
+from codemie.rest_api.models.conversation import Conversation
 from codemie.rest_api.security.user import User
 from codemie.service.assistant import VirtualAssistantService
 from codemie.service.assistant.assistant_user_mapping_service import assistant_user_mapping_service
@@ -75,6 +76,33 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
         "best practices, or step-by-step instructions for relevant task/ask. "
         "For complex tasks that span multiple/complex tasks/asks, load each relevant skill one by one as needed."
     )
+
+    @classmethod
+    def _apply_conversation_runtime_overrides(cls, assistant: Assistant, request: AssistantChatRequest) -> None:
+        if not request or not request.conversation_id:
+            return
+
+        conversation = Conversation.get_by_id(request.conversation_id)
+
+        if not conversation:
+            return
+
+        fields_set = request.model_fields_set
+
+        if 'llm_model' not in fields_set and conversation.llm_model:
+            request.llm_model = conversation.llm_model
+
+        if 'enable_image_generation' not in fields_set and conversation.enable_image_generation is not None:
+            request.enable_image_generation = conversation.enable_image_generation
+
+        if 'image_generation_model' not in fields_set and conversation.image_generation_model is not None:
+            request.image_generation_model = conversation.image_generation_model
+
+        if request.enable_image_generation is not None:
+            assistant.enable_image_generation = request.enable_image_generation
+
+        if request.image_generation_model is not None:
+            assistant.image_generation_model = request.image_generation_model
 
     @classmethod
     def get_tools_info(cls, user: User, show_for_ui: bool = False):
@@ -469,6 +497,8 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
 
         # Because we do inplace changes in following lines, do a copy to keep external object safe
         request = deepcopy(request)
+
+        cls._apply_conversation_runtime_overrides(assistant, request)
 
         file_objects = build_unique_file_objects(
             file_names=request.file_names, conversation_id=request.conversation_id, history_index=request.history_index

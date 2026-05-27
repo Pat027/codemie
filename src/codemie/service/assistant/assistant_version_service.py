@@ -56,6 +56,8 @@ class AssistantVersionService:
             description=request.description or "",
             system_prompt=request.system_prompt or "",
             llm_model_type=request.llm_model_type,
+            enable_image_generation=request.enable_image_generation,
+            image_generation_model=request.image_generation_model,
             temperature=request.temperature,
             top_p=request.top_p,
             context=request.context,
@@ -101,6 +103,8 @@ class AssistantVersionService:
             description=request.description or "",
             system_prompt=request.system_prompt or "",
             llm_model_type=request.llm_model_type,
+            enable_image_generation=request.enable_image_generation,
+            image_generation_model=request.image_generation_model,
             temperature=request.temperature,
             top_p=request.top_p,
             context=request.context,
@@ -259,6 +263,8 @@ class AssistantVersionService:
             description=target_config.description,
             system_prompt=target_config.system_prompt,
             llm_model_type=target_config.llm_model_type,
+            enable_image_generation=target_config.enable_image_generation,
+            image_generation_model=target_config.image_generation_model,
             temperature=target_config.temperature,
             top_p=target_config.top_p,
             context=target_config.context,
@@ -301,6 +307,8 @@ class AssistantVersionService:
         assistant.description = config.description
         assistant.system_prompt = config.system_prompt
         assistant.llm_model_type = config.llm_model_type
+        assistant.enable_image_generation = config.enable_image_generation
+        assistant.image_generation_model = config.image_generation_model
         assistant.temperature = config.temperature
         assistant.top_p = config.top_p
         assistant.context = config.context

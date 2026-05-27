@@ -80,7 +80,7 @@ from codemie.agents.tools.skill.skill_tool import (
     create_skill_companion_file_tool_if_needed,
     create_skill_tool_if_needed,
 )
-from codemie_tools.data_management.workspace.tools_vars import AGENT_WORKSPACE_TOOLKIT
+from codemie_tools.data_management.workspace.tools_vars import AGENT_WORKSPACE_TOOLKIT, GENERATE_WORKSPACE_IMAGE_TOOL_V2
 
 MCP_AUTH_WARNINGS_METADATA_KEY = "mcp_auth_warnings"
 
@@ -279,6 +279,33 @@ class ToolkitService:
             toolkits.append(file_system_toolkit)
 
         return toolkits
+
+    @classmethod
+    def _append_workspace_image_tool_if_enabled(
+        cls,
+        tools: list[BaseTool],
+        assistant: Assistant,
+        request: AssistantChatRequest,
+        user: User,
+    ) -> list[BaseTool]:
+        if not request:
+            return tools
+
+        enable_image_generation = getattr(request, "enable_image_generation", None)
+        if enable_image_generation is None:
+            enable_image_generation = getattr(assistant, "enable_image_generation", None)
+
+        if enable_image_generation is not True:
+            return tools
+
+        if any(tool.name == GENERATE_WORKSPACE_IMAGE_TOOL_V2.name for tool in tools):
+            return tools
+
+        image_tool = ToolkitSettingService.get_workspace_image_generation_tool(assistant, user, request)
+        if image_tool:
+            tools.append(image_tool)
+
+        return tools
 
     @classmethod
     def get_provider_toolkits_methods(
@@ -532,7 +559,8 @@ class ToolkitService:
                 augmented_toolkits=selected_toolkits,
             )
         )
-        return tools
+
+        return cls._append_workspace_image_tool_if_enabled(tools, assistant, request, user)
 
     @classmethod
     def get_core_tools(

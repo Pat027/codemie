@@ -273,6 +273,21 @@ class TestMapLiteLLMToLLMModel:
         # Should map multimodal
         assert result.multimodal is True
 
+    def test_maps_supports_image_generation_flag(self):
+        """Test maps supports_image_generation capability."""
+        litellm_model = {
+            "model_name": "azure/gpt-image",
+            "model_info": {
+                "supports_image_generation": True,
+            },
+        }
+
+        from codemie.enterprise.litellm.models import map_litellm_to_llm_model
+
+        result = map_litellm_to_llm_model(litellm_model)
+
+        assert result.supports_image_generation is True
+
     def test_maps_react_agent_from_function_calling(self):
         """Test sets react_agent based on function calling support."""
         # Model WITH function calling should have react_agent=False

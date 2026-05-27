@@ -199,6 +199,8 @@ class Conversation(BaseModelWithSQLSupport, Owned, table=True):
     conversation_id: str = SQLField(index=True)
     conversation_name: Optional[str] = None
     llm_model: Optional[str] = None
+    enable_image_generation: Optional[bool] = None
+    image_generation_model: Optional[str] = None
     folder: Optional[str] = None
     pinned: Optional[bool] = False
     history: Optional[List[GeneratedMessage]] = SQLField(
@@ -658,6 +660,8 @@ class ConversationResponse(BaseModel):
     conversation_id: str
     conversation_name: Optional[str] = None
     llm_model: Optional[str] = None
+    enable_image_generation: Optional[bool] = None
+    image_generation_model: Optional[str] = None
     folder: Optional[str] = None
     pinned: Optional[bool] = False
     history: Optional[List[GeneratedMessage]] = Field(default_factory=list)

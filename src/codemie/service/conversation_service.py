@@ -111,6 +111,19 @@ class ConversationService:
         msg = msg or ""
         return (msg[:50] + "...") if len(msg) > 50 else msg
 
+    @staticmethod
+    def _get_initial_image_generation_settings(assistant: Assistant | None) -> dict[str, Any]:
+        if not assistant:
+            return {
+                "enable_image_generation": None,
+                "image_generation_model": None,
+            }
+
+        return {
+            "enable_image_generation": getattr(assistant, "enable_image_generation", None),
+            "image_generation_model": getattr(assistant, "image_generation_model", None),
+        }
+
     @classmethod
     def upsert_chat_history(
         cls,
@@ -129,6 +142,7 @@ class ConversationService:
         # Find or create conversation
         conversation = Conversation.find_by_id(request.conversation_id)
         if not conversation:
+            initial_image_settings = cls._get_initial_image_generation_settings(assistant)
             # Create since it does not exist
             conversation = Conversation(
                 id=request.conversation_id,
@@ -139,6 +153,8 @@ class ConversationService:
                 assistant_ids=[assistant.id],
                 initial_assistant_id=assistant.id,
                 project=assistant.project,
+                enable_image_generation=initial_image_settings["enable_image_generation"],
+                image_generation_model=initial_image_settings["image_generation_model"],
             )
             should_create_conversation = True
         elif not conversation.conversation_name and not conversation.history:
@@ -521,6 +537,15 @@ class ConversationService:
         is_workflow_conversation: bool = False,
     ):
         conversation_id = str(uuid.uuid4())
+        initial_image_settings = {"enable_image_generation": None, "image_generation_model": None}
+
+        if initial_assistant_id and not is_workflow_conversation:
+            from codemie.rest_api.models.assistant import Assistant
+
+            assistants = Assistant.get_by_ids(ids=[initial_assistant_id], user=user)
+            assistant = assistants[0] if assistants else None
+            initial_image_settings = cls._get_initial_image_generation_settings(assistant)
+
         conversation = Conversation(
             id=conversation_id,
             conversation_id=conversation_id,
@@ -531,6 +556,8 @@ class ConversationService:
             assistant_ids=[] if not initial_assistant_id else [initial_assistant_id],
             initial_assistant_id=initial_assistant_id,
             folder=folder,
+            enable_image_generation=initial_image_settings["enable_image_generation"],
+            image_generation_model=initial_image_settings["image_generation_model"],
             mcp_server_single_usage=mcp_server_single_usage,
             is_workflow_conversation=is_workflow_conversation,
         )
@@ -567,6 +594,7 @@ class ConversationService:
 
         assistant_data: list[AssistantDetails] = []
         assistant_ids: list[str] = []
+        initial_image_settings = {"enable_image_generation": None, "image_generation_model": None}
 
         if initial_assistant_id:
             assistant_ids = [initial_assistant_id]
@@ -610,6 +638,8 @@ class ConversationService:
                     )
                     for a in assistants
                 ]
+                assistant = assistants[0]
+                initial_image_settings = cls._get_initial_image_generation_settings(assistant)
 
         return Conversation(
             id="new",
@@ -624,6 +654,8 @@ class ConversationService:
             assistant_data=assistant_data,
             initial_assistant_id=initial_assistant_id,
             project=getattr(user, "current_project", None),
+            enable_image_generation=initial_image_settings["enable_image_generation"],
+            image_generation_model=initial_image_settings["image_generation_model"],
             mcp_server_single_usage=False,
             is_workflow_conversation=bool(is_workflow),
             is_folder_migrated=False,
@@ -677,11 +709,16 @@ class ConversationService:
     @classmethod
     def update_conversation(cls, conversation: Conversation, request: UpdateConversationRequest):
         old_folder = conversation.folder
+        fields_set = request.model_fields_set
 
         if request.name:
             conversation.conversation_name = request.name
-        if request.llm_model:
+        if 'llm_model' in fields_set:
             conversation.llm_model = request.llm_model
+        if 'enable_image_generation' in fields_set:
+            conversation.enable_image_generation = request.enable_image_generation
+        if 'image_generation_model' in fields_set:
+            conversation.image_generation_model = request.image_generation_model
         if request.pinned is not None:
             conversation.pinned = request.pinned
         if request.folder is not None:

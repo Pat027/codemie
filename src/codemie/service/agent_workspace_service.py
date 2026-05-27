@@ -51,6 +51,33 @@ class AgentWorkspaceService:
         self.repository = AgentWorkspaceRepository()
         self.file_repository = FileRepositoryFactory.get_current_repository()
 
+    def upsert_binary_file(
+        self,
+        workspace_id: str,
+        file_path: str,
+        content: bytes,
+        user: User,
+    ) -> WorkspaceFileItemResponse:
+        workspace = self.get_workspace(workspace_id, user)
+        resolved_workspace_id = workspace.id
+        if resolved_workspace_id is None:
+            raise ValidationException(f"Workspace '{workspace_id}' not found")
+        saved_file = self._upsert_workspace_file_content(resolved_workspace_id, file_path, content)
+        return WorkspaceFileItemResponse.from_model(saved_file)
+
+    def get_file_sandbox_url(self, workspace_id: str, file_path: str, user: User) -> str:
+        workspace = self.get_workspace(workspace_id, user)
+        if workspace.id is None:
+            raise ValidationException(f"Workspace '{workspace_id}' not found")
+        workspace_file = self._get_workspace_file_or_raise(workspace, file_path)
+        file_object = FileObject(
+            name=workspace_file.blob_name,
+            mime_type=workspace_file.mime_type,
+            owner=workspace_file.blob_owner,
+            path=workspace_file.path,
+        )
+        return f"{SANDBOX_FILE_PREFIX}{file_object.to_encoded_url()}"
+
     def create_workspace(self, request: CreateAgentWorkspaceRequest, user: User) -> AgentWorkspaceResponse:
         existing = self.repository.get_by_conversation_for_user(request.conversation_id, user.id)
         if existing:
