@@ -982,7 +982,7 @@ class TestTransformNodeErrorHandling:
 
         state_schema = {'context_store': {}, 'messages': []}
 
-        with pytest.raises(TransformationError, match="potentially dangerous construct"):
+        with pytest.raises(TransformationError, match="unsafe construct"):
             node.execute(state_schema, {})
 
     def test_template_syntax_error_raises_transformation_error(

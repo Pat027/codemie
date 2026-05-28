@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import json
-import re
 from typing import Any, Optional, Type
 
 from jinja2 import TemplateSyntaxError
@@ -29,6 +28,7 @@ from codemie.workflows.constants import TASK_KEY
 from codemie.workflows.models import AgentMessages
 from codemie.workflows.nodes.base_node import BaseNode, StateSchemaType
 from codemie.workflows.utils import DotDict, get_messages_from_state_schema
+from codemie.workflows.utils.safe_eval import SafeEvalError, safe_eval
 from codemie.workflows.utils.transform_node_utils import (
     extract_field,
     extract_from_context_store,
@@ -98,24 +98,6 @@ STATE_KEY_USER_INPUT = 'user_input'
 DEFAULT_TASK_DESCRIPTION = "Transform data using configured mappings"
 DEFAULT_DATA_WRAPPER_KEY = 'data'
 
-# Dangerous patterns for safe eval
-# Patterns that should always be blocked regardless of context
-DANGEROUS_PATTERNS_STRICT = [
-    r'\b__import__\b',  # Import statements
-    r'\beval\b',  # Eval function
-    r'\bexec\b',  # Exec function
-    r'\bcompile\b',  # Compile function
-    r'\binput\b',  # Input function
-    r'__\w+__',  # Dunder methods (except those in safe globals)
-]
-
-# Patterns that should only be blocked when used as function calls (followed by parenthesis)
-# This allows these words as string literals but blocks function calls
-DANGEROUS_PATTERNS_FUNCTION_CALLS = [
-    r'\bopen\s*\(',  # open() function call
-    r'\bfile\s*\(',  # file() function call
-]
-
 
 class TransformationError(Exception):
     """Raised when transformation fails"""
@@ -133,31 +115,6 @@ class TransformNode(BaseNode[AgentMessages]):
     - Jinja2 templates for complex transformations
     - Type coercion and validation
     """
-
-    # Safe namespace for eval() to prevent code injection
-    SAFE_GLOBALS = {
-        '__builtins__': {
-            'True': True,
-            'False': False,
-            'None': None,
-            'str': str,
-            'int': int,
-            'float': float,
-            'bool': bool,
-            'len': len,
-            'min': min,
-            'max': max,
-            'sum': sum,
-            'abs': abs,
-            'list': list,
-            'dict': dict,
-            'set': set,
-            'tuple': tuple,
-            'any': any,
-            'all': all,
-            'isinstance': isinstance,
-        }
-    }
 
     def __init__(
         self,
@@ -442,7 +399,7 @@ class TransformNode(BaseNode[AgentMessages]):
             return else_value
 
     def _safe_eval(self, expr: str, local_vars: dict) -> Any:
-        """Safely evaluate expression with restricted namespace.
+        """Safely evaluate expression using AST-based whitelisting.
 
         Args:
             expr: Expression to evaluate
@@ -454,46 +411,14 @@ class TransformNode(BaseNode[AgentMessages]):
         Raises:
             TransformationError: If evaluation fails or uses unsafe constructs
         """
-        # Remove string literals from expression before checking for dangerous patterns
-        # This allows keywords like 'open', 'close' as string values but blocks them as code
-        expr_without_strings = self._remove_string_literals(expr)
-
-        # Check for patterns that should always be blocked
-        for pattern in DANGEROUS_PATTERNS_STRICT:
-            if re.search(pattern, expr_without_strings):
-                raise TransformationError(
-                    f"Expression contains potentially dangerous construct matching pattern: {pattern}"
-                )
-
-        # Check for function call patterns (these check the original expression)
-        for pattern in DANGEROUS_PATTERNS_FUNCTION_CALLS:
-            if re.search(pattern, expr):
-                raise TransformationError(
-                    f"Expression contains potentially dangerous function call matching pattern: {pattern}"
-                )
-
         try:
-            return eval(expr, self.SAFE_GLOBALS, local_vars)
+            return safe_eval(expr, local_vars)
+        except SafeEvalError as e:
+            raise TransformationError(f"Expression contains unsafe construct: {e}") from e
+        except SyntaxError as e:
+            raise TransformationError(f"Expression has invalid syntax '{expr}': {e}") from e
         except Exception as e:
             raise TransformationError(f"Failed to evaluate expression '{expr}': {str(e)}") from e
-
-    def _remove_string_literals(self, expr: str) -> str:
-        """Remove string literals from expression to avoid false positives in security checks.
-
-        This allows checking for dangerous patterns in code while ignoring string contents.
-        For example: status == 'open' -> status == ''
-
-        Args:
-            expr: Expression to process
-
-        Returns:
-            str: Expression with string literals replaced by empty strings
-        """
-        # Remove single-quoted strings
-        expr = re.sub(r"'[^']*'", "''", expr)
-        # Remove double-quoted strings
-        expr = re.sub(r'"[^"]*"', '""', expr)
-        return expr
 
     def _render_template(self, source_data: dict, template: str) -> str:
         """Render Jinja2 template in a restricted sandbox to prevent SSTI/RCE.

@@ -27,11 +27,14 @@ __all__ = [
     "initialize_assistant",
     "parse_from_string_representation",
     "prepare_messages",
+    "safe_eval",
+    "SafeEvalError",
     "serialize_state",
     "should_summarize_memory",
     "exclude_prior_messages",
     "get_context_store_from_state_schema",
 ]
+from .safe_eval import SafeEvalError, safe_eval
 from .utils import (
     check_state_size,
     convert_value,
