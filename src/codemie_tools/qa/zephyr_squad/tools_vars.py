@@ -37,8 +37,8 @@ ZEPHYR_SQUAD_TOOL = ToolMetadata(
 
     The easiest way to retrieve the AccountID is to click on the icon on the left-hand menu and then click the Profile link.
     Within the URL, you can find your AccountID after the last "/".
-    Example: https://********.atlassian.net/people/5bb7ad0ccc53fd0760103780
-    Or get from https://*****.atlassian.net/rest/api/3/myself
+    Example: https://your-domain.atlassian.net/people/<your-account-id>
+    Or get from https://your-domain.atlassian.net/rest/api/3/myself
 
     2. Zephyr API Access and Secret keys, obtained via Zephyr UI in Jira
     """.strip(),
