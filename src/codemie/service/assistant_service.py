@@ -83,7 +83,7 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
         if not request or not request.conversation_id:
             return
 
-        conversation = Conversation.get_by_id(request.conversation_id)
+        conversation = Conversation.find_by_id(request.conversation_id)
 
         if not conversation:
             return
