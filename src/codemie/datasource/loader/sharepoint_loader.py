@@ -115,10 +115,8 @@ class SharePointLoader(BaseLoader, BaseDatasourceLoader):
         ".deb",
         ".rpm",
         # Media files (images, audio, video)
-        ".jpg",
-        ".jpeg",
-        ".png",
-        ".gif",
+        # Note: .jpg, .jpeg, .png, .gif are intentionally NOT skipped — they are
+        # processed via _extract_image_documents (LLM vision + PIL metadata fallback)
         ".bmp",
         ".tiff",
         ".tif",
@@ -152,6 +150,7 @@ class SharePointLoader(BaseLoader, BaseDatasourceLoader):
         files_filter: str = "",
         request_uuid: str | None = None,
         modified_since: datetime | None = None,
+        datasource_id: str = "",
     ):
         """
         Initialize SharePoint loader.
@@ -166,6 +165,7 @@ class SharePointLoader(BaseLoader, BaseDatasourceLoader):
             files_filter: Multi-line filter. Lines starting with '/' or a SharePoint URL scope
                 traversal to that folder; other lines are gitignore-style file name patterns.
             request_uuid: Request UUID for tracking LLM usage
+            datasource_id: Datasource ID used for file repository storage of extracted images
         """
         if auth_config is None:
             auth_config = SharePointAuthConfig()
@@ -199,6 +199,7 @@ class SharePointLoader(BaseLoader, BaseDatasourceLoader):
         self.request_uuid = request_uuid
 
         self.modified_since = modified_since
+        self.datasource_id = datasource_id
 
         self._access_token: str | None = None
         self._site_id: str | None = None
@@ -1081,6 +1082,8 @@ class SharePointLoader(BaseLoader, BaseDatasourceLoader):
             file_name,
             self.request_uuid,
             ",",
+            True,
+            datasource_id=self.datasource_id,
         ).result()
 
     def _extract_documents_from_bytes(self, file_bytes: bytes, file_name: str) -> list[Document]:
@@ -1099,6 +1102,7 @@ class SharePointLoader(BaseLoader, BaseDatasourceLoader):
             file_name=file_name,
             request_uuid=self.request_uuid,
             csv_separator=",",
+            datasource_id=self.datasource_id,
         )
 
     # System list names to filter out

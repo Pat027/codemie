@@ -61,6 +61,15 @@ class EmptyResultException(Exception):
         super().__init__(self.ERROR_MSG.format(expression_type), *args, **kwargs)
 
 
+class SkippedFileException(Exception):
+    """Raised when a file is intentionally skipped during indexing (e.g. exceeds size limit)."""
+
+    def __init__(self, file_name: str, reason: str, *args, **kwargs):
+        self.file_name = file_name
+        self.reason = reason
+        super().__init__(f"Skipped {file_name}: {reason}", *args, **kwargs)
+
+
 class NoChunksImportedException(Exception):
     """Exception raised when datasource processing completes but no chunks were imported."""
 

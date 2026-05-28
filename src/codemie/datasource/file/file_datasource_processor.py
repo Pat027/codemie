@@ -136,6 +136,7 @@ class FileDatasourceProcessor(BaseDatasourceProcessor):
             csv_separator=self.csv_separator,
             request_uuid=self.request_uuid,
             include_email_attachments=self.include_email_attachments,
+            datasource_id=self.index.id or "" if self.index else "",
         )
 
     def _pre_process_csv(self, documents: List[Document]) -> List[Document]:

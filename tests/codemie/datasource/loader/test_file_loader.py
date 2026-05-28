@@ -121,3 +121,58 @@ def test_fetch_remote_stats_keys_match_count(sample_files_datasource_loader):
 
     assert stats["documents_count_key"] == 15
     assert stats["total_documents"] == 15
+
+
+def test_get_load_stats_returns_zero_skipped_initially(sample_files_datasource_loader):
+    stats = sample_files_datasource_loader.get_load_stats()
+    assert stats == {"skipped_documents": 0}
+
+
+def test_get_load_stats_increments_on_skipped_file(sample_files_datasource_loader):
+    from codemie.datasource.exceptions import SkippedFileException
+    from codemie_tools.base.file_object import FileObject
+    from unittest.mock import patch
+
+    file = FileObject(name="big.jpg", content=b"x" * 100, owner="owner1", mime_type="image/jpeg")
+
+    with patch(
+        "codemie.datasource.loader.file_loader.extract_documents_from_bytes",
+        side_effect=SkippedFileException(file_name="big.jpg", reason="too large"),
+    ):
+        sample_files_datasource_loader._lazy_load_documents(file)
+
+    assert sample_files_datasource_loader.get_load_stats() == {"skipped_documents": 1}
+
+
+def test_get_load_stats_counts_multiple_skips(sample_files_datasource_loader):
+    from codemie.datasource.exceptions import SkippedFileException
+    from codemie_tools.base.file_object import FileObject
+    from unittest.mock import patch
+
+    file = FileObject(name="big.jpg", content=b"x", owner="owner1", mime_type="image/jpeg")
+
+    with patch(
+        "codemie.datasource.loader.file_loader.extract_documents_from_bytes",
+        side_effect=SkippedFileException(file_name="big.jpg", reason="too large"),
+    ):
+        sample_files_datasource_loader._lazy_load_documents(file)
+        sample_files_datasource_loader._lazy_load_documents(file)
+        sample_files_datasource_loader._lazy_load_documents(file)
+
+    assert sample_files_datasource_loader.get_load_stats() == {"skipped_documents": 3}
+
+
+def test_lazy_load_documents_returns_empty_list_on_skip(sample_files_datasource_loader):
+    from codemie.datasource.exceptions import SkippedFileException
+    from codemie_tools.base.file_object import FileObject
+    from unittest.mock import patch
+
+    file = FileObject(name="big.jpg", content=b"x", owner="owner1", mime_type="image/jpeg")
+
+    with patch(
+        "codemie.datasource.loader.file_loader.extract_documents_from_bytes",
+        side_effect=SkippedFileException(file_name="big.jpg", reason="too large"),
+    ):
+        result = sample_files_datasource_loader._lazy_load_documents(file)
+
+    assert result == []

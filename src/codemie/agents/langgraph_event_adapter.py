@@ -89,10 +89,10 @@ class LangGraphCallbackBridge:
             except Exception as error:
                 self._log_error(f"On tool start callback {callback} error: {error}")
 
-    def on_tool_end(self, output: Any, run_id: UUID, author: str | None = None) -> None:
+    def on_tool_end(self, output: Any, run_id: UUID, author: str | None = None, artifact=None) -> None:
         for callback in self.agent.callbacks:
             try:
-                callback.on_tool_end(output, run_id=run_id, author=author)
+                callback.on_tool_end(output, run_id=run_id, author=author, artifact=artifact)
             except Exception as error:
                 self._log_error(f"On tool end callback {callback} error: {error}")
 
@@ -282,7 +282,8 @@ class LangGraphEventAdapter:
             message += f"\nAssistant: {self.agent.agent_name}, request_uuid: {self.agent.request_uuid}"
             message += "\nExpected 'success' or 'error'"
             logger.warning(message)
-        self.agent._on_tool_end(action.content, run_id=run_id, author=author)
+        artifact = getattr(action, "artifact", None)
+        self.agent._on_tool_end(action.content, run_id=run_id, author=author, artifact=artifact)
 
     def process_agent_streaming(
         self,

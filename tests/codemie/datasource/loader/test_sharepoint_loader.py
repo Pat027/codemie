@@ -1273,12 +1273,19 @@ class TestShouldSkipFile:
 
     def test_skips_file_with_skip_extension(self, loader):
         """File with extension in SKIP_EXTENSIONS is skipped."""
-        item = {"name": "photo.jpg", "size": 100, "webUrl": ""}
+        item = {"name": "photo.bmp", "size": 100, "webUrl": ""}
 
         should_skip, reason = loader._should_skip_file(item)
 
         assert should_skip is True
         assert reason == "extension"
+
+    def test_does_not_skip_image_extensions(self, loader):
+        """jpg/jpeg/gif are processed via extract_documents_from_bytes, not skipped."""
+        for name in ("photo.jpg", "image.jpeg", "anim.gif", "picture.png"):
+            item = {"name": name, "size": 100, "webUrl": "https://example.com/"}
+            should_skip, reason = loader._should_skip_file(item)
+            assert should_skip is False, f"{name} should not be skipped by extension"
 
     def test_does_not_skip_normal_file(self, loader):
         """Normal file within size limit and allowed extension is not skipped."""
@@ -1639,7 +1646,7 @@ class TestWouldSkipFileForCount:
 
     def test_skips_skip_extension(self, loader):
         """File with SKIP_EXTENSIONS extension is skipped."""
-        assert loader._would_skip_file_for_count({"name": "pic.jpg", "size": 10}) is True
+        assert loader._would_skip_file_for_count({"name": "pic.bmp", "size": 10}) is True
 
     def test_does_not_skip_normal_file(self, loader):
         """Normal file within limits is not skipped."""
@@ -1742,7 +1749,7 @@ class TestCountFilesRecursive:
         items = {
             "value": [
                 {"name": "doc.pdf", "size": 100, "file": {}},
-                {"name": "photo.jpg", "size": 50, "file": {}},
+                {"name": "photo.bmp", "size": 50, "file": {}},
             ]
         }
 
@@ -1750,7 +1757,7 @@ class TestCountFilesRecursive:
             total, skipped = loader._count_files_recursive("site-id", "drive-id")
 
         assert total == 2
-        assert skipped == 1  # .jpg is in SKIP_EXTENSIONS
+        assert skipped == 1  # .bmp is in SKIP_EXTENSIONS
 
     @patch('codemie.datasource.loader.sharepoint_loader.SHAREPOINT_CONFIG')
     def test_recurses_into_subfolders(self, mock_config, loader):

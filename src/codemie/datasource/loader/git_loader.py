@@ -159,14 +159,15 @@ class GitBatchLoader(GitLoader, BaseDatasourceLoader):
     UNIQUE_EXTENSIONS_KEY = 'unique_extensions'
 
     def __init__(self, *args, **kwargs):
-        # Extract auth_header and request_uuid before passing to parent
+        # Extract auth_header, request_uuid, and datasource_id before passing to parent
         self.auth_header = kwargs.pop('auth_header', None)
         self.request_uuid: str | None = kwargs.pop('request_uuid', None)
+        self.datasource_id: str = kwargs.pop('datasource_id', "")
         super().__init__(*args, **kwargs)
         self.repo = None
 
     @classmethod
-    def create_loader(cls, repo: GitRepo, creds: Credentials, request_uuid: str | None = None):
+    def create_loader(cls, repo: GitRepo, creds: Credentials, request_uuid: str | None = None, datasource_id: str = ""):
         repo_local_path = repo.get_repo_local_file_path()
         clone_url = _build_clone_url(creds, repo)
 
@@ -181,6 +182,7 @@ class GitBatchLoader(GitLoader, BaseDatasourceLoader):
             branch=repo.branch,
             auth_header=auth_header,
             request_uuid=request_uuid,
+            datasource_id=datasource_id,
             file_filter=lambda file_path: check_file_type(
                 file_name=file_path,
                 files_filter=repo.files_filter,
@@ -373,6 +375,7 @@ class GitBatchLoader(GitLoader, BaseDatasourceLoader):
                 file_bytes=content,
                 file_name=file_name,
                 request_uuid=self.request_uuid,
+                datasource_id=self.datasource_id,
             )
             for doc in documents:
                 doc.metadata["source"] = rel_file_path

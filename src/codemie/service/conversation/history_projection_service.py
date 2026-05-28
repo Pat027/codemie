@@ -53,6 +53,7 @@ class ToolReplayRecord:
     result_text: str
     result_summary: str
     preserve_full_output: bool = False
+    image_artifacts: list[dict] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -186,6 +187,7 @@ class ConversationHistoryProjectionService:
                     result_text=result_text,
                     result_summary=result_summary,
                     preserve_full_output=preserve_full_output,
+                    image_artifacts=metadata.get("image_artifacts", []),
                 )
             )
 
@@ -425,13 +427,14 @@ class ConversationHistoryProjectionService:
                 "type": "tool_call",
             }
             messages.append(AIMessage(content="", tool_calls=[tool_call]))
-            messages.append(
-                ToolMessage(
-                    tool_call_id=record.call_id,
-                    content=cls._render_tool_result_content(record, use_full_results, use_summaries),
-                    additional_kwargs={"name": record.tool_name},
-                )
+            tool_msg = ToolMessage(
+                tool_call_id=record.call_id,
+                content=cls._render_tool_result_content(record, use_full_results, use_summaries),
+                additional_kwargs={"name": record.tool_name},
             )
+            if record.image_artifacts:
+                tool_msg.artifact = record.image_artifacts
+            messages.append(tool_msg)
         return messages
 
     @classmethod

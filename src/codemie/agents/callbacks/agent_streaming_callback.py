@@ -244,6 +244,15 @@ class AgentStreamingCallback(StreamingStdOutCallbackHandler):
         )
         if thought:
             _update_tool_replay_metadata(thought.metadata, output, is_error=False)
+            artifact = kwargs.get("artifact")
+            if artifact and isinstance(artifact, list) and thought.metadata:
+                image_data = [
+                    {"data": item["data"], "mime_type": item["mime_type"]}
+                    for item in artifact
+                    if isinstance(item, dict) and "data" in item and "mime_type" in item
+                ]
+                if image_data:
+                    thought.metadata["image_artifacts"] = image_data
         logger.debug(
             f"Streaming callback tool end. Tool={getattr(thought, 'author_name', None)}, "
             f"Output={_truncate_for_log(str(output))}, ReplayMetadata={getattr(thought, 'metadata', None)}"

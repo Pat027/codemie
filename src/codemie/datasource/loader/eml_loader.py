@@ -36,9 +36,10 @@ class EmlLoader:
     (dispatched through extract_documents_from_bytes) when include_email_attachments=True.
     """
 
-    def __init__(self, file_path: str, include_email_attachments: bool = True) -> None:
+    def __init__(self, file_path: str, include_email_attachments: bool = True, datasource_id: str = "") -> None:
         self.file_path = file_path
         self.include_email_attachments = include_email_attachments
+        self.datasource_id = datasource_id
 
     def lazy_load(self) -> Iterator[Document]:
         with open(self.file_path, "rb") as f:
@@ -141,6 +142,7 @@ class EmlLoader:
                 docs = extract_documents_from_bytes(
                     file_bytes=attachment_bytes,
                     file_name=filename,
+                    datasource_id=self.datasource_id,
                 )
                 for doc in docs:
                     doc.metadata["email_source"] = email_source

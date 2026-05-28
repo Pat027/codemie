@@ -1,4 +1,4 @@
-# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
+# Copyright 2026 EPAM Systems, Inc. ("EPAM")
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Type, List, Optional
 
-from pydantic import BaseModel, Field
 from langchain_core.documents import Document
 from langchain_core.tools import ToolException
+from pydantic import BaseModel, Field
 
 from codemie_tools.base.constants import SOURCE_DOCUMENT_KEY, SOURCE_FIELD_KEY, FILE_CONTENT_FIELD_KEY
 from codemie_tools.base.codemie_tool import CodeMieTool
@@ -29,7 +28,9 @@ from codemie.configs import logger
 from codemie.core.constants import REQUEST_ID
 from codemie.core.dependecies import get_llm_by_credentials
 from codemie.datasource.google_doc.google_doc_datasource_processor import GoogleDocDatasourceProcessor
+from codemie.datasource.loader.models import is_image_document_metadata
 from codemie.rest_api.models.index import IndexInfo, IndexInfoType
+from codemie.service.file_service.file_service import FileService
 from codemie.service.search_and_rerank import SearchAndRerankKB
 from codemie.service.search_and_rerank.marketplace import SearchAndRerankMarketplace
 from codemie.service.constants import FullDatasourceTypes
@@ -54,9 +55,19 @@ class SearchInput(BaseModel):
 
 
 class LLMRouting(BaseModel):
-    sections: List[str] = Field(
+    sections: list[str] = Field(
         description="List of relevant sections numbers from the knowledge base to return",
     )
+
+
+class SearchKBResponse(BaseModel):
+    """Carries KB text response alongside image artifacts for multimodal delivery."""
+
+    text: str
+    image_artifacts: list[dict]
+
+    def __str__(self) -> str:
+        return self.text
 
 
 class SearchKBTool(CodeMieTool, DatasourceHealthMixin):
@@ -67,8 +78,9 @@ class SearchKBTool(CodeMieTool, DatasourceHealthMixin):
         "Bellow is the truncated output:\n"
     )
 
-    index_info: Optional[IndexInfo] = None
-    llm_model: Optional[str] = None
+    response_format: str = "content_and_artifact"
+    index_info: IndexInfo | None = None
+    llm_model: str | None = None
     base_name: str = "search_kb"
     name_template: str = base_name + "_{}"
     tokens_size_limit: int = Field(default_factory=lambda: 20000)
@@ -80,7 +92,7 @@ class SearchKBTool(CodeMieTool, DatasourceHealthMixin):
     """
     name: str = name_template.format("default")
     description: str = description_template.format("default")
-    args_schema: Type[BaseModel] = SearchInput
+    args_schema: type[BaseModel] = SearchInput
 
     def __init__(self, index_info: IndexInfo, llm_model: str):
         super().__init__()
@@ -91,18 +103,18 @@ class SearchKBTool(CodeMieTool, DatasourceHealthMixin):
             index_info.description
         )
 
-    def execute(self, query: str, **kwargs):
+    def execute(self, query: str, **kwargs) -> SearchKBResponse:
         if self.index_info and self.index_info.error:
             raise ToolException(self._build_health_notice())
         notice = self._build_health_notice()
 
         if self.index_info and ("llm_routing" in self.index_info.index_type):
-            return self._wrap_result(self.process_llm_routing_index(query=query, kb_index=self.index_info), notice)
+            text = self.process_llm_routing_index(query=query, kb_index=self.index_info)
+            return SearchKBResponse(text=str(self._wrap_result(str(text), notice)), image_artifacts=[])
 
         if self.index_info and (self.index_info.index_type == IndexInfoType.KB_BEDROCK.value):
-            return self._wrap_result(
-                self.process_knowledge_base_bedrock_index(query=query, kb_index=self.index_info), notice
-            )
+            text = self.process_knowledge_base_bedrock_index(query=query, kb_index=self.index_info)
+            return SearchKBResponse(text=str(self._wrap_result(str(text), notice)), image_artifacts=[])
         else:
             request_id = self.metadata.get(REQUEST_ID)
 
@@ -119,10 +131,44 @@ class SearchKBTool(CodeMieTool, DatasourceHealthMixin):
                 request_id=request_id,
             ).execute()
 
-        return self._wrap_result(self.format_response(data), notice)
+        return SearchKBResponse(
+            text=str(self._wrap_result(self.format_response(data), notice)),
+            image_artifacts=self._collect_image_artifacts(data),
+        )
 
-    def format_document(self, doc):
-        source = doc.metadata['source']
+    def _collect_image_artifacts(self, data: list[Document] | tuple[list[Document], list[str]]) -> list[dict]:
+        docs = data[0] if isinstance(data, tuple) else data
+        artifacts: list[dict] = []
+        for doc in docs:
+            if not isinstance(doc, Document):
+                continue
+            meta = doc.metadata
+            if not is_image_document_metadata(meta):
+                continue
+            try:
+                b64 = FileService.get_image_base64(meta["image_encoded_url"])
+            except Exception as e:
+                logger.warning(f"Failed to fetch image artifact for url={meta['image_encoded_url']!r}: {e}")
+                continue
+            artifacts.append({"data": b64, "mime_type": meta["image_mime_type"]})
+        logger.debug(f"search_kb: retrieved {len(docs)} docs, {len(artifacts)} image artifacts")
+        return artifacts
+
+    def _limit_output_content(self, output: SearchKBResponse) -> tuple[SearchKBResponse, int]:
+        """Token-limit only the text portion; image artifacts are not plain text."""
+        limited_text, token_count = super()._limit_output_content(output.text)
+        return SearchKBResponse(
+            text=limited_text if isinstance(limited_text, str) else str(limited_text),
+            image_artifacts=output.image_artifacts,
+        ), token_count
+
+    def _post_process_output_content(self, output: SearchKBResponse, *args, **kwargs) -> tuple[str, list[dict]]:
+        """Return a ``(content, artifact)`` tuple consumed by ``_image_artifact_pre_model_hook``."""
+        text = super()._post_process_output_content(output.text, *args, **kwargs)
+        return text, output.image_artifacts
+
+    def format_document(self, doc: Document) -> str:
+        source = doc.metadata.get('source', '')
         chunk_num = f"-{doc.metadata['chunk_num']}" if 'chunk_num' in doc.metadata else ""
         source_field = f"{source}{chunk_num}"
 
@@ -132,13 +178,10 @@ class SearchKBTool(CodeMieTool, DatasourceHealthMixin):
             f"{FILE_CONTENT_FIELD_KEY} \n{doc.page_content}\n"
         )
 
-    def format_response(self, documents: List[Document]):
-        try:
-            docs = documents[0] if isinstance(documents, tuple) else documents
-            return "\n".join(self.format_document(doc) for doc in docs)
-        except Exception as e:
-            logger.error(f"Error while formatting response: {e}")
-            return documents
+    def format_response(self, documents: list[Document] | tuple[list[Document], list[str]]) -> str:
+        if isinstance(documents, tuple):
+            return str(documents[1]) + "\n" + "\n".join(self.format_document(doc) for doc in documents[0])
+        return "\n".join(self.format_document(doc) for doc in documents)
 
     def process_llm_routing_index(self, query: str, kb_index):
         request_id = self.metadata.get(REQUEST_ID)

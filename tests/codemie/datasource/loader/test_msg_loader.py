@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 from langchain_core.documents import Document
 
-from codemie.datasource.loader.msg_loader import (
+from codemie.datasource.loader.binary.msg_loader import (
     OutlookMsgWithAttachmentsLoader,
     _read_stream_text,
     _read_stream_bytes,

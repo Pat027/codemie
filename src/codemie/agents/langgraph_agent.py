@@ -1327,8 +1327,9 @@ class LangGraphAgent(WorkspaceAwareAgent):
         output,
         run_id: UUID,
         author: str | None = None,
+        artifact=None,
     ):
-        self._callback_bridge.on_tool_end(output, run_id, author=author)
+        self._callback_bridge.on_tool_end(output, run_id, author=author, artifact=artifact)
 
     def _on_supervisor_handoff(
         self,

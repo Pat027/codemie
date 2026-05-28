@@ -270,6 +270,15 @@ class AgentInvokeCallback(StreamingStdOutCallbackHandler):
         current_thought.in_progress = False
         replay_metadata = getattr(current_thought, "metadata", None)
         _update_tool_replay_metadata(replay_metadata, output, is_error=False)
+        artifact = kwargs.get("artifact")
+        if artifact and isinstance(artifact, list) and replay_metadata:
+            image_data = [
+                {"data": item["data"], "mime_type": item["mime_type"]}
+                for item in artifact
+                if isinstance(item, dict) and "data" in item and "mime_type" in item
+            ]
+            if image_data:
+                replay_metadata["image_artifacts"] = image_data
         logger.debug(
             f"Invoke callback tool end. Tool={current_thought.author_name}, "
             f"Output={_truncate_for_log(str(output))}, ReplayMetadata={replay_metadata}"

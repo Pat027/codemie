@@ -129,7 +129,9 @@ class TestLangGraphAgent:
         agent_for_parse_update._LangGraphAgent__parse_update_type(value)
 
         # Should call _on_tool_end with the content (run_id is added internally)
-        agent_for_parse_update._on_tool_end.assert_called_once_with("Result: success", run_id=ANY, author=None)
+        agent_for_parse_update._on_tool_end.assert_called_once_with(
+            "Result: success", run_id=ANY, author=None, artifact=None
+        )
         agent_for_parse_update._on_tool_error.assert_not_called()
         agent_for_parse_update._on_tool_start.assert_not_called()
 
@@ -604,7 +606,7 @@ class TestLangGraphAgent:
         success_action.content = "Tool succeeded"
         success_action.tool_call_id = "call-success"
         agent._parse_tool_message(success_action)
-        agent._on_tool_end.assert_called_once_with("Tool succeeded", run_id=ANY, author=None)
+        agent._on_tool_end.assert_called_once_with("Tool succeeded", run_id=ANY, author=None, artifact=None)
         agent._on_tool_error.assert_not_called()
 
     def test_parse_tool_message_unknown_status(self, monkeypatch, agent):
@@ -624,7 +626,7 @@ class TestLangGraphAgent:
             agent._parse_tool_message(action)
             mock_warning.assert_called_once()
             assert "Unknown tool action status: pending" in mock_warning.call_args[0][0]
-            agent._on_tool_end.assert_called_once_with("Waiting...", run_id=ANY, author=None)
+            agent._on_tool_end.assert_called_once_with("Waiting...", run_id=ANY, author=None, artifact=None)
             agent._on_tool_error.assert_not_called()
 
     def test_invoke_with_a2a_output(self, agent):

@@ -384,6 +384,7 @@ class TestGitBatchLoader(unittest.TestCase):
             file_bytes=b"content",
             file_name="doc.docx",
             request_uuid=None,
+            datasource_id="",
         )
 
 

@@ -27,6 +27,7 @@ from typing import Dict
 from codemie.core.utils import (
     calculate_token_cost,
     extract_text_from_llm_output,
+    format_file_size,
     format_json_content,
     format_markdown_content,
     append_random_suffix,
@@ -469,3 +470,23 @@ def test_append_random_suffix_empty_base():
     result = append_random_suffix("")
     assert result.startswith("_")
     assert len(result) == 16
+
+
+class TestFormatFileSize:
+    @pytest.mark.parametrize(
+        "size_bytes, expected",
+        [
+            (0, "0 B"),
+            (512, "512 B"),
+            (1023, "1023 B"),
+            (1024, "1 KB"),
+            (1536, "1 KB"),
+            (1024 * 1024, "1 MB"),
+            (10 * 1024 * 1024, "10 MB"),
+            (100 * 1024 * 1024, "100 MB"),
+            (1024 * 1024 * 1024, "1 GB"),
+            (1024 * 1024 * 1024 * 1024, "1 TB"),
+        ],
+    )
+    def test_format_file_size(self, size_bytes, expected):
+        assert format_file_size(size_bytes) == expected

@@ -15,7 +15,8 @@
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from codemie.agents.langgraph_agent import _compose_pre_model_hooks, _image_artifact_pre_model_hook
+from codemie.agents.image_artifact_hook import image_artifact_pre_model_hook as _image_artifact_pre_model_hook
+from codemie.agents.langgraph_agent import _compose_pre_model_hooks
 
 
 def _make_tool_message(content: str = "ok", artifact=None, **kwargs) -> ToolMessage:
@@ -45,7 +46,7 @@ class TestHookNoOp:
             _make_tool_message(content="HTTP: GET ... 200 OK"),
         ]
         result = _image_artifact_pre_model_hook({"messages": messages})
-        assert result["llm_input_messages"] is messages
+        assert result["llm_input_messages"] == messages
 
     def test_artifact_is_none(self) -> None:
         messages = [
@@ -53,7 +54,7 @@ class TestHookNoOp:
             _make_tool_message(content="text", artifact=None),
         ]
         result = _image_artifact_pre_model_hook({"messages": messages})
-        assert result["llm_input_messages"] is messages
+        assert result["llm_input_messages"] == messages
 
     def test_artifact_without_image_keys(self) -> None:
         messages = [
@@ -61,7 +62,7 @@ class TestHookNoOp:
             _make_tool_message(content="text", artifact=[{"some": "data"}]),
         ]
         result = _image_artifact_pre_model_hook({"messages": messages})
-        assert result["llm_input_messages"] is messages
+        assert result["llm_input_messages"] == messages
 
 
 class TestHookInjectsImages:
@@ -79,11 +80,16 @@ class TestHookInjectsImages:
         assert len(llm_messages) == len(messages) + 1
         injected = llm_messages[-1]
         assert isinstance(injected, HumanMessage)
+        assert isinstance(injected.content, list)
         assert len(injected.content) == 2
-        assert injected.content[0]["type"] == "text"
-        assert injected.content[1]["type"] == "image"
-        assert injected.content[1]["data"] == "base64data"
-        assert injected.content[1]["mime_type"] == "image/png"
+        text_block = injected.content[0]
+        image_block = injected.content[1]
+        assert isinstance(text_block, dict)
+        assert isinstance(image_block, dict)
+        assert text_block["type"] == "text"
+        assert image_block["type"] == "image"
+        assert image_block["base64"] == "base64data"
+        assert image_block["mime_type"] == "image/png"
 
     def test_injects_multiple_images_from_one_tool(self) -> None:
         artifact = [
@@ -114,40 +120,54 @@ class TestHookInjectsImages:
 
 
 class TestHookScoping:
-    def test_only_injects_from_current_round(self) -> None:
-        """Images from an earlier round (before the last AIMessage) should NOT be injected."""
+    def test_injects_images_inline_after_each_tool_group(self) -> None:
+        """Images are placed right after the ToolMessage that produced them."""
         old_artifact = [{"data": "old_image", "mime_type": "image/png"}]
         new_artifact = [{"data": "new_image", "mime_type": "image/jpeg"}]
 
         messages = [
-            # Round 1: tool with image → AI responded
             _make_ai_message(content="", tool_calls=[{"name": "jira", "args": {}, "id": "call_1"}]),
             _make_tool_message(content="round1", artifact=old_artifact),
             _make_ai_message(content="I analyzed the old image"),
-            # Round 2: another tool call with new image
             _make_ai_message(content="", tool_calls=[{"name": "jira", "args": {}, "id": "call_2"}]),
             ToolMessage(content="round2", tool_call_id="call_2", artifact=new_artifact),
         ]
 
         result = _image_artifact_pre_model_hook({"messages": messages})
-        injected = result["llm_input_messages"][-1]
+        output = result["llm_input_messages"]
 
-        assert isinstance(injected, HumanMessage)
-        assert len(injected.content) == 2  # 1 text + 1 image
-        assert injected.content[1]["data"] == "new_image"
+        # Images from round 1 are injected after TM1 (before AI response)
+        assert isinstance(output[2], HumanMessage)
+        assert isinstance(output[2].content, list)
+        block1 = output[2].content[1]
+        assert isinstance(block1, dict)
+        assert block1["base64"] == "old_image"
+        # Images from round 2 are injected at the end (after TM2)
+        assert isinstance(output[-1], HumanMessage)
+        assert isinstance(output[-1].content, list)
+        block2 = output[-1].content[1]
+        assert isinstance(block2, dict)
+        assert block2["base64"] == "new_image"
 
-    def test_no_injection_after_ai_with_no_tools(self) -> None:
-        """If the last message is an AIMessage (no pending tool results), no injection."""
+    def test_injection_persists_after_ai_response(self) -> None:
+        """Images are injected inline even when AI has already responded."""
         artifact = [{"data": "img", "mime_type": "image/png"}]
         messages = [
             _make_ai_message(content="", tool_calls=[{"name": "jira", "args": {}, "id": "call_1"}]),
             _make_tool_message(content="ok", artifact=artifact),
-            _make_ai_message(content="Done analyzing"),  # AI already responded
+            _make_ai_message(content="Done analyzing"),
         ]
 
         result = _image_artifact_pre_model_hook({"messages": messages})
-        # Last message is AIMessage → reverse walk hits it immediately → no images
-        assert result["llm_input_messages"] is messages
+        output = result["llm_input_messages"]
+        # Image is placed after TM, before AI response
+        assert isinstance(output[2], HumanMessage)
+        assert isinstance(output[2].content, list)
+        img_block = output[2].content[1]
+        assert isinstance(img_block, dict)
+        assert img_block["base64"] == "img"
+        # AI response follows
+        assert isinstance(output[3], AIMessage)
 
 
 class TestComposePreModelHooks:
@@ -171,22 +191,27 @@ class TestComposePreModelHooks:
             return {"llm_input_messages": compacted_messages}
 
         combined_hook = _compose_pre_model_hooks(compaction_hook, _image_artifact_pre_model_hook)
+        assert combined_hook is not None
 
         result = combined_hook({"messages": original_messages})
 
         assert result["llm_input_messages"][:-1] == compacted_messages
         injected = result["llm_input_messages"][-1]
         assert isinstance(injected, HumanMessage)
-        assert injected.content[1]["data"] == "new"
+        assert isinstance(injected.content, list)
+        injected_block = injected.content[1]
+        assert isinstance(injected_block, dict)
+        assert injected_block["base64"] == "new"
 
     def test_preserves_other_hook_updates(self) -> None:
-        def hook_one(state: dict) -> dict:
+        def hook_one(_state: dict) -> dict:
             return {"custom": "value"}
 
         def hook_two(state: dict) -> dict:
             return {"llm_input_messages": state["messages"]}
 
         combined_hook = _compose_pre_model_hooks(hook_one, hook_two)
+        assert combined_hook is not None
 
         assert combined_hook({"messages": [HumanMessage(content="hi")]}) == {
             "custom": "value",

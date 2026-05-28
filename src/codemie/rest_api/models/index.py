@@ -28,6 +28,7 @@ from codemie.configs import logger, config
 from codemie.core.ability import Ability, Owned, Action
 from codemie.core.models import CreatedByUser, GitRepo, KnowledgeBase, TokensUsage, sanitize_es_index_name
 from codemie.datasource.datasources_config import CONFLUENCE_CONFIG, STORAGE_CONFIG
+from codemie.core.utils import get_file_extension, format_file_size
 from codemie.rest_api.models.base import BaseModelWithSQLSupport, PydanticType
 from codemie.rest_api.models.guardrail import GuardrailAssignmentItem, GuardrailEntity
 from codemie.rest_api.security.user import User
@@ -1444,10 +1445,15 @@ class IndexKnowledgeBaseFileTypes(Enum):
     IMAGE = 'jpg'
     JPEG = 'jpeg'
     PNG = 'png'
+    GIF = 'gif'
 
     @classmethod
     def values(cls):
         return [item.value for item in cls]
+
+    @classmethod
+    def image_extensions(cls) -> frozenset[str]:
+        return frozenset({cls.IMAGE.value, cls.JPEG.value, cls.PNG.value, cls.GIF.value})
 
 
 class IndexKnowledgeBaseFileRequest(IndexKnowledgeBaseRequest):
@@ -1503,7 +1509,24 @@ class IndexKnowledgeBaseFileRequest(IndexKnowledgeBaseRequest):
                     [
                         {
                             "loc": ["files"],
-                            "msg": f"File too large. Maximum size is {config.FILES_STORAGE_MAX_UPLOAD_SIZE} bytes",
+                            "msg": (
+                                f"File too large. Maximum size is "
+                                f"{format_file_size(config.FILES_STORAGE_MAX_UPLOAD_SIZE)}"
+                            ),
+                            "type": "value_error",
+                        }
+                    ]
+                )
+            is_image = get_file_extension(file.filename or "") in IndexKnowledgeBaseFileTypes.image_extensions()
+            if is_image and file.size > config.IMAGE_INDEXING_MAX_SIZE_BYTES:
+                raise RequestValidationError(
+                    [
+                        {
+                            "loc": ["files"],
+                            "msg": (
+                                f"Image file '{file.filename}' is too large. "
+                                f"Maximum size for images is {format_file_size(config.IMAGE_INDEXING_MAX_SIZE_BYTES)}"
+                            ),
                             "type": "value_error",
                         }
                     ]

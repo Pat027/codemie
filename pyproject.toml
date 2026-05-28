@@ -114,6 +114,7 @@ msrest = "0.7.1"
 openapi-schema-pydantic = "^1.2.4"
 packaging = ">=24.0"
 pandas = "^2.2.2"
+Pillow = "^12.1.1"
 psycopg = {extras = ["binary", "pool"], version = "^3.2.9"}
 pydantic = "^2.9.2"
 pydantic-settings = "^2.5.2"

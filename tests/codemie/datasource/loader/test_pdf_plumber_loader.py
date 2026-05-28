@@ -15,7 +15,7 @@
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 
-from codemie.datasource.loader.pdf_plumber_loader import PDFPlumberLoader
+from codemie.datasource.loader.binary.pdf_plumber_loader import PDFPlumberLoader
 from langchain_core.documents import Document
 
 

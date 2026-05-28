@@ -17,7 +17,13 @@ from unittest.mock import MagicMock, patch
 
 from langchain_core.documents import Document
 
-from codemie.datasource.loader.file_extraction_utils import extract_documents_from_bytes, is_binary_extractable
+from codemie.datasource.loader.binary.image_loader import ImageLoader
+from codemie.datasource.loader.file_extraction_utils import (
+    LOADERS,
+    extract_documents_from_bytes,
+    is_binary_extractable,
+)
+from codemie.rest_api.models.index import IndexKnowledgeBaseFileTypes
 
 
 class TestIsBinaryExtractable(unittest.TestCase):
@@ -46,6 +52,9 @@ class TestIsBinaryExtractable(unittest.TestCase):
 
     def test_returns_true_for_png(self):
         self.assertTrue(is_binary_extractable("screenshot.png"))
+
+    def test_returns_true_for_gif(self):
+        self.assertTrue(is_binary_extractable("animation.gif"))
 
     # --- text / unsupported extensions ---
 
@@ -104,7 +113,7 @@ class TestExtractDocumentsFromBytes(unittest.TestCase):
         utils.LOADERS["csv"] = mock_csv_loader_class
         try:
             # Act
-            result = extract_documents_from_bytes(b"col1,col2\nval1,val2", "data.csv")
+            result = extract_documents_from_bytes(b"col1,col2\nval1,val2", "data.csv", datasource_id="")
         finally:
             utils.LOADERS.update(original_loaders)
 
@@ -112,7 +121,7 @@ class TestExtractDocumentsFromBytes(unittest.TestCase):
         mock_csv_loader_class.assert_called_once()
         self.assertEqual(len(result), 1)
 
-    @patch("codemie.datasource.loader.file_extraction_utils._build_pdf_images_parser")
+    @patch("codemie.datasource.loader.file_extraction_utils._build_images_parser")
     def test_pdf_loader_selected_for_pdf_file(self, mock_build_parser):
         # Arrange — replace LOADERS entry for pdf with a mock loader class
         mock_build_parser.return_value = MagicMock()
@@ -126,7 +135,7 @@ class TestExtractDocumentsFromBytes(unittest.TestCase):
         utils.LOADERS["pdf"] = mock_pdf_loader_class
         try:
             # Act
-            result = extract_documents_from_bytes(b"%PDF-1.4 content", "report.pdf")
+            result = extract_documents_from_bytes(b"%PDF-1.4 content", "report.pdf", datasource_id="")
         finally:
             utils.LOADERS.update(original_loaders)
 
@@ -142,7 +151,7 @@ class TestExtractDocumentsFromBytes(unittest.TestCase):
         mock_plain_loader_class.return_value = self._make_mock_loader(mock_doc)
 
         # Act
-        result = extract_documents_from_bytes(b"plain content", "file.xyz")
+        result = extract_documents_from_bytes(b"plain content", "file.xyz", datasource_id="")
 
         # Assert
         mock_plain_loader_class.assert_called_once()
@@ -155,7 +164,7 @@ class TestExtractDocumentsFromBytes(unittest.TestCase):
         mock_plain_loader_class.return_value = self._make_mock_loader(mock_doc)
 
         # Act
-        result = extract_documents_from_bytes(b"data", "file.xyz")
+        result = extract_documents_from_bytes(b"data", "file.xyz", datasource_id="")
 
         # Assert — source must be overwritten with the original file name
         self.assertEqual(result[0].metadata["source"], "file.xyz")
@@ -168,7 +177,7 @@ class TestExtractDocumentsFromBytes(unittest.TestCase):
         mock_plain_loader_class.return_value = mock_loader_instance
 
         # Act
-        result = extract_documents_from_bytes(b"\xff\xfe bad bytes", "bad.xyz")
+        result = extract_documents_from_bytes(b"\xff\xfe bad bytes", "bad.xyz", datasource_id="")
 
         # Assert
         self.assertEqual(result, [])
@@ -181,7 +190,157 @@ class TestExtractDocumentsFromBytes(unittest.TestCase):
         mock_plain_loader_class.return_value = mock_loader_instance
 
         # Act
-        result = extract_documents_from_bytes(b"content", "file.xyz")
+        result = extract_documents_from_bytes(b"content", "file.xyz", datasource_id="")
 
         # Assert
         self.assertEqual(result, [])
+
+    @patch("codemie.datasource.loader.file_extraction_utils._build_images_parser")
+    def test_image_extension_uses_image_loader(self, mock_build_parser):
+        mock_build_parser.return_value = MagicMock()
+        mock_doc = Document(page_content="meta", metadata={"file_path": "/tmp/x.jpg"})
+        mock_loader_instance = self._make_mock_loader(mock_doc)
+
+        import codemie.datasource.loader.file_extraction_utils as utils
+
+        original_loaders = dict(utils.LOADERS)
+        utils.LOADERS["jpg"] = MagicMock(return_value=mock_loader_instance)
+        try:
+            result = extract_documents_from_bytes(b"fake", "photo.jpg", datasource_id="")
+        finally:
+            utils.LOADERS.update(original_loaders)
+
+        self.assertEqual(result[0].page_content, "meta")
+
+    @patch("codemie.datasource.loader.file_extraction_utils._build_images_parser")
+    def test_gif_extension_uses_image_loader(self, mock_build_parser):
+        mock_build_parser.return_value = MagicMock()
+        mock_doc = Document(page_content="gif meta", metadata={"file_path": "/tmp/x.gif"})
+        mock_loader_instance = self._make_mock_loader(mock_doc)
+
+        import codemie.datasource.loader.file_extraction_utils as utils
+
+        original_loaders = dict(utils.LOADERS)
+        utils.LOADERS["gif"] = MagicMock(return_value=mock_loader_instance)
+        try:
+            result = extract_documents_from_bytes(b"fake", "animation.gif", datasource_id="")
+        finally:
+            utils.LOADERS.update(original_loaders)
+
+        self.assertEqual(result[0].page_content, "gif meta")
+
+    @patch("codemie.datasource.loader.file_extraction_utils._build_images_parser")
+    def test_images_parser_passed_to_image_loader(self, mock_build_parser):
+        """ImageLoader must receive the images_parser built for the request."""
+        mock_parser = MagicMock()
+        mock_build_parser.return_value = mock_parser
+
+        mock_doc = Document(page_content="text", metadata={"file_path": "/tmp/x.png"})
+        captured_kwargs: dict = {}
+
+        class CapturePngLoader:
+            def __init__(self, _path, **kwargs):
+                captured_kwargs.update(kwargs)
+
+            def lazy_load(self):
+                return iter([mock_doc])
+
+        import codemie.datasource.loader.file_extraction_utils as utils
+
+        original_loaders = dict(utils.LOADERS)
+        utils.LOADERS["png"] = CapturePngLoader
+        try:
+            extract_documents_from_bytes(b"fake", "screenshot.png", datasource_id="")
+        finally:
+            utils.LOADERS.update(original_loaders)
+
+        assert captured_kwargs.get("images_parser") is mock_parser
+
+
+# ---------------------------------------------------------------------------
+# EPMCDME-9373: GIF support + image metadata extraction
+# ---------------------------------------------------------------------------
+
+
+class TestIndexKnowledgeBaseFileTypesGif:
+    """Verify the GIF enum member was added to IndexKnowledgeBaseFileTypes."""
+
+    def test_gif_member_exists_in_enum(self):
+        assert IndexKnowledgeBaseFileTypes.GIF.value == "gif"
+
+    def test_gif_value_present_in_loaders(self):
+        assert "gif" in LOADERS
+
+    def test_gif_loader_is_image_loader(self):
+        assert LOADERS["gif"] is ImageLoader
+
+    def test_gif_value_present_in_image_extensions(self):
+        assert "gif" in IndexKnowledgeBaseFileTypes.image_extensions()
+
+    def test_is_binary_extractable_returns_true_for_gif(self):
+        assert is_binary_extractable("animation.gif") is True
+
+    def test_is_binary_extractable_returns_true_for_uppercase_gif(self):
+        assert is_binary_extractable("ANIMATION.GIF") is True
+
+
+class TestDatasourceIdThreading(unittest.TestCase):
+    """Verify datasource_id flows into DatasourceFileStorage injected into ImageLoader."""
+
+    @patch("codemie.datasource.loader.file_extraction_utils.FileRepositoryFactory")
+    @patch("codemie.datasource.loader.file_extraction_utils._build_images_parser")
+    def test_storage_injected_with_correct_owner_for_image(self, mock_build_parser, mock_factory):
+        mock_build_parser.return_value = MagicMock()
+        mock_repo = MagicMock()
+        mock_factory.get_current_repository.return_value = mock_repo
+
+        captured_kwargs: dict = {}
+
+        class CapturePngLoader:
+            def __init__(self, _path, **kwargs):
+                captured_kwargs.update(kwargs)
+
+            def lazy_load(self):
+                return iter([])
+
+        import codemie.datasource.loader.file_extraction_utils as utils
+
+        original = dict(utils.LOADERS)
+        utils.LOADERS["png"] = CapturePngLoader
+        try:
+            extract_documents_from_bytes(b"fake", "photo.png", datasource_id="test-uuid")
+        finally:
+            utils.LOADERS.update(original)
+
+        storage = captured_kwargs.get("storage")
+        assert storage is not None
+        self.assertEqual(storage._owner, "datasource-test-uuid")
+
+    @patch("codemie.datasource.loader.file_extraction_utils.FileRepositoryFactory")
+    @patch("codemie.datasource.loader.file_extraction_utils._build_images_parser")
+    def test_no_storage_injected_when_datasource_id_empty(self, mock_build_parser, mock_factory):
+        mock_build_parser.return_value = MagicMock()
+        mock_factory.get_current_repository.return_value = MagicMock()
+
+        captured_kwargs: dict = {}
+
+        class CapturePngLoader:
+            def __init__(self, _path, **kwargs):
+                captured_kwargs.update(kwargs)
+
+            def lazy_load(self):
+                return iter([])
+
+        import codemie.datasource.loader.file_extraction_utils as utils
+
+        original = dict(utils.LOADERS)
+        utils.LOADERS["png"] = CapturePngLoader
+        try:
+            extract_documents_from_bytes(b"fake", "photo.png", datasource_id="")
+        finally:
+            utils.LOADERS.update(original)
+
+        # Empty datasource_id still creates storage but with prefix-only owner
+        storage = captured_kwargs.get("storage")
+        assert storage is not None
+        self.assertEqual(storage._owner, "datasource-")

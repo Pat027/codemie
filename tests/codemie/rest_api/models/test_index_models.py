@@ -49,6 +49,7 @@ class TestIndexKnowledgeBaseFileTypes:
             'jpg',
             'jpeg',
             'png',
+            'gif',
         ]
 
 
@@ -90,6 +91,42 @@ class TestIndexKnowledgeBaseFileRequest:
 
         with pytest.raises(RequestValidationError):
             IndexKnowledgeBaseFileRequest(**mock_attrs, files=[mock_file])
+
+    @pytest.mark.parametrize("filename", ["photo.jpg", "photo.jpeg", "photo.png", "photo.gif", "photo.JPG"])
+    def test_validate_image_too_large_raises(self, mock_attrs, filename):
+        mock_file = MagicMock(spec=UploadFile)
+        mock_file.size = 10 * 1024 * 1024 + 1
+        mock_file.filename = filename
+
+        with pytest.raises(RequestValidationError) as exc_info:
+            IndexKnowledgeBaseFileRequest(**mock_attrs, files=[mock_file])
+
+        assert "too large" in str(exc_info.value).lower()
+
+    @pytest.mark.parametrize("filename", ["photo.jpg", "photo.jpeg", "photo.png", "photo.gif"])
+    def test_validate_image_within_limit_ok(self, mock_attrs, filename):
+        mock_file = MagicMock(spec=UploadFile)
+        mock_file.size = 10 * 1024 * 1024
+        mock_file.filename = filename
+
+        assert IndexKnowledgeBaseFileRequest(**mock_attrs, files=[mock_file])
+
+    def test_validate_non_image_above_image_limit_ok(self, mock_attrs):
+        mock_file = MagicMock(spec=UploadFile)
+        mock_file.size = 50 * 1024 * 1024
+        mock_file.filename = 'document.pdf'
+
+        assert IndexKnowledgeBaseFileRequest(**mock_attrs, files=[mock_file])
+
+    def test_validate_image_error_message_contains_filename(self, mock_attrs):
+        mock_file = MagicMock(spec=UploadFile)
+        mock_file.size = 10 * 1024 * 1024 + 1
+        mock_file.filename = 'my_photo.png'
+
+        with pytest.raises(RequestValidationError) as exc_info:
+            IndexKnowledgeBaseFileRequest(**mock_attrs, files=[mock_file])
+
+        assert "my_photo.png" in str(exc_info.value)
 
 
 class TestIndexKnowledgeBaseRequest:

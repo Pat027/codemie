@@ -682,3 +682,17 @@ def get_api_root_path() -> str:
         - `config.API_ROOT_PATH = None` -> `""`
     """
     return f"/{config.API_ROOT_PATH.strip('/')}" if config.API_ROOT_PATH else ""
+
+
+def get_file_extension(filename: str) -> str:
+    """Return the lowercase file extension without a leading dot (e.g. 'jpg' for 'photo.JPG')."""
+    return os.path.splitext(filename)[1].lower().lstrip(".")
+
+
+def format_file_size(size_bytes: int) -> str:
+    """Return a human-readable file size string (e.g. '10 MB', '512 KB')."""
+    for unit in ("B", "KB", "MB", "GB"):
+        if size_bytes < 1024:
+            return f"{size_bytes} {unit}"
+        size_bytes //= 1024
+    return f"{size_bytes} TB"

@@ -185,6 +185,7 @@ class SharePointDatasourceProcessor(BaseDatasourceProcessor):
             files_filter=self.files_filter,
             request_uuid=self.request_uuid,
             modified_since=modified_since,
+            datasource_id=self.index.id or "" if self.index else "",
         )
 
     def _cleanup_data_for_incremental_reindex(self, docs_to_be_indexed: list[Document]) -> None:
