@@ -82,6 +82,47 @@ class AssistantIntegrationValidator:
 
         return AssistantIntegrationValidator._build_validation_result(main_grouped, sub_grouped)
 
+    @classmethod
+    def collect_missing_integrations(
+        cls,
+        assistant: Assistant,
+        user: User,
+        project_name: str,
+    ) -> List[MissingIntegration]:
+        """
+        Collect missing integrations for a persisted assistant, including its sub-assistants.
+
+        Unlike `validate_integrations` (which operates on an `AssistantRequest` and returns a
+        grouped, message-oriented `IntegrationValidationResult`), this method works with an
+        already persisted `Assistant` and returns a flat list of `MissingIntegration` items.
+
+        It validates both the assistant's own toolkits and the toolkits of its sub-assistants
+        (orchestrator pattern, one level deep - sub-assistants cannot themselves be orchestrators).
+
+        Args:
+            assistant: Persisted assistant to validate.
+            user: User requesting validation.
+            project_name: Project name for scoped credentials.
+
+        Returns:
+            Flat list of missing integrations for the assistant and its sub-assistants.
+        """
+        missing = cls._validate_toolkits(
+            assistant.toolkits or [],
+            user,
+            project_name,
+            assistant_id=assistant.id,
+        )
+
+        sub_missing = cls._validate_sub_assistants(
+            assistant.assistant_ids or [],
+            user,
+            project_name,
+        )
+        missing.extend(missing_integration for missing_integration, *_ in sub_missing)
+
+        return missing
+
     @staticmethod
     def _validate_sub_assistants(
         assistant_ids: List[str],

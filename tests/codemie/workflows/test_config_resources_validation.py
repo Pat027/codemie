@@ -212,13 +212,17 @@ def test_validate_assistants_availability_all_available(mock_is_assistant_availa
 
 
 @patch("codemie.workflows.validation.resources._is_tool_available", return_value=True)
+@patch("codemie.workflows.validation.resources._tool_requires_missing_integration", return_value=(False, None))
 def test_validate_tools_from_assistants_availability_all_available(
-    mock_is_tool_available, mock_workflow_config, mock_user
+    mock_requires_missing, mock_is_tool_available, mock_workflow_config, mock_user
 ):
     mock_workflow_config.assistants = [MagicMock(tools=[MagicMock(name="Tool A", integration_alias=None)])]
-    unavailable, invalid_integration = _validate_tools_from_assistants_availability(mock_workflow_config, mock_user)
+    unavailable, invalid_integration, missing_integration = _validate_tools_from_assistants_availability(
+        mock_workflow_config, mock_user
+    )
     assert unavailable == []
     assert invalid_integration == []
+    assert missing_integration == []
 
 
 @patch("codemie.workflows.validation.resources._is_tool_available", return_value=False)
@@ -273,8 +277,14 @@ def mock_workflow_config():
 @patch("codemie.workflows.validation.resources._is_assistant_available", return_value=True)
 @patch("codemie.workflows.validation.resources._is_tool_available", return_value=True)
 @patch("codemie.workflows.validation.resources._is_datasource_available", return_value=True)
+@patch("codemie.workflows.validation.resources._validate_referenced_assistants_integrations", return_value=[])
 def test_validate_workflow_config_resources_availability_all_available(
-    mock_is_datasource_available, mock_tool_available, mock_assistant_available, mock_workflow_config, mock_user
+    mock_ref_integrations,
+    mock_is_datasource_available,
+    mock_tool_available,
+    mock_assistant_available,
+    mock_workflow_config,
+    mock_user,
 ):
     validate_workflow_config_resources_availability(mock_workflow_config, mock_user)
 
@@ -282,8 +292,14 @@ def test_validate_workflow_config_resources_availability_all_available(
 @patch("codemie.workflows.validation.resources._is_assistant_available", return_value=False)
 @patch("codemie.workflows.validation.resources._is_tool_available", return_value=False)
 @patch("codemie.workflows.validation.resources._is_datasource_available", return_value=None)
+@patch("codemie.workflows.validation.resources._validate_referenced_assistants_integrations", return_value=[])
 def test_validate_workflow_config_resources_availability_multiple_unavailable_resources(
-    mock_is_datasource_available, mock_tool_available, mock_assistant_available, mock_workflow_config, mock_user
+    mock_ref_integrations,
+    mock_is_datasource_available,
+    mock_tool_available,
+    mock_assistant_available,
+    mock_workflow_config,
+    mock_user,
 ):
     with pytest.raises(WorkflowConfigResourcesValidationError) as exc_info:
         validate_workflow_config_resources_availability(mock_workflow_config, mock_user)
@@ -421,9 +437,12 @@ def test_validate_tools_from_assistants_availability_some_unavailable(
     tool_mock.integration_alias = None
     mock_workflow_config.assistants = [MagicMock(id="asst_ref_1", tools=[tool_mock])]
     mock_workflow_config.states = [MagicMock(id="state_1", assistant_id="asst_ref_1")]
-    unavailable, invalid_integration = _validate_tools_from_assistants_availability(mock_workflow_config, mock_user)
+    unavailable, invalid_integration, missing_integration = _validate_tools_from_assistants_availability(
+        mock_workflow_config, mock_user
+    )
     assert ("tool_a", "asst_ref_1", "state_1") in unavailable
     assert invalid_integration == []
+    assert missing_integration == []
 
 
 @patch("codemie.workflows.validation.resources._is_tool_available", return_value=True)
@@ -437,9 +456,64 @@ def test_validate_tools_from_assistants_availability_invalid_integration(
     tool_mock.integration_alias = "my_alias"
     mock_workflow_config.assistants = [MagicMock(id="asst_ref_1", tools=[tool_mock])]
     mock_workflow_config.states = [MagicMock(id="state_1", assistant_id="asst_ref_1")]
-    unavailable, invalid_integration = _validate_tools_from_assistants_availability(mock_workflow_config, mock_user)
+    unavailable, invalid_integration, missing_integration = _validate_tools_from_assistants_availability(
+        mock_workflow_config, mock_user
+    )
     assert unavailable == []
     assert ("tool_a", "asst_ref_1", "state_1") in invalid_integration
+    assert missing_integration == []
+
+
+@patch("codemie.workflows.validation.resources._is_tool_available", return_value=True)
+@patch(
+    "codemie.workflows.validation.resources._tool_requires_missing_integration",
+    return_value=(True, "Jira"),
+)
+def test_validate_tools_from_assistants_availability_missing_integration(
+    mock_requires_missing, mock_is_tool_available, mock_workflow_config, mock_user
+):
+    """Tools requiring an integration that is not configured appear in missing_integration list."""
+    tool_mock = MagicMock()
+    tool_mock.name = "tool_a"
+    tool_mock.integration_alias = None
+    # Inline assistant (no assistant_id) — missing integration check applies.
+    mock_workflow_config.assistants = [MagicMock(id="asst_ref_1", assistant_id=None, tools=[tool_mock])]
+    mock_workflow_config.states = [MagicMock(id="state_1", assistant_id="asst_ref_1")]
+    unavailable, invalid_integration, missing_integration = _validate_tools_from_assistants_availability(
+        mock_workflow_config, mock_user
+    )
+    assert unavailable == []
+    assert invalid_integration == []
+    assert ("tool_a", "asst_ref_1", "state_1", "Jira") in missing_integration
+
+
+@patch("codemie.workflows.validation.resources._is_tool_available", return_value=True)
+@patch(
+    "codemie.workflows.validation.resources._tool_requires_missing_integration",
+    return_value=(True, "Jira"),
+)
+def test_validate_tools_from_assistants_skips_missing_check_for_referenced_assistants(
+    mock_requires_missing, mock_is_tool_available, mock_workflow_config, mock_user
+):
+    """Referenced assistants (with assistant_id) are not double-reported through inline tools path.
+
+    When a referenced assistant carries inline tools (the model does not forbid it),
+    missing-integration for those tools must be checked only via the referenced-assistant
+    path, not via the inline-tools path - otherwise the same issue surfaces twice.
+    """
+    tool_mock = MagicMock()
+    tool_mock.name = "tool_a"
+    tool_mock.integration_alias = None
+    # Referenced assistant (has assistant_id) + inline tools - missing check must skip.
+    mock_workflow_config.assistants = [MagicMock(id="asst_ref_1", assistant_id="assistant_1", tools=[tool_mock])]
+    mock_workflow_config.states = [MagicMock(id="state_1", assistant_id="asst_ref_1")]
+    unavailable, invalid_integration, missing_integration = _validate_tools_from_assistants_availability(
+        mock_workflow_config, mock_user
+    )
+    assert missing_integration == []
+    # _tool_requires_missing_integration must not be invoked for the referenced assistant
+    # because the referenced-assistant validator handles it.
+    mock_requires_missing.assert_not_called()
 
 
 def test_workflow_config_resources_validation_error_to_dict_includes_message_key():
@@ -573,8 +647,14 @@ def test_workflow_config_resources_validation_error_null_line_finder_when_no_con
 @patch("codemie.workflows.validation.resources._is_assistant_available", return_value=False)
 @patch("codemie.workflows.validation.resources._is_tool_available", return_value=True)
 @patch("codemie.workflows.validation.resources._is_datasource_available", return_value=True)
+@patch("codemie.workflows.validation.resources._validate_referenced_assistants_integrations", return_value=[])
 def test_validate_workflow_config_resources_availability_with_yaml_config(
-    mock_is_datasource_available, mock_tool_available, mock_assistant_available, mock_workflow_config, mock_user
+    mock_ref_integrations,
+    mock_is_datasource_available,
+    mock_tool_available,
+    mock_assistant_available,
+    mock_workflow_config,
+    mock_user,
 ):
     """When yaml_config is a valid YAML string, line numbers are extracted into the exception."""
     mock_workflow_config.yaml_config = (
@@ -595,8 +675,14 @@ def test_validate_workflow_config_resources_availability_with_yaml_config(
 @patch("codemie.workflows.validation.resources._is_tool_available", return_value=True)
 @patch("codemie.workflows.validation.resources._is_datasource_available", return_value=True)
 @patch("codemie.workflows.validation.resources._is_integration_alias_valid", return_value=False)
+@patch("codemie.workflows.validation.resources._validate_referenced_assistants_integrations", return_value=[])
 def test_validate_workflow_config_resources_availability_raises_on_invalid_integration(
-    mock_is_integration_alias, mock_is_datasource, mock_tool_available, mock_assistant_available, mock_user
+    mock_ref_integrations,
+    mock_is_integration_alias,
+    mock_is_datasource,
+    mock_tool_available,
+    mock_assistant_available,
+    mock_user,
 ):
     """validate raises WorkflowConfigResourcesValidationError when integration alias is invalid."""
     config = MagicMock()
@@ -615,3 +701,160 @@ def test_validate_workflow_config_resources_availability_raises_on_invalid_integ
     with pytest.raises(WorkflowConfigResourcesValidationError) as exc_info:
         validate_workflow_config_resources_availability(config, mock_user)
     assert len(exc_info.value.invalid_integration_tools) > 0
+
+
+@patch("codemie.workflows.validation.resources.ToolsService.find_toolkit_for_tool")
+def test_tool_requires_missing_integration_true(mock_find_toolkit, mock_user):
+    """Tool whose credentials cannot be resolved at all returns (True, credential_type)."""
+    from codemie.workflows.validation.resources import _tool_requires_missing_integration
+
+    mock_find_toolkit.return_value = {"toolkit": "Jira"}
+    with patch(
+        "codemie.service.assistant.credential_validator.CredentialValidator.validate_tool_credentials"
+    ) as mock_validate:
+        mock_validate.return_value = MagicMock(is_valid=False, credential_type="Jira")
+        is_missing, credential_type = _tool_requires_missing_integration(mock_user, "project", "jira_search", None)
+        assert is_missing is True
+        assert credential_type == "Jira"
+
+
+@patch("codemie.workflows.validation.resources.ToolsService.find_toolkit_for_tool")
+def test_tool_requires_missing_integration_false_when_auto_lookup_resolves(mock_find_toolkit, mock_user):
+    """Automatic Credentials Lookup mode (no alias) is not flagged when credentials resolve."""
+    from codemie.workflows.validation.resources import _tool_requires_missing_integration
+
+    mock_find_toolkit.return_value = {"toolkit": "Jira"}
+    with patch(
+        "codemie.service.assistant.credential_validator.CredentialValidator.validate_tool_credentials"
+    ) as mock_validate:
+        mock_validate.return_value = MagicMock(is_valid=True, credential_type="Jira")
+        is_missing, _ = _tool_requires_missing_integration(mock_user, "project", "jira_search", None)
+        assert is_missing is False
+
+
+@patch("codemie.workflows.validation.resources.ToolsService.find_setting_for_tool")
+@patch("codemie.workflows.validation.resources.ToolsService.find_toolkit_for_tool")
+def test_tool_requires_missing_integration_false_when_alias_configured(mock_find_toolkit, mock_find_setting, mock_user):
+    """Tool with an explicit alias and satisfied credentials is not flagged."""
+    from codemie.workflows.validation.resources import _tool_requires_missing_integration
+
+    mock_find_toolkit.return_value = {"toolkit": "Jira"}
+    mock_find_setting.return_value = MagicMock()
+    with patch(
+        "codemie.service.assistant.credential_validator.CredentialValidator.validate_tool_credentials"
+    ) as mock_validate:
+        mock_validate.return_value = MagicMock(is_valid=True, credential_type="Jira")
+        is_missing, _ = _tool_requires_missing_integration(mock_user, "project", "jira_search", "my_alias")
+        assert is_missing is False
+
+
+@patch(
+    "codemie.workflows.validation.resources.ToolsService.find_toolkit_for_tool",
+    side_effect=ValueError("not found"),
+)
+def test_tool_requires_missing_integration_false_when_tool_not_found(mock_find_toolkit, mock_user):
+    """Non-existent tool returns (False, None) (reported separately by availability validation)."""
+    from codemie.workflows.validation.resources import _tool_requires_missing_integration
+
+    assert _tool_requires_missing_integration(mock_user, "project", "ghost_tool", None) == (False, None)
+
+
+@patch("codemie.workflows.validation.resources.ToolsService.find_toolkit_for_tool")
+@patch(
+    "codemie.workflows.validation.resources.ToolsService.find_setting_for_tool",
+    side_effect=ValueError("bad alias"),
+)
+def test_tool_requires_missing_integration_false_when_alias_invalid(mock_find_setting, mock_find_toolkit, mock_user):
+    """Invalid alias returns (False, None) (reported separately by _is_integration_alias_valid)."""
+    from codemie.workflows.validation.resources import _tool_requires_missing_integration
+
+    mock_find_toolkit.return_value = {"toolkit": "Jira"}
+    assert _tool_requires_missing_integration(mock_user, "project", "jira_search", "bad_alias") == (False, None)
+
+
+@patch.object(Assistant, "get_by_ids")
+def test_validate_referenced_assistants_integrations_missing(mock_get_by_ids, mock_workflow_config, mock_user):
+    """Referenced assistant with a toolkit missing its integration yields missing integration tuples."""
+    from codemie.workflows.validation.resources import _validate_referenced_assistants_integrations
+
+    mock_get_by_ids.return_value = [MagicMock(id="assistant_1", toolkits=[MagicMock()])]
+    mock_workflow_config.assistants = [MagicMock(id="asst_ref_1", assistant_id="assistant_1")]
+    mock_workflow_config.states = [MagicMock(id="state_1", assistant_id="asst_ref_1")]
+
+    with patch(
+        "codemie.service.assistant.assistant_integration_validator."
+        "AssistantIntegrationValidator.collect_missing_integrations"
+    ) as mock_collect:
+        mock_collect.return_value = [MagicMock(tool="jira_search", credential_type="Jira")]
+        result = _validate_referenced_assistants_integrations(mock_workflow_config, mock_user)
+
+    assert ("jira_search", "asst_ref_1", "state_1", "Jira") in result
+
+
+@patch.object(Assistant, "get_by_ids")
+def test_validate_referenced_assistants_integrations_skips_inline(mock_get_by_ids, mock_workflow_config, mock_user):
+    """Inline (virtual) assistants without assistant_id are skipped."""
+    from codemie.workflows.validation.resources import _validate_referenced_assistants_integrations
+
+    mock_workflow_config.assistants = [MagicMock(id="asst_ref_1", assistant_id=None)]
+    result = _validate_referenced_assistants_integrations(mock_workflow_config, mock_user)
+    assert result == []
+    mock_get_by_ids.assert_not_called()
+
+
+@patch.object(Assistant, "get_by_ids", return_value=[])
+def test_validate_referenced_assistants_integrations_skips_missing_assistant(
+    mock_get_by_ids, mock_workflow_config, mock_user
+):
+    """Referenced assistant that does not exist is skipped (reported by availability validation)."""
+    from codemie.workflows.validation.resources import _validate_referenced_assistants_integrations
+
+    mock_workflow_config.assistants = [MagicMock(id="asst_ref_1", assistant_id="assistant_1")]
+    result = _validate_referenced_assistants_integrations(mock_workflow_config, mock_user)
+    assert result == []
+
+
+def test_workflow_config_resources_validation_error_to_dict_with_missing_integration():
+    """to_dict groups tools sharing the same integration into a single missing-integration error."""
+    exc = WorkflowConfigResourcesValidationError(
+        unavailable_assistants=[],
+        unavailable_tools=[],
+        unavailable_tools_from_asst_integrations=[],
+        unavailable_datasources=[],
+        missing_integration_tools=[
+            ("jira_search", "asst_ref_1", "state_1", "Jira"),
+            ("jira_create_issue", "asst_ref_1", "state_1", "Jira"),
+        ],
+    )
+    error_dict = exc.to_dict()
+    errors = error_dict["errors"]
+
+    assert error_dict["error_type"] == "resource_validation"
+    assert len(errors) == 1
+    assert errors[0]["path"] == "tools"
+    assert errors[0]["message"] == "Missing required integration"
+    assert "Jira" in errors[0]["details"]
+    assert "jira_search" in errors[0]["details"]
+    assert "jira_create_issue" in errors[0]["details"]
+    assert "asst_ref_1" in errors[0]["details"]
+    assert "state_id" not in errors[0]
+
+
+def test_workflow_config_resources_validation_error_to_dict_missing_integration_separate_per_type():
+    """Tools requiring different integrations produce separate missing-integration errors."""
+    exc = WorkflowConfigResourcesValidationError(
+        unavailable_assistants=[],
+        unavailable_tools=[],
+        unavailable_tools_from_asst_integrations=[],
+        unavailable_datasources=[],
+        missing_integration_tools=[
+            ("jira_search", "asst_ref_1", "state_1", "Jira"),
+            ("github_search", "asst_ref_1", "state_1", "GitHub"),
+        ],
+    )
+    errors = exc.to_dict()["errors"]
+
+    assert len(errors) == 2
+    details = sorted(e["details"] for e in errors)
+    assert "GitHub" in details[0]
+    assert "Jira" in details[1]

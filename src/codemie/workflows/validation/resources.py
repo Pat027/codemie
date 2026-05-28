@@ -35,6 +35,8 @@ import yaml
 from codemie.core.workflow_models import WorkflowConfig, WorkflowTool
 from codemie.rest_api.security.user import User
 from codemie.rest_api.models.assistant import Assistant
+from codemie.service.assistant.assistant_integration_validator import AssistantIntegrationValidator
+from codemie.service.assistant.credential_validator import CredentialValidator
 from codemie.service.mcp.toolkit_service import MCPToolkitService
 from codemie.service.tools.tool_service import ToolsService
 from codemie.rest_api.models.index import IndexInfo
@@ -70,11 +72,13 @@ class WorkflowConfigResourcesValidationError(Exception):
         line_number_map: dict[str, int] = None,
         toolkits_metadata: list[dict] = None,
         invalid_integration_tools: list[tuple[str, str, str]] = None,
+        missing_integration_tools: list[tuple[str, str, str, str]] = None,
     ):
         self.unavailable_assistants = unavailable_assistants
         self.unavailable_tools = unavailable_tools
         self.unavailable_tools_from_asst_integrations = unavailable_tools_from_asst_integrations
         self.invalid_integration_tools = invalid_integration_tools or []
+        self.missing_integration_tools = missing_integration_tools or []
         self.unavailable_datasources = unavailable_datasources
         self.workflow_config_dict = workflow_config_dict or {}
         self.line_number_map = line_number_map or {}
@@ -101,6 +105,10 @@ class WorkflowConfigResourcesValidationError(Exception):
             ),
             WorkflowConfigResourcesValidationError._format_map_message(
                 "Data sources (referenced in assistant definitions) do not exist", unavailable_datasources
+            ),
+            WorkflowConfigResourcesValidationError._format_list_message(
+                "Tools (referenced in assistant definitions) require missing integrations",
+                [tool for tool, *_ in (missing_integration_tools or [])],
             ),
         ]
         message = [f"{title}:\n{details}" for title, details in self.messages if details]
@@ -130,99 +138,142 @@ class WorkflowConfigResourcesValidationError(Exception):
 
     def to_dict(self) -> dict:
         """Convert resource validation errors to structured dictionary format with line numbers."""
-        errors = []
-
-        if self.unavailable_assistants:
-            for _ref, assistant_id, state_id in self.unavailable_assistants:
-                # Find line number for assistant_id field in state
-                config_line = self.line_finder.find_line_for_state_field(
-                    state_id=state_id,
-                    field_path="assistant_id",
-                )
-
-                # Build error using Pydantic model for type safety
-                error_detail = WorkflowValidationErrorDetail(
-                    id=str(uuid.uuid4()),
-                    message=_MSG_RESOURCE_NOT_FOUND,
-                    details=f"Assistant '{assistant_id}' does not exist",
-                    state_id=state_id,
-                    path="assistant_id",
-                    config_line=config_line,
-                )
-
-                errors.append(error_detail.model_dump(exclude_none=True))
-
-        if self.unavailable_tools:
-            for _ref, tool_id, state_id in self.unavailable_tools:
-                error_detail = self._build_tool_error_detail(_ref, tool_id, state_id)
-                errors.append(error_detail.model_dump(exclude_none=True))
-
-        if self.unavailable_tools_from_asst_integrations:
-            for tool_name, assistant_ref, _ in self.unavailable_tools_from_asst_integrations:
-                # Find line number for tools field in assistant definition
-                config_line = self.line_finder.find_line_for_assistant_field(
-                    assistant_ref=assistant_ref,
-                    field_path="tools",
-                )
-
-                # Note: No state_id - this is an assistant-level error, not state-level
-                error_detail = WorkflowValidationErrorDetail(
-                    id=str(uuid.uuid4()),
-                    message=_MSG_RESOURCE_NOT_FOUND,
-                    details=f"Tool '{tool_name}' (referenced in assistant '{assistant_ref}') does not exist",
-                    path="tools",
-                    config_line=config_line,
-                    meta=None,
-                )
-
-                errors.append(error_detail.model_dump(exclude_none=True))
-
-        if self.invalid_integration_tools:
-            for tool_name, assistant_ref, _ in self.invalid_integration_tools:
-                config_line = self.line_finder.find_line_for_assistant_field(
-                    assistant_ref=assistant_ref,
-                    field_path="tools",
-                )
-
-                meta = self._find_tool_meta(tool_name)
-
-                # Note: No state_id - this is an assistant-level error, not state-level
-                error_detail = WorkflowValidationErrorDetail(
-                    id=str(uuid.uuid4()),
-                    message="Invalid integration settings",
-                    details=f"Integration alias in tool '{tool_name}' does not exist",
-                    path="tools",
-                    config_line=config_line,
-                    meta=meta,
-                )
-
-                errors.append(error_detail.model_dump(exclude_none=True))
-
-        if self.unavailable_datasources:
-            for datasource_id, assistant_ref, state_id in self.unavailable_datasources:
-                # Find line number for datasource_ids field in assistant definition
-                config_line = self.line_finder.find_line_for_assistant_field(
-                    assistant_ref=assistant_ref,
-                    field_path="datasource_ids",
-                )
-
-                # Build error using Pydantic model for type safety
-                error_detail = WorkflowValidationErrorDetail(
-                    id=str(uuid.uuid4()),
-                    message=_MSG_RESOURCE_NOT_FOUND,
-                    details=f"Datasource '{datasource_id}' (used by assistant '{assistant_ref}') does not exist",
-                    state_id=state_id,
-                    path="datasource_ids",
-                    config_line=config_line,
-                )
-
-                errors.append(error_detail.model_dump(exclude_none=True))
+        errors: list[dict] = []
+        errors.extend(self._build_unavailable_assistant_errors())
+        errors.extend(self._build_unavailable_tool_errors())
+        errors.extend(self._build_unavailable_assistant_tool_errors())
+        errors.extend(self._build_invalid_integration_errors())
+        errors.extend(self._build_missing_integration_errors())
+        errors.extend(self._build_unavailable_datasource_errors())
 
         return {
             "error_type": WorkflowErrorType.RESOURCE_VALIDATION.value,
             "message": "Configuration references unavailable resources",
             "errors": errors,
         }
+
+    def _build_unavailable_assistant_errors(self) -> list[dict]:
+        errors = []
+        for _ref, assistant_id, state_id in self.unavailable_assistants or []:
+            config_line = self.line_finder.find_line_for_state_field(
+                state_id=state_id,
+                field_path="assistant_id",
+            )
+            error_detail = WorkflowValidationErrorDetail(
+                id=str(uuid.uuid4()),
+                message=_MSG_RESOURCE_NOT_FOUND,
+                details=f"Assistant '{assistant_id}' does not exist",
+                state_id=state_id,
+                path="assistant_id",
+                config_line=config_line,
+            )
+            errors.append(error_detail.model_dump(exclude_none=True))
+        return errors
+
+    def _build_unavailable_tool_errors(self) -> list[dict]:
+        errors = []
+        for _ref, tool_id, state_id in self.unavailable_tools or []:
+            error_detail = self._build_tool_error_detail(_ref, tool_id, state_id)
+            errors.append(error_detail.model_dump(exclude_none=True))
+        return errors
+
+    def _build_unavailable_assistant_tool_errors(self) -> list[dict]:
+        errors = []
+        for tool_name, assistant_ref, _ in self.unavailable_tools_from_asst_integrations or []:
+            # Assistant-level error: no state_id.
+            config_line = self.line_finder.find_line_for_assistant_field(
+                assistant_ref=assistant_ref,
+                field_path="tools",
+            )
+            error_detail = WorkflowValidationErrorDetail(
+                id=str(uuid.uuid4()),
+                message=_MSG_RESOURCE_NOT_FOUND,
+                details=f"Tool '{tool_name}' (referenced in assistant '{assistant_ref}') does not exist",
+                path="tools",
+                config_line=config_line,
+                meta=None,
+            )
+            errors.append(error_detail.model_dump(exclude_none=True))
+        return errors
+
+    def _build_invalid_integration_errors(self) -> list[dict]:
+        errors = []
+        for tool_name, assistant_ref, _ in self.invalid_integration_tools or []:
+            config_line = self.line_finder.find_line_for_assistant_field(
+                assistant_ref=assistant_ref,
+                field_path="tools",
+            )
+            meta = self._find_tool_meta(tool_name)
+            # Assistant-level error: no state_id.
+            error_detail = WorkflowValidationErrorDetail(
+                id=str(uuid.uuid4()),
+                message="Invalid integration settings",
+                details=f"Integration alias in tool '{tool_name}' does not exist",
+                path="tools",
+                config_line=config_line,
+                meta=meta,
+            )
+            errors.append(error_detail.model_dump(exclude_none=True))
+        return errors
+
+    def _build_missing_integration_errors(self) -> list[dict]:
+        if not self.missing_integration_tools:
+            return []
+
+        errors = []
+        for (assistant_ref, credential_type), tool_names in self._group_missing_integrations().items():
+            config_line = self.line_finder.find_line_for_assistant_field(
+                assistant_ref=assistant_ref,
+                field_path="tools",
+            )
+            meta = self._find_tool_meta(tool_names[0])
+            tools_list = ", ".join(f"'{name}'" for name in tool_names)
+            # Assistant-level error: no state_id.
+            error_detail = WorkflowValidationErrorDetail(
+                id=str(uuid.uuid4()),
+                message="Missing required integration",
+                details=(
+                    f"Assistant '{assistant_ref}' has tool(s) requiring the "
+                    f"'{credential_type}' integration which is not configured: {tools_list}"
+                ),
+                path="tools",
+                config_line=config_line,
+                meta=meta,
+            )
+            errors.append(error_detail.model_dump(exclude_none=True))
+        return errors
+
+    def _group_missing_integrations(self) -> dict[tuple[str, str], list[str]]:
+        """Group missing-integration tools by (assistant_ref, credential_type).
+
+        Tools sharing the same integration collapse into a single issue, while tools
+        requiring different integrations are reported separately.
+        """
+        grouped: dict[tuple[str, str], list[str]] = {}
+        for tool_name, assistant_ref, _state_id, credential_type in self.missing_integration_tools:
+            key = (assistant_ref, credential_type or "Unknown")
+            tool_names = grouped.setdefault(key, [])
+            if tool_name not in tool_names:
+                tool_names.append(tool_name)
+        return grouped
+
+    def _build_unavailable_datasource_errors(self) -> list[dict]:
+        errors = []
+        for datasource_id, assistant_ref, state_id in self.unavailable_datasources or []:
+            config_line = self.line_finder.find_line_for_assistant_field(
+                assistant_ref=assistant_ref,
+                field_path="datasource_ids",
+            )
+            error_detail = WorkflowValidationErrorDetail(
+                id=str(uuid.uuid4()),
+                message=_MSG_RESOURCE_NOT_FOUND,
+                details=f"Datasource '{datasource_id}' (used by assistant '{assistant_ref}') does not exist",
+                state_id=state_id,
+                path="datasource_ids",
+                config_line=config_line,
+            )
+            errors.append(error_detail.model_dump(exclude_none=True))
+        return errors
 
     def _find_tool_meta(self, tool_name: str) -> ToolMeta | None:
         """Find toolkit metadata for a tool name."""
@@ -313,6 +364,129 @@ def _is_integration_alias_valid(user: User, project_name: str, integration_alias
         return False
 
 
+def _tool_requires_missing_integration(
+    user: User, project_name: str, tool_name: str, integration_alias: str | None
+) -> tuple[bool, str | None]:
+    """
+    Check whether a tool requires an integration that is not configured.
+
+    Delegates to `CredentialValidator.validate_tool_credentials`, which mirrors how the
+    tool's credentials are resolved at runtime: an explicit `integration_alias` is
+    resolved to its settings, otherwise stored project/user credentials are looked up.
+
+    A missing `integration_alias` is NOT an error on its own - it is the "Automatic
+    Credentials Lookup" mode, in which the tool resolves an integration automatically.
+    The integration is reported as missing only when the credentials cannot be resolved
+    at all, i.e. exactly the situation in which the tool would fail at runtime.
+
+    Returns a tuple `(is_missing, credential_type)`. The credential_type is normalised:
+    if `CredentialValidator` returns `None`, the toolkit name is used as a fallback so the
+    user-facing message names a real integration. Cases reported elsewhere (non-existent
+    tool, invalid integration alias) return `(False, None)`.
+    """
+    try:
+        toolkit = ToolsService.find_toolkit_for_tool(user, tool_name)
+    except ValueError:
+        # Tool does not exist - reported separately by availability validation
+        return False, None
+
+    # find_toolkit_for_tool always returns a toolkit dict or raises ValueError.
+    toolkit_name = toolkit.get("toolkit", "")
+
+    tool_settings = None
+    if integration_alias:
+        try:
+            tool_settings = ToolsService.find_setting_for_tool(
+                user=user, project_name=project_name, integration_alias=integration_alias
+            )
+        except ValueError:
+            # Invalid alias - reported separately by _is_integration_alias_valid
+            return False, None
+
+    try:
+        result = CredentialValidator.validate_tool_credentials(
+            toolkit_name=toolkit_name,
+            tool_name=tool_name,
+            user=user,
+            project_name=project_name,
+            tool_settings=tool_settings,
+            assistant_id=None,
+        )
+        # Fall back to the toolkit name when the validator does not surface a
+        # specific credential type; "Unknown" is reserved for the case where we
+        # have nothing meaningful to display.
+        credential_type = result.credential_type or toolkit_name or "Unknown"
+        return (not result.is_valid), credential_type
+    except Exception as e:
+        logger.warning(f"Failed to validate integration for tool '{tool_name}': {e}")
+        return False, None
+
+
+def _validate_referenced_assistants_integrations(
+    workflow_config: WorkflowConfig, user: User
+) -> list[tuple[str, str, str, str]]:
+    """
+    Validate integrations for referenced (existing) assistants used in the workflow.
+
+    For every assistant referenced by `assistant_id`, the referenced assistant is
+    loaded and its toolkits - as well as the toolkits of its sub-assistants
+    (orchestrator pattern) - are checked for integrations that are not configured.
+
+    Returns:
+        List of tuples (tool_name, assistant_ref, state_id, credential_type) for tools
+        whose required integration is missing.
+    """
+    missing_integration_tools: list[tuple[str, str, str, str]] = []
+    for assistant in workflow_config.assistants or []:
+        missing_integration_tools.extend(_collect_missing_for_referenced_assistant(workflow_config, user, assistant))
+    return missing_integration_tools
+
+
+def _collect_missing_for_referenced_assistant(
+    workflow_config: WorkflowConfig, user: User, assistant
+) -> list[tuple[str, str, str, str]]:
+    """Resolve missing integrations for a single referenced assistant in the workflow."""
+    if not assistant.assistant_id:
+        return []
+
+    db_assistant = _load_referenced_assistant(user, assistant.assistant_id)
+    if db_assistant is None:
+        # Non-existent assistant - reported separately by availability validation.
+        return []
+
+    missing_integrations = _safely_collect_missing_integrations(db_assistant, user, workflow_config.project)
+    if not missing_integrations:
+        return []
+
+    states = _find_states_referencing_assistant(workflow_config, assistant.id)
+    return [
+        # Fall back to the toolkit name so the user-facing message never shows "Unknown"
+        # when MissingIntegration carries a toolkit but no resolved credential_type.
+        (missing.tool, assistant.id, state_id, missing.credential_type or missing.toolkit or "Unknown")
+        for missing in missing_integrations
+        for state_id in states
+    ]
+
+
+def _load_referenced_assistant(user: User, assistant_id: str):
+    """Load a persisted assistant by id, returning None on failure or absence."""
+    try:
+        db_assistants = Assistant.get_by_ids(user, [assistant_id])
+    except Exception as e:
+        logger.warning(f"Failed to load assistant '{assistant_id}' for integration validation: {e}")
+        return None
+    return db_assistants[0] if db_assistants else None
+
+
+def _safely_collect_missing_integrations(db_assistant, user: User, project_name: str):
+    """Collect missing integrations for a persisted assistant, swallowing transient errors."""
+    try:
+        return AssistantIntegrationValidator.collect_missing_integrations(db_assistant, user, project_name)
+    except Exception as e:
+        logger.warning(f"Failed to validate integrations for assistant '{db_assistant.id}': {e}")
+        return []
+
+
 def _is_datasource_available(datasource_id) -> bool:
     try:
         datasource = IndexInfo.get_by_id(id_=datasource_id)
@@ -354,18 +528,32 @@ def _build_tool_info_map(assistants: list) -> dict[tuple[str, str | None], list[
 
 def _validate_tools_from_assistants_availability(
     workflow_config: WorkflowConfig, user
-) -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]]:
+) -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]], list[tuple[str, str, str, str]]]:
     """
     Validate tools from assistants.
 
     Returns:
-        Tuple of (unavailable_tools, invalid_integration_tools)
+        Tuple of (unavailable_tools, invalid_integration_tools, missing_integration_tools)
         - unavailable_tools: Tools that don't exist
-        - invalid_integration_tools: Tools that exist but have invalid integration_alias
+        - invalid_integration_tools: Tools that exist but have an invalid integration_alias
+        - missing_integration_tools: Tools that require an integration that is not configured
+          (each entry carries the credential_type as a 4th element for grouping)
     """
     tool_info_to_assistants = _build_tool_info_map(workflow_config.assistants or [])
+    # The model does not enforce mutual exclusivity between `assistant_id` and inline
+    # `tools`. Referenced assistants are validated separately via
+    # `_validate_referenced_assistants_integrations`, which loads their toolkits from
+    # the DB; running the missing-integration check on the same tool here too would
+    # surface a duplicate issue. Restrict the missing-integration check to inline
+    # (assistant_id-less) assistants. Existence and alias-validity checks still apply
+    # to all references for backward compatibility.
+    inline_assistant_refs = {
+        assistant.id for assistant in (workflow_config.assistants or []) if not assistant.assistant_id
+    }
+
     unavailable_tools = []
     invalid_integration_tools = []
+    missing_integration_tools = []
 
     for (tool_name, integration_alias), assistant_refs in tool_info_to_assistants.items():
         if not _is_tool_available(workflow_config, tool_name, user):
@@ -374,8 +562,22 @@ def _validate_tools_from_assistants_availability(
 
         if integration_alias and not _is_integration_alias_valid(user, workflow_config.project, integration_alias):
             invalid_integration_tools.extend(_build_tool_error_tuples(workflow_config, tool_name, assistant_refs))
+            continue
 
-    return unavailable_tools, invalid_integration_tools
+        inline_refs = [ref for ref in assistant_refs if ref in inline_assistant_refs]
+        if not inline_refs:
+            continue
+
+        is_missing, credential_type = _tool_requires_missing_integration(
+            user, workflow_config.project, tool_name, integration_alias
+        )
+        if is_missing:
+            missing_integration_tools.extend(
+                (*error_tuple, credential_type)
+                for error_tuple in _build_tool_error_tuples(workflow_config, tool_name, inline_refs)
+            )
+
+    return unavailable_tools, invalid_integration_tools, missing_integration_tools
 
 
 def _validate_tools_avaiability(workflow_config: WorkflowConfig, user: User) -> list[tuple[str, str, str]]:
@@ -430,9 +632,12 @@ def validate_workflow_config_resources_availability(workflow_config: WorkflowCon
     """
     unavailable_assistants = _validate_assistants_availability(workflow_config, user)
     unavailable_tools = _validate_tools_avaiability(workflow_config, user)
-    unavailable_tools_from_asst_integrations, invalid_integration_tools = _validate_tools_from_assistants_availability(
-        workflow_config, user
-    )
+    (
+        unavailable_tools_from_asst_integrations,
+        invalid_integration_tools,
+        missing_integration_tools,
+    ) = _validate_tools_from_assistants_availability(workflow_config, user)
+    missing_integration_tools.extend(_validate_referenced_assistants_integrations(workflow_config, user))
     unavailable_datasources = _validate_datasources_availability(workflow_config)
 
     unavailable_resources = (
@@ -442,7 +647,7 @@ def validate_workflow_config_resources_availability(workflow_config: WorkflowCon
         unavailable_datasources,
     )
 
-    if any(unavailable_resources) or invalid_integration_tools:
+    if any(unavailable_resources) or invalid_integration_tools or missing_integration_tools:
         # Get toolkits metadata for enriching error messages
         toolkits_metadata = []
         try:
@@ -464,6 +669,7 @@ def validate_workflow_config_resources_availability(workflow_config: WorkflowCon
                 line_number_map,
                 toolkits_metadata,
                 invalid_integration_tools,
+                missing_integration_tools,
             )
 
         try:
@@ -477,5 +683,10 @@ def validate_workflow_config_resources_availability(workflow_config: WorkflowCon
             )
 
         raise WorkflowConfigResourcesValidationError(
-            *unavailable_resources, workflow_config_dict, line_number_map, toolkits_metadata, invalid_integration_tools
+            *unavailable_resources,
+            workflow_config_dict,
+            line_number_map,
+            toolkits_metadata,
+            invalid_integration_tools,
+            missing_integration_tools,
         )

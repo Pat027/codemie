@@ -592,6 +592,81 @@ class TestAssistantIntegrationValidator:
         assert result == []
 
     # ============================================================================
+    # Tests for collect_missing_integrations
+    # ============================================================================
+
+    @patch("codemie.service.assistant.assistant_integration_validator.CredentialValidator")
+    @patch("codemie.service.assistant.assistant_integration_validator.Assistant")
+    def test_collect_missing_integrations_includes_main_and_sub(
+        self, mock_assistant_class, mock_validator, mock_user, mock_sub_assistant
+    ):
+        """collect_missing_integrations flattens missing integrations from main toolkits and sub-assistants."""
+        # Setup - main assistant (orchestrator) with its own toolkit
+        main_toolkit = Mock(spec=ToolKitDetails)
+        main_toolkit.toolkit = "AWS"
+        main_toolkit.is_external = False
+        main_tool = Mock(spec=Tool)
+        main_tool.name = "s3_upload"
+        main_tool.settings = None
+        main_tool.settings_config = False
+        main_tool.label = "S3 Upload"
+        main_toolkit.tools = [main_tool]
+
+        assistant = Mock(spec=Assistant)
+        assistant.id = "orchestrator-1"
+        assistant.toolkits = [main_toolkit]
+        assistant.assistant_ids = ["sub-assistant-1"]
+
+        mock_assistant_class.get_by_ids.return_value = [mock_sub_assistant]
+        mock_validator.validate_tool_credentials.return_value = ValidationResult(is_valid=False, credential_type="Jira")
+
+        # Execute
+        result = AssistantIntegrationValidator.collect_missing_integrations(
+            assistant=assistant,
+            user=mock_user,
+            project_name="test-project",
+        )
+
+        # Assert - one missing tool from the main toolkit + one from the sub-assistant
+        assert len(result) == 2
+        assert all(isinstance(item, MissingIntegration) for item in result)
+        assert {item.tool for item in result} == {"s3_upload", "jira_search"}
+
+    @patch("codemie.service.assistant.assistant_integration_validator.CredentialValidator")
+    @patch("codemie.service.assistant.assistant_integration_validator.Assistant")
+    def test_collect_missing_integrations_no_sub_assistants(self, mock_assistant_class, mock_validator, mock_user):
+        """collect_missing_integrations works for a plain assistant without sub-assistants."""
+        # Setup
+        toolkit = Mock(spec=ToolKitDetails)
+        toolkit.toolkit = "AWS"
+        toolkit.is_external = False
+        tool = Mock(spec=Tool)
+        tool.name = "s3_upload"
+        tool.settings = None
+        tool.settings_config = False
+        tool.label = "S3 Upload"
+        toolkit.tools = [tool]
+
+        assistant = Mock(spec=Assistant)
+        assistant.id = "plain-1"
+        assistant.toolkits = [toolkit]
+        assistant.assistant_ids = []
+
+        mock_validator.validate_tool_credentials.return_value = ValidationResult(is_valid=False, credential_type="AWS")
+
+        # Execute
+        result = AssistantIntegrationValidator.collect_missing_integrations(
+            assistant=assistant,
+            user=mock_user,
+            project_name="test-project",
+        )
+
+        # Assert
+        assert len(result) == 1
+        assert result[0].tool == "s3_upload"
+        mock_assistant_class.get_by_ids.assert_not_called()
+
+    # ============================================================================
     # Tests for _group_by_credential_type
     # ============================================================================
 
