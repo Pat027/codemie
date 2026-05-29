@@ -846,11 +846,13 @@ class WorkflowExecutor:
                 "codemie.user_id": str(self.user.id) if self.user else "",
             },
         ):
-            self._start_thought_consumer_if_enabled(enable_verbose_consumer)
+            consumer_future = self._start_thought_consumer_if_enabled(enable_verbose_consumer)
             graph_config = self._build_graph_config()
             chunks_collector = []
+            workflow_succeeded = False
             try:
                 self._run_workflow_execution(graph_config, chunks_collector)
+                workflow_succeeded = True
             except InterruptedException as e:
                 self._handle_interrupt(str(e.message), e.interrupted_state, chunks_collector)
             except Exception as e:
@@ -858,6 +860,13 @@ class WorkflowExecutor:
                 self._handle_task_exception(e, chunks_collector)
             finally:
                 self.thought_queue.close()
+                if consumer_future is not None:
+                    try:
+                        consumer_future.result(timeout=30)
+                    except Exception as exc:
+                        logger.error(f"ThoughtConsumer failed to drain: {exc}")
+                if workflow_succeeded:
+                    self.workflow_execution_service.finish()
                 if self.delete_on_completion:
                     self._auto_delete_execution()
                 # Clear trace context to prevent memory leaks
@@ -867,7 +876,8 @@ class WorkflowExecutor:
     def _start_thought_consumer_if_enabled(self, enable_verbose_consumer: bool):
         """Start ThoughtConsumer for database persistence if enabled."""
         if enable_verbose_consumer:
-            ThoughtConsumer.run(execution_id=self.execution_id, message_queue=self.thought_queue)
+            return ThoughtConsumer.run(execution_id=self.execution_id, message_queue=self.thought_queue)
+        return None
 
     def _build_graph_config(self) -> RunnableConfig:
         """Build LangGraph configuration with callbacks and limits."""
@@ -934,7 +944,6 @@ class WorkflowExecutor:
         self._inject_resume_input(workflow, graph_config)
         self._process_workflow_chunks(workflow, inputs, graph_config, chunks_collector)
         self._check_for_interruption(workflow, graph_config)
-        self.workflow_execution_service.finish()
 
     def _process_workflow_chunks(self, workflow, inputs, graph_config: RunnableConfig, chunks_collector: list):
         """Stream workflow chunks and collect final summaries."""

@@ -29,7 +29,7 @@ class ThoughtConsumer:
     def run(execution_id: str, message_queue: ThreadedGenerator):
         instance = ThoughtConsumer(workflow_execution_id=execution_id, message_queue=message_queue)
 
-        run_consumer_in_thread_pool(instance.consume)
+        return run_consumer_in_thread_pool(instance.consume)
 
     def __init__(self, workflow_execution_id: str, message_queue: ThreadedGenerator) -> None:
         self.workflow_execution_id = workflow_execution_id
@@ -49,7 +49,7 @@ class ThoughtConsumer:
 
                 value = self.message_queue.queue.get()
 
-                if isinstance(value, StopIteration):
+                if value is StopIteration:
                     self.message_queue.queue.task_done()
                     break
 

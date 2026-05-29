@@ -105,7 +105,7 @@ class TestThoughtConsumerConsume:
 
         # Add thought and stop signal to queue
         mock_message_queue.queue.put(sample_thought_queue_item)
-        mock_message_queue.queue.put(StopIteration())
+        mock_message_queue.queue.put(StopIteration)
 
         mock_thought_instance = MagicMock()
         mock_thought_model.return_value = mock_thought_instance
@@ -128,7 +128,7 @@ class TestThoughtConsumerConsume:
         """Test that consume method stops on StopIteration."""
         # Arrange
         consumer = ThoughtConsumer(workflow_execution_id="exec-123", message_queue=mock_message_queue)
-        mock_message_queue.queue.put(StopIteration())
+        mock_message_queue.queue.put(StopIteration)
 
         # Act
         consumer.consume()
@@ -160,7 +160,7 @@ class TestThoughtConsumerConsume:
         queue_item = ThoughtQueueItem(data=sample_thought, context=context_no_exec_id)
 
         mock_message_queue.queue.put(queue_item)
-        mock_message_queue.queue.put(StopIteration())
+        mock_message_queue.queue.put(StopIteration)
 
         # Act
         consumer.consume()
@@ -185,7 +185,7 @@ class TestThoughtConsumerConsume:
         queue_item = ThoughtQueueItem(data=in_progress_thought, context=sample_thought_context)
 
         mock_message_queue.queue.put(queue_item)
-        mock_message_queue.queue.put(StopIteration())
+        mock_message_queue.queue.put(StopIteration)
 
         # Act
         consumer.consume()
@@ -234,7 +234,7 @@ class TestThoughtConsumerConsume:
         mock_message_queue.queue.put(queue_item1)
         mock_message_queue.queue.put(queue_item2)
         mock_message_queue.queue.put(queue_item3)
-        mock_message_queue.queue.put(StopIteration())
+        mock_message_queue.queue.put(StopIteration)
 
         mock_thought_instance = MagicMock()
         mock_thought_model.return_value = mock_thought_instance
@@ -275,7 +275,7 @@ class TestThoughtConsumerConsume:
 
         mock_message_queue.queue.put(queue_item1)
         mock_message_queue.queue.put(queue_item2)
-        mock_message_queue.queue.put(StopIteration())
+        mock_message_queue.queue.put(StopIteration)
 
         mock_thought_instance = MagicMock()
         mock_thought_model.return_value = mock_thought_instance
@@ -304,7 +304,7 @@ class TestThoughtConsumerConsume:
         queue_item = ThoughtQueueItem(data=thought_with_parent, context=sample_thought_context)
 
         mock_message_queue.queue.put(queue_item)
-        mock_message_queue.queue.put(StopIteration())
+        mock_message_queue.queue.put(StopIteration)
 
         mock_thought_instance = MagicMock()
         mock_thought_model.return_value = mock_thought_instance
@@ -326,7 +326,7 @@ class TestThoughtConsumerConsume:
         mock_message_queue.queue.put("random string")
         mock_message_queue.queue.put(123)
         mock_message_queue.queue.put({"key": "value"})
-        mock_message_queue.queue.put(StopIteration())
+        mock_message_queue.queue.put(StopIteration)
 
         # Act
         consumer.consume()
@@ -450,7 +450,7 @@ class TestThoughtConsumerIntegration:
 
         final_queue_item = ThoughtQueueItem(data=final_thought, context=sample_thought_context)
         mock_message_queue.queue.put(final_queue_item)
-        mock_message_queue.queue.put(StopIteration())
+        mock_message_queue.queue.put(StopIteration)
 
         mock_thought_instance = MagicMock()
         mock_thought_model.return_value = mock_thought_instance
@@ -504,7 +504,7 @@ class TestThoughtConsumerIntegration:
             queue_item = ThoughtQueueItem(data=thought, context=sample_thought_context)
             mock_message_queue.queue.put(queue_item)
 
-        mock_message_queue.queue.put(StopIteration())
+        mock_message_queue.queue.put(StopIteration)
 
         mock_thought_instance = MagicMock()
         mock_thought_model.return_value = mock_thought_instance
@@ -529,7 +529,7 @@ class TestThoughtConsumerIntegration:
         consumer = ThoughtConsumer(workflow_execution_id="exec-123", message_queue=mock_message_queue)
 
         mock_message_queue.queue.put(sample_thought_queue_item)
-        mock_message_queue.queue.put(StopIteration())
+        mock_message_queue.queue.put(StopIteration)
 
         mock_thought_instance = MagicMock()
         mock_thought_instance.save.side_effect = Exception("Database error")
