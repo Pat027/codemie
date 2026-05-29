@@ -27,10 +27,13 @@ from codemie.rest_api.security.user import User
 from codemie.service.agent_workspace_service import AgentWorkspaceService
 from codemie_tools.data_management.workspace.generate_image_tool_v2 import (
     GenerateWorkspaceImageToolV2,
+    build_image_generation_plan,
     build_workspace_image_path,
     calculate_target_dimensions,
     create_base_and_mask_images,
+    find_closest_gemini_aspect_ratio,
     normalize_generated_image_bytes,
+    parse_size_request,
     parse_size_string,
 )
 from codemie_tools.data_management.workspace.toolkit import AgentWorkspaceToolkit
@@ -50,6 +53,11 @@ class TestGenerateWorkspaceImageToolV2Helpers(unittest.TestCase):
     def test_parse_size_string_invalid(self):
         with self.assertRaises(ValidationException):
             parse_size_string("bad-size")
+
+    def test_parse_size_request_marks_ratio_inputs(self):
+        parsed = parse_size_request("5:12")
+        self.assertEqual((parsed.width, parsed.height), (5.0, 12.0))
+        self.assertTrue(parsed.is_ratio)
 
     def test_calculate_target_dimensions_landscape(self):
         self.assertEqual(calculate_target_dimensions(1920, 1080), (1536, 864))
@@ -95,6 +103,36 @@ class TestGenerateWorkspaceImageToolV2Helpers(unittest.TestCase):
             top = (1024 - 800) // 2
             pixel: Any = mask_image.getpixel((left, top))
             self.assertEqual(pixel, (255, 255, 255, 0))
+
+    def test_find_closest_gemini_aspect_ratio(self):
+        self.assertEqual(find_closest_gemini_aspect_ratio(1920, 1080), "16:9")
+
+    def test_build_image_generation_plan_for_gemini_exact_size(self):
+        generator = MagicMock()
+        generator.model_id = "gemini-3.1-flash-image-preview"
+
+        plan = build_image_generation_plan(parse_size_request("1920x1080"), generator)
+
+        self.assertIsNone(plan.size)
+        self.assertIsNone(plan.output_format)
+        self.assertTrue(plan.preserve_generated_dimensions)
+        self.assertEqual((plan.target_width, plan.target_height), (1376, 768))
+        self.assertEqual(
+            plan.extra_body,
+            {"response_format": {"image": {"aspect_ratio": "16:9", "image_size": "1K"}}},
+        )
+
+    def test_build_image_generation_plan_for_gemini_ratio_input(self):
+        generator = MagicMock()
+        generator.model_id = "gemini-3.1-flash-image-preview"
+
+        plan = build_image_generation_plan(parse_size_request("5:12"), generator)
+
+        self.assertEqual((plan.target_width, plan.target_height), (768, 1376))
+        self.assertEqual(
+            plan.extra_body,
+            {"response_format": {"image": {"aspect_ratio": "9:16", "image_size": "1K"}}},
+        )
 
 
 class TestGenerateWorkspaceImageToolV2(unittest.TestCase):
@@ -163,6 +201,25 @@ class TestGenerateWorkspaceImageToolV2(unittest.TestCase):
         edit_kwargs = generator.edit.call_args.kwargs
         self.assertEqual(edit_kwargs["size"], "1536x1024")
         self.assertEqual(edit_kwargs["output_format"], "png")
+
+    def test_execute_uses_gemini_native_response_format(self):
+        generator = MagicMock()
+        generator.model_id = "gemini-3.1-flash-image-preview"
+        generator.edit.return_value = (None, base64.b64encode(_make_png_bytes((1376, 768))).decode("ascii"))
+        workspace_service = self._build_workspace_service()
+
+        tool = self._build_tool(image_generator=generator, workspace_service=workspace_service)
+        result = json.loads(tool.execute(image_description="A lake", size="1920x1080"))
+
+        self.assertEqual(result["width"], 1376)
+        self.assertEqual(result["height"], 768)
+        edit_kwargs = generator.edit.call_args.kwargs
+        self.assertNotIn("size", edit_kwargs)
+        self.assertNotIn("output_format", edit_kwargs)
+        self.assertEqual(
+            edit_kwargs["extra_body"],
+            {"response_format": {"image": {"aspect_ratio": "16:9", "image_size": "1K"}}},
+        )
 
 
 class TestAgentWorkspaceToolkit(unittest.TestCase):

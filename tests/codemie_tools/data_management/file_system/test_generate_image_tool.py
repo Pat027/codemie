@@ -19,12 +19,14 @@ from unittest.mock import MagicMock, patch
 from langchain_core.messages import AIMessage
 
 from codemie.configs import config
-from codemie_tools.data_management.file_system.generate_image_tool import (
+from codemie_tools.data_management.file_system.image_generator import (
     ChatModelImageGenerator,
-    GenerateImageTool,
-    GenerateImagesToolInput,
     LiteLLMImageConfig,
     LiteLLMImageGenerator,
+)
+from codemie_tools.data_management.file_system.generate_image_tool import (
+    GenerateImageTool,
+    GenerateImagesToolInput,
 )
 
 _CONFIG = LiteLLMImageConfig(
@@ -49,7 +51,7 @@ class TestGenerateImageToolNoConfig(unittest.TestCase):
 class TestLiteLLMImageGenerator(unittest.TestCase):
     """Unit tests for LiteLLMImageGenerator."""
 
-    @patch("codemie_tools.data_management.file_system.generate_image_tool.AzureOpenAI")
+    @patch("codemie_tools.data_management.file_system.image_generator.AzureOpenAI")
     def test_generate_returns_url(self, mock_azure_cls):
         item = MagicMock(url=_IMAGE_URL, b64_json=None)
         mock_azure_cls.return_value.images.generate.return_value.data = [item]
@@ -60,7 +62,7 @@ class TestLiteLLMImageGenerator(unittest.TestCase):
         self.assertEqual(url, _IMAGE_URL)
         self.assertIsNone(b64)
 
-    @patch("codemie_tools.data_management.file_system.generate_image_tool.AzureOpenAI")
+    @patch("codemie_tools.data_management.file_system.image_generator.AzureOpenAI")
     def test_generate_returns_b64(self, mock_azure_cls):
         item = MagicMock(url=None, b64_json=_B64_DATA)
         mock_azure_cls.return_value.images.generate.return_value.data = [item]
@@ -71,7 +73,7 @@ class TestLiteLLMImageGenerator(unittest.TestCase):
         self.assertIsNone(url)
         self.assertEqual(b64, _B64_DATA)
 
-    @patch("codemie_tools.data_management.file_system.generate_image_tool.AzureOpenAI")
+    @patch("codemie_tools.data_management.file_system.image_generator.AzureOpenAI")
     def test_generate_normalises_data_url(self, mock_azure_cls):
         item = MagicMock(url=_DATA_URL, b64_json=None)
         mock_azure_cls.return_value.images.generate.return_value.data = [item]
@@ -82,7 +84,7 @@ class TestLiteLLMImageGenerator(unittest.TestCase):
         self.assertIsNone(url)
         self.assertEqual(b64, _B64_DATA)
 
-    @patch("codemie_tools.data_management.file_system.generate_image_tool.AzureOpenAI")
+    @patch("codemie_tools.data_management.file_system.image_generator.AzureOpenAI")
     def test_client_built_with_correct_params(self, mock_azure_cls):
         item = MagicMock(url=_IMAGE_URL, b64_json=None)
         mock_azure_cls.return_value.images.generate.return_value.data = [item]
@@ -96,7 +98,7 @@ class TestLiteLLMImageGenerator(unittest.TestCase):
             timeout=_CONFIG.timeout,
         )
 
-    @patch("codemie_tools.data_management.file_system.generate_image_tool.AzureOpenAI")
+    @patch("codemie_tools.data_management.file_system.image_generator.AzureOpenAI")
     def test_generate_passes_size_and_output_format(self, mock_azure_cls):
         item = MagicMock(url=None, b64_json=_B64_DATA)
         mock_azure_cls.return_value.images.generate.return_value.data = [item]
@@ -112,7 +114,25 @@ class TestLiteLLMImageGenerator(unittest.TestCase):
             output_format="png",
         )
 
-    @patch("codemie_tools.data_management.file_system.generate_image_tool.AzureOpenAI")
+    @patch("codemie_tools.data_management.file_system.image_generator.AzureOpenAI")
+    def test_edit_passes_extra_body(self, mock_azure_cls):
+        item = MagicMock(url=None, b64_json=_B64_DATA)
+        mock_azure_cls.return_value.images.edit.return_value.data = [item]
+
+        gen = LiteLLMImageGenerator(_CONFIG)
+        gen.edit(
+            prompt="Edit this image.",
+            image=b"image-bytes",
+            extra_body={"response_format": {"image": {"aspect_ratio": "16:9", "image_size": "1K"}}},
+        )
+
+        edit_call = mock_azure_cls.return_value.images.edit.call_args.kwargs
+        self.assertEqual(
+            edit_call["extra_body"],
+            {"response_format": {"image": {"aspect_ratio": "16:9", "image_size": "1K"}}},
+        )
+
+    @patch("codemie_tools.data_management.file_system.image_generator.AzureOpenAI")
     def test_edit_passes_image_mask_size_and_output_format(self, mock_azure_cls):
         item = MagicMock(url=None, b64_json=_B64_DATA)
         mock_azure_cls.return_value.images.edit.return_value.data = [item]
@@ -173,6 +193,12 @@ class TestChatModelImageGenerator(unittest.TestCase):
         gen = ChatModelImageGenerator(self._make_model([]))
         with self.assertRaises(NotImplementedError):
             gen.edit("prompt", b"image-bytes")
+
+    def test_model_id_defaults_to_model_name(self):
+        model = self._make_model([])
+        model.model_name = "gemini-3.1-flash-image-preview"
+        gen = ChatModelImageGenerator(model)
+        self.assertEqual(gen.model_id, "gemini-3.1-flash-image-preview")
 
 
 class TestGenerateImageToolResolveOutput(unittest.TestCase):
