@@ -420,6 +420,25 @@ class TestLangGraphAgent:
         assert filtered[0].content == "Hello"
         assert filtered[1].content == "How are you?"
 
+    def test_filter_history_drops_orphan_tool_messages_for_rich_history(self):
+        history = [
+            HumanMessage(content="Hello"),
+            AIMessage(content="", tool_calls=[{"id": "tool-call-1", "name": "search_tool", "args": {"query": "test"}}]),
+            ToolMessage(content="tool output", tool_call_id="tool-call-1", name="search_tool"),
+            ToolMessage(content="orphan tool output", tool_call_id="tool-call-2", name="skill_tool"),
+            AIMessage(content="Done"),
+        ]
+
+        with patch.object(LangGraphAgent, "_is_conversation_replay_v2_enabled", return_value=True):
+            filtered = LangGraphAgent._filter_history(history)
+
+        assert filtered == [
+            HumanMessage(content="Hello"),
+            AIMessage(content="", tool_calls=[{"id": "tool-call-1", "name": "search_tool", "args": {"query": "test"}}]),
+            ToolMessage(content="tool output", tool_call_id="tool-call-1", name="search_tool"),
+            AIMessage(content="Done"),
+        ]
+
     @patch("codemie.agents.langgraph_agent.logger")
     def test_on_llm_new_token(self, mock_logger, agent):
         """Test LLM token callback handling"""

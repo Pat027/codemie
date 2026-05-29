@@ -292,12 +292,11 @@ class Conversation(BaseModelWithSQLSupport, Owned, table=True):
                 money_spent.append(message.money_spent)
         return sum(money_spent) if money_spent else 0
 
-    def update_chat_history(
-        self,
+    @staticmethod
+    def _build_chat_history_messages(
         user_query: str,
         user_query_raw: str,
         assistant_id: str,
-        project: str,
         assistant_response: str,
         thoughts: List[Thought],
         history_index: int,
@@ -306,7 +305,7 @@ class Conversation(BaseModelWithSQLSupport, Owned, table=True):
         output_tokens: int,
         file_names: list[str],
         money_spent: float,
-    ):
+    ) -> tuple[GeneratedMessage, GeneratedMessage]:
         user_message = GeneratedMessage(
             date=datetime.now(),
             role=ChatRole.USER,
@@ -327,13 +326,70 @@ class Conversation(BaseModelWithSQLSupport, Owned, table=True):
             thoughts=thoughts,
             assistant_id=assistant_id,
         )
+        return user_message, assistant_message
 
-        existing_history = list(self.history or [])
-        retained_history = [
-            message
-            for message in existing_history
-            if not (message.history_index == history_index and message.role in {ChatRole.USER, ChatRole.ASSISTANT})
-        ]
+    @staticmethod
+    def _build_retained_history(
+        existing_history: list[GeneratedMessage],
+        history_index: int,
+        replace_latest_variant: bool,
+    ) -> list[GeneratedMessage]:
+        if not replace_latest_variant:
+            return existing_history
+
+        retained_history = []
+        removed_user_message = False
+        removed_assistant_message = False
+
+        for message in reversed(existing_history):
+            if message.history_index == history_index:
+                if message.role == ChatRole.USER and not removed_user_message:
+                    removed_user_message = True
+                    continue
+                if message.role == ChatRole.ASSISTANT and not removed_assistant_message:
+                    removed_assistant_message = True
+                    continue
+
+            retained_history.append(message)
+
+        retained_history.reverse()
+        return retained_history
+
+    def update_chat_history(
+        self,
+        user_query: str,
+        user_query_raw: str,
+        assistant_id: str,
+        project: str,
+        assistant_response: str,
+        thoughts: List[Thought],
+        history_index: int,
+        time_elapsed: float,
+        input_tokens: int,
+        output_tokens: int,
+        file_names: list[str],
+        money_spent: float,
+        replace_latest_variant: bool = False,
+    ):
+        user_message, assistant_message = self._build_chat_history_messages(
+            user_query=user_query,
+            user_query_raw=user_query_raw,
+            assistant_id=assistant_id,
+            assistant_response=assistant_response,
+            thoughts=thoughts,
+            history_index=history_index,
+            time_elapsed=time_elapsed,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            file_names=file_names,
+            money_spent=money_spent,
+        )
+
+        retained_history = self._build_retained_history(
+            existing_history=list(self.history or []),
+            history_index=history_index,
+            replace_latest_variant=replace_latest_variant,
+        )
 
         self.history = [*retained_history, user_message, assistant_message]
         self.project = project

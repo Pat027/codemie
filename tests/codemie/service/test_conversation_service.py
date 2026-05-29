@@ -461,6 +461,101 @@ def test_upsert_chat_history_reuses_history_index_and_replaces_existing_turn_on_
     assert mock_sync_uploaded_files.call_count == 2
 
 
+@patch(
+    "codemie.service.monitoring.conversation_monitoring_service.ConversationMonitoringService.send_conversation_metric"
+)
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.calculate_metrics")
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.update")
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.save")
+@patch("codemie.rest_api.models.conversation.Conversation.update")
+@patch("codemie.rest_api.models.conversation.Conversation.find_by_id")
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.get_by_conversation_id")
+@patch("codemie.service.conversation_service.AgentWorkspaceService.sync_uploaded_files")
+def test_upsert_chat_history_appends_variants_for_explicit_history_index(
+    mock_sync_uploaded_files,
+    mock_metrics_get,
+    mock_conv_find,
+    mock_conv_update,
+    mock_metrics_save,
+    mock_metrics_update,
+    mock_calculate_metrics,
+    _mock_metrics,
+):
+    mock_assistant = MagicMock()
+    mock_assistant.id = "assistant-id"
+    mock_assistant.project = "test-project"
+    mock_assistant.llm_model_type = "test-model"
+
+    mock_user = MagicMock()
+    mock_user.id = "user-id"
+    mock_user.name = "user-name"
+
+    conversation = Conversation(
+        id="test-id",
+        conversation_id="test-id",
+        history=[
+            GeneratedMessage(history_index=0, message="Build the deck", role="User"),
+            GeneratedMessage(history_index=0, message="Agent has been interrupted by client", role="Assistant"),
+        ],
+    )
+    conversation_metrics = ConversationMetrics(conversation_id="test-id")
+
+    mock_conv_find.return_value = conversation
+    mock_metrics_get.return_value = conversation_metrics
+    mock_conv_update.return_value = True
+    mock_metrics_update.return_value = True
+
+    first_request = AssistantChatRequest(
+        conversation_id="test-id",
+        text="Build the deck",
+        history=[],
+        file_names=[],
+        history_index=0,
+    )
+
+    ConversationService.upsert_chat_history(
+        assistant_response="Presentation build completed successfully",
+        user=mock_user,
+        thoughts=[],
+        time_elapsed=0,
+        tokens_usage=TokensUsage(output_tokens=0, input_tokens=0, money_spent=0.0),
+        assistant=mock_assistant,
+        request=first_request,
+        status=None,
+    )
+
+    second_request = AssistantChatRequest(
+        conversation_id="test-id",
+        text="Build the deck",
+        history=[],
+        file_names=[],
+        history_index=0,
+    )
+
+    ConversationService.upsert_chat_history(
+        assistant_response="Presentation build completed with alternate layout",
+        user=mock_user,
+        thoughts=[],
+        time_elapsed=0,
+        tokens_usage=TokensUsage(output_tokens=0, input_tokens=0, money_spent=0.0),
+        assistant=mock_assistant,
+        request=second_request,
+        status=None,
+    )
+
+    assert [message.history_index for message in conversation.history] == [0, 0, 0, 0, 0, 0]
+    assert [message.message for message in conversation.history] == [
+        "Build the deck",
+        "Agent has been interrupted by client",
+        "Build the deck",
+        "Presentation build completed successfully",
+        "Build the deck",
+        "Presentation build completed with alternate layout",
+    ]
+    assert mock_conv_update.call_count == 2
+    assert mock_sync_uploaded_files.call_count == 2
+
+
 @patch("codemie.core.workflow_models.workflow_config.WorkflowConfig.get_by_id")
 def test_build_new_conversation_with_workflow(
     mock_get_by_id,

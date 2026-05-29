@@ -454,6 +454,8 @@ class ToolConfig(ConfiguredModel):
 
 
 class AssistantChatRequest(ConfiguredModel):
+    _history_variant_persisted: bool = PrivateAttr(default=False)
+
     @staticmethod
     def validate_structured_output(value: Optional[dict] = None):
         from codemie.agents.utils import validate_json_schema
@@ -561,6 +563,12 @@ class AssistantChatRequest(ConfiguredModel):
                         f"Version must be a positive integer."
                     )
         return self
+
+    def has_persisted_history_variant(self) -> bool:
+        return self._history_variant_persisted
+
+    def mark_history_variant_persisted(self) -> None:
+        self._history_variant_persisted = True
 
 
 class AssistantEvaluationRequest(BaseModel):

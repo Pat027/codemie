@@ -29,18 +29,38 @@ from codemie.core.utils import extract_text_from_llm_output
 PARALLEL_SUBAGENT_HANDOFF_ACK_KEY = "__parallel_subagent_handoff_ack"
 
 
-def _append_unique_message(filtered_messages: list[BaseMessage], message: BaseMessage) -> None:
+def _find_tool_message_index(filtered_messages: list[BaseMessage], message: ToolMessage) -> int | None:
+    for index in range(len(filtered_messages) - 1, -1, -1):
+        existing_message = filtered_messages[index]
+        if not isinstance(existing_message, ToolMessage):
+            continue
+        if existing_message.tool_call_id and existing_message.tool_call_id == message.tool_call_id:
+            return index
+    return None
+
+
+def _should_replace_tool_message(existing_message: ToolMessage, message: ToolMessage) -> bool:
     if (
-        isinstance(message, ToolMessage)
-        and filtered_messages
-        and isinstance(filtered_messages[-1], ToolMessage)
-        and filtered_messages[-1].name == message.name
-        and filtered_messages[-1].tool_call_id == message.tool_call_id
-        and filtered_messages[-1].content == message.content
-        and filtered_messages[-1].response_metadata == message.response_metadata
-        and filtered_messages[-1].additional_kwargs == message.additional_kwargs
+        existing_message.name == message.name
+        and existing_message.tool_call_id == message.tool_call_id
+        and existing_message.content == message.content
+        and existing_message.response_metadata == message.response_metadata
+        and existing_message.additional_kwargs == message.additional_kwargs
     ):
-        return
+        return False
+
+    return not existing_message.content and bool(message.content)
+
+
+def _append_unique_message(filtered_messages: list[BaseMessage], message: BaseMessage) -> None:
+    if isinstance(message, ToolMessage):
+        existing_index = _find_tool_message_index(filtered_messages, message)
+        if existing_index is not None:
+            existing_message = filtered_messages[existing_index]
+            if isinstance(existing_message, ToolMessage) and _should_replace_tool_message(existing_message, message):
+                filtered_messages[existing_index] = message
+            return
+
     filtered_messages.append(message)
 
 

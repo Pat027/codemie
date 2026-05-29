@@ -325,8 +325,8 @@ def test_get_inputs_skips_compaction_when_feature_flag_disabled(agent):
 def test_transform_history_keeps_rich_messages_only_when_feature_flag_enabled():
     history = [
         HumanMessage(content="Hello"),
-        ToolMessage(content="tool output", tool_call_id="tool-call-1", name="search_tool"),
         AIMessage(content="", tool_calls=[{"id": "tool-call-1", "name": "search_tool", "args": {"query": "test"}}]),
+        ToolMessage(content="tool output", tool_call_id="tool-call-1", name="search_tool"),
     ]
 
     with patch("codemie.agents.assistant_agent.DynamicConfigService.get_typed_value", return_value=True):
@@ -335,3 +335,24 @@ def test_transform_history_keeps_rich_messages_only_when_feature_flag_enabled():
 
     assert transformed == history
     assert filtered == history
+
+
+def test_filter_history_drops_orphan_tool_messages_when_rich_history_enabled():
+    history = [
+        HumanMessage(content="Hello"),
+        AIMessage(content="", tool_calls=[{"id": "tool-call-1", "name": "search_tool", "args": {"query": "test"}}]),
+        ToolMessage(content="tool output", tool_call_id="tool-call-1", name="search_tool"),
+        ToolMessage(content="duplicate tool output", tool_call_id="tool-call-1", name="search_tool"),
+        ToolMessage(content="orphan tool output", tool_call_id="tool-call-2", name="skill_tool"),
+        AIMessage(content="Done"),
+    ]
+
+    with patch.object(AIToolsAgent, "_is_conversation_replay_v2_enabled", return_value=True):
+        filtered = AIToolsAgent._filter_history(history)
+
+    assert filtered == [
+        HumanMessage(content="Hello"),
+        AIMessage(content="", tool_calls=[{"id": "tool-call-1", "name": "search_tool", "args": {"query": "test"}}]),
+        ToolMessage(content="tool output", tool_call_id="tool-call-1", name="search_tool"),
+        AIMessage(content="Done"),
+    ]

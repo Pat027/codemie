@@ -40,6 +40,41 @@ def test_find_messages():
     assert ai_message.message == "AI Msg 2"
 
 
+def test_update_chat_history_replaces_only_latest_variant_for_same_turn():
+    conversation = Conversation(
+        conversation_id="test_id",
+        history=[
+            GeneratedMessage(history_index=20, message="User Msg 1", role=ChatRole.USER),
+            GeneratedMessage(history_index=20, message="AI Msg 1", role=ChatRole.ASSISTANT),
+            GeneratedMessage(history_index=20, message="User Msg 2", role=ChatRole.USER),
+            GeneratedMessage(history_index=20, message="AI Msg 2", role=ChatRole.ASSISTANT),
+        ],
+    )
+
+    conversation.update_chat_history(
+        user_query="User Msg 3",
+        user_query_raw="User Msg 3",
+        assistant_id="assistant-id",
+        project="test-project",
+        assistant_response="AI Msg 3",
+        thoughts=[],
+        history_index=20,
+        time_elapsed=0,
+        input_tokens=0,
+        output_tokens=0,
+        file_names=[],
+        money_spent=0.0,
+        replace_latest_variant=True,
+    )
+
+    assert [message.message for message in conversation.history] == [
+        "User Msg 1",
+        "AI Msg 1",
+        "User Msg 3",
+        "AI Msg 3",
+    ]
+
+
 def test_generated_message_serialization_without_file_names():
     """Test GeneratedMessage serialization with no file_names."""
     message = GeneratedMessage(role=ChatRole.USER, message="Test message", date=datetime.now(), history_index=1)

@@ -297,6 +297,97 @@ class TestLangGraphMultiAssistantHandoffs:
             ToolMessage(content="Final analyst answer", name="transfer_to_analyst", tool_call_id="call-123"),
         ]
 
+    def test_strip_handoff_back_messages_pre_model_hook_does_not_duplicate_visible_single_handoff_result(self):
+        visible_handoff_call = AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "transfer_to_presentation_copy_builder",
+                    "args": {"task": "Create presentation copy"},
+                    "id": "call-123",
+                    "type": "tool_call",
+                }
+            ],
+        )
+        visible_handoff_result = ToolMessage(
+            content="Presentation copy has been created and saved to presentation.copy",
+            name="transfer_to_presentation_copy_builder",
+            tool_call_id="call-123",
+        )
+        single_parent_handoff = ToolMessage(
+            content="Create presentation copy",
+            name="transfer_to_presentation_copy_builder",
+            tool_call_id="call-123",
+            additional_kwargs={METADATA_KEY_SUBAGENT_TASK: True},
+            response_metadata={METADATA_KEY_HANDOFF_DESTINATION: "presentation_copy_builder"},
+        )
+        copy_builder_response = AIMessage(
+            content="Presentation copy has been created and saved to presentation.copy",
+            name="presentation_copy_builder",
+        )
+
+        result = _strip_handoff_back_messages_pre_model_hook(
+            {
+                "messages": [
+                    HumanMessage(content="User request"),
+                    visible_handoff_call,
+                    visible_handoff_result,
+                    single_parent_handoff,
+                    copy_builder_response,
+                ]
+            }
+        )
+
+        assert result["llm_input_messages"] == [
+            HumanMessage(content="User request"),
+            visible_handoff_call,
+            visible_handoff_result,
+        ]
+
+    def test_strip_handoff_back_messages_pre_model_hook_replaces_empty_single_handoff_placeholder(self):
+        visible_handoff_call = AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "transfer_to_analyst",
+                    "args": {"task": "Analyze this repository"},
+                    "id": "call-123",
+                    "type": "tool_call",
+                }
+            ],
+        )
+        empty_placeholder = ToolMessage(
+            content="",
+            name="transfer_to_analyst",
+            tool_call_id="call-123",
+        )
+        single_parent_handoff = ToolMessage(
+            content="Analyze this repository",
+            name="transfer_to_analyst",
+            tool_call_id="call-123",
+            additional_kwargs={METADATA_KEY_SUBAGENT_TASK: True},
+            response_metadata={METADATA_KEY_HANDOFF_DESTINATION: "analyst"},
+        )
+        analyst_response = AIMessage(content="Final analyst answer", name="analyst")
+
+        result = _strip_handoff_back_messages_pre_model_hook(
+            {
+                "messages": [
+                    HumanMessage(content="User request"),
+                    visible_handoff_call,
+                    empty_placeholder,
+                    single_parent_handoff,
+                    analyst_response,
+                ]
+            }
+        )
+
+        assert result["llm_input_messages"] == [
+            HumanMessage(content="User request"),
+            visible_handoff_call,
+            ToolMessage(content="Final analyst answer", name="transfer_to_analyst", tool_call_id="call-123"),
+        ]
+
     def test_parent_context_keeps_original_messages_and_only_final_subagent_return(self):
         handoff_tool = LangGraphAgent._create_custom_handoff_tool(
             agent_name="analyst",

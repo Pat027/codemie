@@ -171,6 +171,8 @@ class ConversationService:
             history_index = max_index + 1
             request.history_index = history_index
 
+        replace_latest_variant = request.has_persisted_history_variant()
+
         conversation.update_chat_history(
             user_query=request.text,
             user_query_raw=request.content_raw,
@@ -184,6 +186,7 @@ class ConversationService:
             input_tokens=tokens_usage.input_tokens,
             output_tokens=tokens_usage.output_tokens,
             money_spent=tokens_usage.money_spent,
+            replace_latest_variant=replace_latest_variant,
         )
         AgentWorkspaceService().sync_uploaded_files(
             conversation_id=request.conversation_id,
@@ -206,6 +209,7 @@ class ConversationService:
 
         # Save or update conversation
         conversation.save() if should_create_conversation else conversation.update()
+        request.mark_history_variant_persisted()
 
     @classmethod
     def upsert_conversation_with_history(

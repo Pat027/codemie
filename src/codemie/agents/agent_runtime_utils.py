@@ -24,6 +24,7 @@ from codemie.agents.agent_log_utils import (
     truncate_log_content,
 )
 from codemie.agents.utils import validate_json_schema
+from codemie.configs.logger import logger
 from codemie.core.constants import ChatRole
 
 
@@ -79,7 +80,39 @@ def filter_history(history: list[Any], *, supports_rich_history: bool) -> list[A
             continue
         if isinstance(item, AIMessage) and getattr(item, "tool_calls", None):
             filtered_history.append(item)
-    return filtered_history
+    return _sanitize_rich_history_for_llm(filtered_history)
+
+
+def _sanitize_rich_history_for_llm(history: list[BaseMessage]) -> list[BaseMessage]:
+    sanitized_history: list[BaseMessage] = []
+    pending_tool_call_ids: set[str] = set()
+
+    for item in history:
+        if isinstance(item, AIMessage) and getattr(item, "tool_calls", None):
+            pending_tool_call_ids = {
+                str(tool_call_id) for tool_call in item.tool_calls if (tool_call_id := tool_call.get("id"))
+            }
+            sanitized_history.append(item)
+            continue
+
+        if isinstance(item, ToolMessage):
+            tool_call_id = getattr(item, "tool_call_id", None)
+            if tool_call_id and tool_call_id in pending_tool_call_ids:
+                pending_tool_call_ids.discard(tool_call_id)
+                sanitized_history.append(item)
+                continue
+
+            logger.info(
+                "Dropping orphan tool replay message before LLM invocation. "
+                f"ToolName={item.name or item.additional_kwargs.get('name') or 'tool'}, "
+                f"ToolCallId={tool_call_id}"
+            )
+            continue
+
+        pending_tool_call_ids = set()
+        sanitized_history.append(item)
+
+    return sanitized_history
 
 
 def serialize_messages(messages: list[Any]) -> str:
