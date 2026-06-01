@@ -86,6 +86,7 @@ class BaseDatasourceProcessor(ABC):
         self.loader = None
         self.datasource_name = datasource_name
         self.index = index
+        self._pre_scheduled = False
         self.user = user
         self.callbacks = callbacks if callbacks else []
         self.client = ElasticSearchClient.get_client()
@@ -118,6 +119,10 @@ class BaseDatasourceProcessor(ABC):
                   reprocess/resume/incremental_reindex through the same concurrency gate.
         """
         from codemie.datasource.datasource_concurrency_manager import datasource_concurrency_manager
+
+        if self.index is None:
+            self._init_index()
+            self._pre_scheduled = True
 
         target = func if func is not None else self.process
         background_tasks.add_task(datasource_concurrency_manager.run, target, self.index)
@@ -161,7 +166,8 @@ class BaseDatasourceProcessor(ABC):
         ):
             try:
                 self._load_stats_persisted = False
-                self._init_index()
+                if not self._pre_scheduled:
+                    self._init_index()
                 self._setup_processing_context()
                 self.index.start_fetching(is_incremental=self.is_incremental_reindex)
                 self.loader = self._init_loader()
@@ -223,6 +229,12 @@ class BaseDatasourceProcessor(ABC):
                 return
             except Exception as ex:
                 record_exception_on_span(ex)
+                if self.index is None:
+                    logger.error(
+                        f"_init_index() failed before creating DB record for datasource '{self.datasource_name}'.",
+                        exc_info=True,
+                    )
+                    raise
                 logger.error(f"Error occurred while indexing repo {self.index.repo_name}", exc_info=True)
                 if not self._load_stats_persisted:
                     self._persist_load_stats()
