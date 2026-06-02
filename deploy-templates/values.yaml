@@ -213,12 +213,14 @@ security:
 
 serviceAccount:
   # -- Specifies whether a service account should be created
-  create: false
+  create: true
   # -- Annotations applied to created service account
   annotations: {}
   # -- Service account name for AI/Run API pod
   # If not set and create is true, a name is generated using the fullname template
   name: ""
+  # -- Toggle automatic mounting of the service account token.
+  automountServiceAccountToken: true
 
 # -- Annotations to be added to AI/Run API pods
 podAnnotations: {}

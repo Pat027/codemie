@@ -111,7 +111,8 @@ A Helm chart for AI/Run API
 | service.port | int | `8080` | AI/Run API service port |
 | service.type | string | `"ClusterIP"` | AI/Run API service type |
 | serviceAccount.annotations | object | `{}` | Annotations applied to created service account |
-| serviceAccount.create | bool | `false` | Specifies whether a service account should be created |
+| serviceAccount.automountServiceAccountToken | bool | `true` | Toggle automatic mounting of the service account token. |
+| serviceAccount.create | bool | `true` | Specifies whether a service account should be created |
 | serviceAccount.name | string | `""` | Service account name for AI/Run API pod If not set and create is true, a name is generated using the fullname template |
 | startupProbe.failureThreshold | int | `60` | Minimum consecutive failures for the probe to be considered failed after having succeeded |
 | startupProbe.httpGet.path | string | `"/v1/healthcheck"` |  |
