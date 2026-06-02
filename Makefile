@@ -67,4 +67,4 @@ run:
 	poetry run uvicorn codemie.rest_api.main:app --host=0.0.0.0 --port=8080 --reload
 
 test-harness:
-	uvx codemie-test-harness --sanity
+	uvx codemie-test-harness --sanity-api

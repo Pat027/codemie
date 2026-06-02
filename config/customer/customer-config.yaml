@@ -21,7 +21,7 @@ components:
     settings:
       name: "Documentation"
       enabled: true
-      url: "https://codemie-ai.github.io/docs"
+      url: "https://docs.codemie.ai/"
   - id: "userGuideOld"
     settings:
       name: "Documentation"
