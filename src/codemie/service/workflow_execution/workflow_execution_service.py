@@ -110,6 +110,7 @@ class WorkflowExecutionService:
         WorkflowMonitoringService.send_workflow_execution_metric(
             workflow_config=self.workflow_config, workflow_execution_config=self.workflow_execution, user=self.user
         )
+        request_summary_manager.clear_summary(self.workflow_execution_id)
 
     def interrupt(self, interrupted_state: str):
         with self.workflow_execution_lock:

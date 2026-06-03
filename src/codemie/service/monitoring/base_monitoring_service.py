@@ -73,11 +73,11 @@ class BaseMonitoringService:
         count: int = 1,
     ):
         try:
-            send_log_metric(name, {"count": count, **attributes})
-            counter = cls._get_or_create_counter(name, description, unit)
             attributes = attributes or {}
             if not attributes.get(MetricsAttributes.USER_ID):
                 attributes.update({MetricsAttributes.USER_ID: logging_user_id.get("-")})
+            send_log_metric(name, {"count": count, **attributes})
+            counter = cls._get_or_create_counter(name, description, unit)
             attributes.update(
                 {
                     "env": config.ENV,

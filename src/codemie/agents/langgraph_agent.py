@@ -404,8 +404,7 @@ class LangGraphAgent(WorkspaceAwareAgent):
             messages.append(ai_message)
         if not isinstance(ai_message, AIMessage):
             raise TypeError(
-                f"Cannot handoff to {agent_name}: expected AIMessage as last message, "
-                f"got {type(ai_message).__name__}"
+                f"Cannot handoff to {agent_name}: expected AIMessage as last message, got {type(ai_message).__name__}"
             )
 
         return messages, ai_message
@@ -843,8 +842,6 @@ class LangGraphAgent(WorkspaceAwareAgent):
 
         with suppress_stdout():
             for chunk in stream:
-                if self._should_stop_streaming():
-                    break
                 if not chunk:
                     continue
 
@@ -855,6 +852,9 @@ class LangGraphAgent(WorkspaceAwareAgent):
                 last_message, has_structured_response = self._update_last_message_if_needed(
                     current_message, last_message, has_structured_response
                 )
+                if self._should_stop_streaming():
+                    stream.close()
+                    break
 
         self._finalize_stream_result(last_message)
         return last_message

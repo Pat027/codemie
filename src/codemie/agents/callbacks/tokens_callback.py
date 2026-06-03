@@ -87,6 +87,61 @@ class TokensCalculationCallback(AsyncCallbackHandler):
         except Exception as e:
             logger.error(f"Error while calculating tokens: {str(e)}")
 
+    def on_llm_error(
+        self,
+        error: BaseException,
+        *,
+        run_id: UUID,
+        parent_run_id: Optional[UUID] = None,
+        **kwargs: Any,
+    ) -> None:
+        """Run when LLM errors. Capture partial token usage if the provider returns it."""
+        try:
+            logger.warning(f"LLM error for run {run_id}, model {self.llm_model}: {error}")
+            response: Optional[LLMResult] = kwargs.get("response")
+            if response is None:
+                return
+
+            input_tokens = 0
+            output_tokens = 0
+            cached_tokens = 0
+            cache_creation_tokens = 0
+            for gen in response.generations:
+                for gen_result in gen:
+                    if gen_result.message and gen_result.message.usage_metadata:
+                        usage_metadata: UsageMetadata = gen_result.message.usage_metadata
+                        input_tokens += usage_metadata.get("input_tokens", 0)
+                        output_tokens += usage_metadata.get("output_tokens", 0)
+                        cached_tokens += usage_metadata.get("input_token_details", {}).get("cache_read", 0)
+                        cache_creation_tokens += usage_metadata.get("input_token_details", {}).get("cache_creation", 0)
+
+            if not (input_tokens or output_tokens):
+                return
+
+            model_costs = llm_service.get_model_cost(self.llm_model)
+            money_spent, cached_tokens_money_spent, cached_tokens_creation_cost = calculate_token_cost(
+                llm_model=self.llm_model,
+                cost_config=model_costs,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cached_tokens=cached_tokens,
+                cache_creation_tokens=cache_creation_tokens,
+            )
+
+            llm_run = LLMRun(
+                run_id=str(run_id),
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cached_tokens=cached_tokens,
+                money_spent=money_spent,
+                cached_tokens_money_spent=cached_tokens_money_spent,
+                cached_tokens_creation_cost=cached_tokens_creation_cost,
+                llm_model=self.llm_model,
+            )
+            request_summary_manager.update_llm_run(request_id=self.request_id, llm_run=llm_run)
+        except Exception as e:
+            logger.error(f"Error while handling LLM error token calculation: {str(e)}")
+
     def on_chat_model_start(self, serialized: dict[str, Any], messages: list[list[BaseMessage]], **kwargs: Any) -> None:
         """Run when LLM starts running.
 

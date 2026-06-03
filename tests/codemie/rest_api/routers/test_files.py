@@ -24,6 +24,7 @@ from codemie.rest_api.main import extended_http_exception_handler
 from codemie.rest_api.routers import files
 from codemie.rest_api.security.user import User
 from codemie.rest_api.routers.files import router
+from codemie.rest_api.security.authentication import authenticate
 import hashlib
 
 app = FastAPI()
@@ -39,17 +40,20 @@ def anyio_backend():
 
 
 @pytest.fixture
-def authenticated_user(monkeypatch):
-    def mock_authenticate():
-        return User(id='test_user')
+def authenticated_user():
+    mock_user = User(id='test_user')
 
-    monkeypatch.setattr('codemie.rest_api.security.authentication.authenticate', mock_authenticate)
-    return mock_authenticate
+    def mock_authenticate():
+        return mock_user
+
+    app.dependency_overrides[authenticate] = mock_authenticate
+    yield mock_user
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture
 def auth_headers(authenticated_user):
-    return {"user-id": authenticated_user().id}
+    return {"user-id": authenticated_user.id}
 
 
 @pytest.mark.anyio

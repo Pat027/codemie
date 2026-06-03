@@ -18,7 +18,25 @@ This module disables the rate limiter before importing the router module
 to prevent rate limiting from interfering with tests.
 """
 
+import pytest
+
 import codemie.rest_api.rate_limit
 
 # Disable rate limiter for all tests
 codemie.rest_api.rate_limit.limiter.enabled = False
+
+
+@pytest.fixture(autouse=True)
+def _inject_request_uuid(monkeypatch):
+    """Tests use bare FastAPI() apps without uuid-injection middleware.
+    Provide uuid default on request.state so authenticate() doesn't crash."""
+    from starlette.datastructures import State
+
+    original_getattr = State.__getattr__
+
+    def _getattr_with_uuid(self, key):
+        if key == "uuid":
+            return "test-request-uuid"
+        return original_getattr(self, key)
+
+    monkeypatch.setattr(State, "__getattr__", _getattr_with_uuid)

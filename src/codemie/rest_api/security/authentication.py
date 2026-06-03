@@ -104,6 +104,14 @@ async def authenticate(
         if user.auth_token:
             set_current_auth_token(user.auth_token)
 
+        from codemie.configs.logger import set_logging_info
+
+        set_logging_info(
+            uuid=request.state.uuid,
+            user_id=user.id,
+            user_email=user.email,
+        )
+
         return user
 
     except Exception as e:
