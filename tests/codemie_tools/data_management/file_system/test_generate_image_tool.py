@@ -32,7 +32,7 @@ from codemie_tools.data_management.file_system.generate_image_tool import (
 _CONFIG = LiteLLMImageConfig(
     api_base="https://litellm.example.com",
     api_key="test-key",
-    api_version="2024-12-01-preview",
+    api_version="2025-04-01-preview",
     model_id=config.IMAGE_GENERATION_MODEL,
 )
 _IMAGE_URL = "https://example.com/image.png"

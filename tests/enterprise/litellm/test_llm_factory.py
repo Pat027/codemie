@@ -89,7 +89,7 @@ class TestCreateLiteLLMChatModel:
 
         with patch.object(config, "LITE_LLM_URL", "http://test:4000"):
             with patch.object(config, "LITE_LLM_APP_KEY", "test-key"):
-                with patch.object(config, "OPENAI_API_VERSION", "2024-12-01-preview"):
+                with patch.object(config, "OPENAI_API_VERSION", "2025-04-01-preview"):
                     with patch.object(config, "OPENAI_API_TYPE", "azure"):
                         with patch.object(config, "AZURE_OPENAI_MAX_RETRIES", 3):
                             with patch("langchain_openai.AzureChatOpenAI"):
@@ -128,7 +128,7 @@ class TestCreateLiteLLMChatModel:
         mock_model_details.api_version = None
 
         with patch.object(config, "LITE_LLM_URL", "http://test:4000"):
-            with patch.object(config, "OPENAI_API_VERSION", "2024-12-01-preview"):
+            with patch.object(config, "OPENAI_API_VERSION", "2025-04-01-preview"):
                 with patch.object(config, "OPENAI_API_TYPE", "azure"):
                     with patch.object(config, "AZURE_OPENAI_MAX_RETRIES", 3):
                         with patch.object(config, "LITE_LLM_TAGS_HEADER_VALUE", "default"):
@@ -206,7 +206,7 @@ class TestCreateLiteLLMEmbeddingModel:
         with patch.object(config, "LITE_LLM_URL", "http://test:4000"):
             with patch.object(config, "LITE_LLM_APP_KEY", "test-key"):
                 with patch.object(config, "OPENAI_API_TYPE", "azure"):
-                    with patch.object(config, "OPENAI_API_VERSION", "2024-12-01-preview"):
+                    with patch.object(config, "OPENAI_API_VERSION", "2025-04-01-preview"):
                         with patch.object(config, "LITE_LLM_TAGS_HEADER_VALUE", "default"):
                             with patch.object(config, "LITE_LLM_PROJECTS_TO_TAGS_LIST", ""):
                                 with patch("langchain_openai.AzureOpenAIEmbeddings"):

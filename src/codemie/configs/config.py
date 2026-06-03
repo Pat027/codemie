@@ -56,7 +56,7 @@ class Config(BaseSettings):
     TIMEZONE: str = "UTC"
 
     OPENAI_API_TYPE: str = "azure"
-    OPENAI_API_VERSION: str = "2024-12-01-preview"
+    OPENAI_API_VERSION: str = "2025-04-01-preview"
     AZURE_OPENAI_API_KEY: str = ""
     AZURE_OPENAI_URL: str = ""
     AZURE_OPENAI_MAX_RETRIES: int = 5
