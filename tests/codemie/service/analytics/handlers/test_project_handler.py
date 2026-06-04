@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -361,3 +361,60 @@ class TestGetProjectsUniqueDaily:
         assert len(str(extended_bounds["min"])) == 13
         assert len(str(extended_bounds["max"])) == 13
         assert extended_bounds["min"] < extended_bounds["max"]
+
+
+class TestGetProjectsSpending:
+    """Tests for get_projects_spending method."""
+
+    def test_parse_projects_spending_rows_raw_stores_cli_cost_original(self, handler):
+        """Raw parser must store _cli_cost_original without applying adjustment."""
+        result = {
+            "aggregations": {
+                "paginated_results": {
+                    "buckets": [
+                        {
+                            "key": "project-alpha",
+                            "total_cost": {"sum": {"value": 800.0}},
+                            "cli_cost": {"sum": {"value": 200.0}},
+                        },
+                        {
+                            "key": "project-beta",
+                            "total_cost": {"sum": {"value": 100.0}},
+                            "cli_cost": {"sum": {"value": 0.0}},
+                        },
+                    ]
+                }
+            }
+        }
+
+        rows = handler._parse_projects_spending_rows_raw(result)
+
+        assert len(rows) == 2
+        assert rows[0]["project_name"] == "project-alpha"
+        assert rows[0]["total_cost_usd"] == 800.0
+        assert rows[0]["_cli_cost_original"] == 200.0
+        assert rows[1]["project_name"] == "project-beta"
+        assert rows[1]["total_cost_usd"] == 100.0
+        assert rows[1]["_cli_cost_original"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_get_projects_spending_applies_cli_adjustment_after_gather(self, handler):
+        """get_projects_spending must apply CLI adjustment and strip temp field."""
+        raw_rows = [
+            {"project_name": "proj-a", "total_cost_usd": 800.0, "_cli_cost_original": 200.0},
+        ]
+        mock_pipeline_result = {
+            "data": {"rows": raw_rows, "columns": []},
+            "totals": {},
+            "pagination": {"page": 0, "per_page": 20, "total_count": 1, "has_more": False},
+        }
+
+        with (
+            patch.object(handler._pipeline, "execute_tabular_query", new=AsyncMock(return_value=mock_pipeline_result)),
+            patch.object(handler, "get_cli_costs_grouped_by", new=AsyncMock(return_value={"proj-a": 20.0})),
+        ):
+            result = await handler.get_projects_spending(time_period="last_30_days")
+
+        rows = result["data"]["rows"]
+        assert rows[0]["total_cost_usd"] == pytest.approx(620.0)  # 800 + (20 - 200)
+        assert "_cli_cost_original" not in rows[0]

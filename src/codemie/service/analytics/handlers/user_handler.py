@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import datetime, timezone
@@ -224,31 +225,26 @@ class UserHandler(CLICostAdjustmentMixin):
 
         start_dt, end_dt = TimeParser.parse(time_period, start_date, end_date)
 
-        # Query 1: Get CLI costs per user with ADJUSTED dates (before main query)
-        cli_costs_by_user = await self.get_cli_costs_grouped_by(
-            start_dt, end_dt, USER_ID_KEYWORD_FIELD, "user", users, projects
+        result, cli_costs_by_user = await asyncio.gather(
+            self._pipeline.execute_tabular_query(
+                agg_builder=lambda query, fetch_size: self._build_users_spending_aggregation(query, fetch_size),
+                result_parser=self._parse_users_spending_rows_raw,
+                columns=self._get_users_spending_columns(),
+                group_by_field=USER_ID_KEYWORD_FIELD,
+                metric_filters=MetricName.to_list_from_group(MetricName.SPENDING_METRICS),
+                time_period=time_period,
+                start_date=start_date,
+                end_date=end_date,
+                users=users,
+                projects=projects,
+                page=page,
+                per_page=per_page,
+                use_bucket_selector=True,
+            ),
+            self.get_cli_costs_grouped_by(start_dt, end_dt, USER_ID_KEYWORD_FIELD, "user", users, projects),
         )
 
-        # Query 2: Get all costs (including CLI) with ORIGINAL dates
-        # Use closure to capture cli_costs_by_user for result parsing
-        def parse_with_cli_adjustment(result: dict) -> list[dict]:
-            return self._parse_users_spending_result(result, cli_costs_by_user)
-
-        result = await self._pipeline.execute_tabular_query(
-            agg_builder=lambda query, fetch_size: self._build_users_spending_aggregation(query, fetch_size),
-            result_parser=parse_with_cli_adjustment,
-            columns=self._get_users_spending_columns(),
-            group_by_field=USER_ID_KEYWORD_FIELD,
-            metric_filters=MetricName.to_list_from_group(MetricName.SPENDING_METRICS),
-            time_period=time_period,
-            start_date=start_date,
-            end_date=end_date,
-            users=users,
-            projects=projects,
-            page=page,
-            per_page=per_page,
-            use_bucket_selector=True,
-        )
+        self._apply_cli_adjustment_to_rows(result["data"]["rows"], cli_costs_by_user, "user_email")
         await UserIdentityResolver.resolve_rows(result.get("data", {}).get("rows", []), "user_email")
         return result
 
@@ -342,6 +338,30 @@ class UserHandler(CLICostAdjustmentMixin):
             )
 
         logger.debug(f"Parsed users-spending result: total_user_buckets={len(buckets)}, rows_parsed={len(rows)}")
+        return rows
+
+    def _parse_users_spending_rows_raw(self, result: dict) -> list[dict]:
+        """Parse ES result into rows without applying CLI cost adjustment.
+
+        Stores original CLI cost in _cli_cost_original for use by
+        _apply_cli_adjustment_to_rows after asyncio.gather completes.
+        """
+        buckets = result.get("aggregations", {}).get("paginated_results", {}).get("buckets", [])
+        rows = []
+        for bucket in buckets:
+            raw_key = bucket["key"]
+            if not raw_key:
+                continue
+            total_cost_original = bucket.get("total_cost", {}).get("value", 0) or 0
+            cli_cost_original = bucket.get("cli_cost", {}).get("sum", {}).get("value", 0) or 0
+            rows.append(
+                {
+                    "user_email": raw_key,
+                    "total_cost_usd": total_cost_original,
+                    "_cli_cost_original": cli_cost_original,
+                }
+            )
+        logger.debug(f"Parsed users-spending rows (raw): {len(rows)} rows")
         return rows
 
     def _get_users_spending_columns(self) -> list[dict]:

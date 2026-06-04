@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -70,17 +71,16 @@ class SummaryHandler(CLICostAdjustmentMixin):
 
         start_dt, end_dt = TimeParser.parse(time_period, start_date, end_date)
 
-        # Execute separate query for unique_users first (without metric_name filter)
-        unique_users_count = await self._get_unique_users_count(
-            time_period=time_period,
-            start_date=start_date,
-            end_date=end_date,
-            users=users,
-            projects=projects,
-        )
-
-        cli_adjusted = await self.get_cli_costs_with_adjustment(
-            start_dt, end_dt, users, projects, include_cache_costs=False
+        # Execute independent queries concurrently to reduce latency
+        unique_users_count, cli_adjusted = await asyncio.gather(
+            self._get_unique_users_count(
+                time_period=time_period,
+                start_date=start_date,
+                end_date=end_date,
+                users=users,
+                projects=projects,
+            ),
+            self.get_cli_costs_with_adjustment(start_dt, end_dt, users, projects, include_cache_costs=False),
         )
         cli_adjusted_total = cli_adjusted["total_cost"]
 

@@ -217,9 +217,30 @@ class TestMetricsElasticRepository:
         # Act
         result = await repository.execute_aggregation_query(body)
 
-        # Assert
-        mock_es_client.search.assert_called_once_with(index="test-metrics-index", body=body, request_timeout=60)
+        # Assert — track_total_hits is injected; original body fields are preserved
+        expected_body = {"track_total_hits": False, **body}
+        mock_es_client.search.assert_called_once_with(
+            index="test-metrics-index", body=expected_body, request_timeout=60
+        )
         assert result == sample_aggregation_result
+
+    @pytest.mark.asyncio
+    async def test_execute_aggregation_query_sets_track_total_hits_false(
+        self, repository, mock_es_client, sample_aggregation_result
+    ):
+        """Verify track_total_hits is always False to skip ES hit counting overhead."""
+        # Arrange
+        body = {"query": {"match_all": {}}, "aggs": {"user_stats": {"terms": {"field": "user_id"}}}}
+        mock_es_client.search.return_value = sample_aggregation_result
+
+        # Act
+        await repository.execute_aggregation_query(body)
+
+        # Assert — track_total_hits: False must be in the body sent to ES
+        call_kwargs = mock_es_client.search.call_args.kwargs
+        assert call_kwargs["body"]["track_total_hits"] is False
+        # Original body fields are preserved
+        assert call_kwargs["body"]["query"] == {"match_all": {}}
 
     @pytest.mark.asyncio
     async def test_execute_aggregation_query_index_not_found_returns_empty(self, repository, mock_es_client):
@@ -287,8 +308,11 @@ class TestMetricsElasticRepository:
         # Act
         result = await repository.execute_aggregation_query(body)
 
-        # Assert
-        mock_es_client.search.assert_called_once_with(index="test-metrics-index", body=body, request_timeout=60)
+        # Assert — track_total_hits is injected; original body fields are preserved
+        expected_body = {"track_total_hits": False, **body}
+        mock_es_client.search.assert_called_once_with(
+            index="test-metrics-index", body=expected_body, request_timeout=60
+        )
         assert result == sample_aggregation_result
 
     # ================================================================================

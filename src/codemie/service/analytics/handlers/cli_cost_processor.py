@@ -239,6 +239,28 @@ class CLICostAdjustmentMixin:
         logger.debug(f"CLI costs by {entity_name}: {len(cli_costs)} {entity_name}s with CLI usage")
         return cli_costs
 
+    def _apply_cli_adjustment_to_rows(
+        self,
+        rows: list[dict],
+        cli_costs: dict[str, float],
+        key_field: str,
+    ) -> None:
+        """Apply CLI cost adjustment delta to parsed rows and remove the temp field.
+
+        Must be called after asyncio.gather completes with both the raw tabular
+        result and the adjusted CLI costs dict.
+
+        Args:
+            rows: Parsed row dicts that contain "_cli_cost_original" temp field.
+            cli_costs: Mapping of entity_key -> adjusted CLI cost from cutoff-aware query.
+            key_field: Row field name used as the lookup key into cli_costs
+                       (e.g. "user_email" or "project_name").
+        """
+        for row in rows:
+            cli_original = row.pop("_cli_cost_original", 0.0)
+            cli_adjusted = cli_costs.get(row[key_field], 0.0)
+            row["total_cost_usd"] += cli_adjusted - cli_original
+
     async def _query_cli_costs(
         self,
         start_date: datetime,

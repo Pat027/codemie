@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -76,31 +77,26 @@ class ProjectHandler(CLICostAdjustmentMixin):
 
         start_dt, end_dt = TimeParser.parse(time_period, start_date, end_date)
 
-        # Query 1: Get CLI costs per project with ADJUSTED dates (before main query)
-        cli_costs_by_project = await self.get_cli_costs_grouped_by(
-            start_dt, end_dt, PROJECT_KEYWORD_FIELD, "project", users, projects
+        result, cli_costs_by_project = await asyncio.gather(
+            self._pipeline.execute_tabular_query(
+                agg_builder=lambda query, fetch_size: self._build_projects_spending_aggregation(query, fetch_size),
+                result_parser=self._parse_projects_spending_rows_raw,
+                columns=self._get_projects_spending_columns(),
+                group_by_field=PROJECT_KEYWORD_FIELD,
+                metric_filters=MetricName.to_list_from_group(MetricName.SPENDING_METRICS),
+                time_period=time_period,
+                start_date=start_date,
+                end_date=end_date,
+                users=users,
+                projects=projects,
+                page=page,
+                per_page=per_page,
+                use_bucket_selector=True,
+            ),
+            self.get_cli_costs_grouped_by(start_dt, end_dt, PROJECT_KEYWORD_FIELD, "project", users, projects),
         )
-
-        # Query 2: Get all costs (including CLI) with ORIGINAL dates
-        # Use closure to capture cli_costs_by_project for result parsing
-        def parse_with_cli_adjustment(result: dict) -> list[dict]:
-            return self._parse_projects_spending_result(result, cli_costs_by_project)
-
-        return await self._pipeline.execute_tabular_query(
-            agg_builder=lambda query, fetch_size: self._build_projects_spending_aggregation(query, fetch_size),
-            result_parser=parse_with_cli_adjustment,
-            columns=self._get_projects_spending_columns(),
-            group_by_field=PROJECT_KEYWORD_FIELD,
-            metric_filters=MetricName.to_list_from_group(MetricName.SPENDING_METRICS),
-            time_period=time_period,
-            start_date=start_date,
-            end_date=end_date,
-            users=users,
-            projects=projects,
-            page=page,
-            per_page=per_page,
-            use_bucket_selector=True,
-        )
+        self._apply_cli_adjustment_to_rows(result["data"]["rows"], cli_costs_by_project, "project_name")
+        return result
 
     def _build_projects_spending_aggregation(self, query: dict, fetch_size: int) -> dict:
         """Build terms aggregation for projects spending with fetch-and-slice."""
@@ -196,6 +192,28 @@ class ProjectHandler(CLICostAdjustmentMixin):
             )
 
         logger.debug(f"Parsed projects-spending result: total_project_buckets={len(buckets)}, rows_parsed={len(rows)}")
+        return rows
+
+    def _parse_projects_spending_rows_raw(self, result: dict) -> list[dict]:
+        """Parse ES result into rows without applying CLI cost adjustment.
+
+        Note: project aggregation uses total_cost.sum.value (extra filter layer),
+        unlike the user aggregation which uses total_cost.value directly.
+        """
+        buckets = result.get("aggregations", {}).get("paginated_results", {}).get("buckets", [])
+        rows = []
+        for bucket in buckets:
+            project_name = bucket["key"]
+            total_cost_original = bucket.get("total_cost", {}).get("sum", {}).get("value", 0) or 0
+            cli_cost_original = bucket.get("cli_cost", {}).get("sum", {}).get("value", 0) or 0
+            rows.append(
+                {
+                    "project_name": project_name,
+                    "total_cost_usd": total_cost_original,
+                    "_cli_cost_original": cli_cost_original,
+                }
+            )
+        logger.debug(f"Parsed projects-spending rows (raw): {len(rows)} rows")
         return rows
 
     def _get_projects_spending_columns(self) -> list[dict]:

@@ -478,3 +478,65 @@ class TestCLICostAdjustmentMixin:
             "cache_read_cost": 11.00,  # Rounded
             "cache_creation_cost": 0.0,  # Hardcoded to 0.0
         }
+
+
+class TestApplyCliAdjustmentToRows:
+    """Tests for CLICostAdjustmentMixin._apply_cli_adjustment_to_rows."""
+
+    @pytest.fixture
+    def mixin_instance(self):
+        """Create a concrete mixin instance via UserHandler."""
+        from codemie.service.analytics.handlers.user_handler import UserHandler
+
+        user = MagicMock(spec=User)
+        user.project_names = []
+        user.admin_project_names = []
+        user.is_global_user = False
+        user.is_admin_or_maintainer = False
+        user.is_admin = False
+        user.is_maintainer = False
+        user.id = "test-user-id"
+        repo = MagicMock(spec=MetricsElasticRepository)
+        return UserHandler(user, repo)
+
+    def test_applies_positive_adjustment(self, mixin_instance):
+        """Adjusted CLI cost larger than original increases total."""
+        rows = [{"user_email": "u1", "total_cost_usd": 100.0, "_cli_cost_original": 0.0}]
+        mixin_instance._apply_cli_adjustment_to_rows(rows, {"u1": 50.0}, "user_email")
+        assert rows[0]["total_cost_usd"] == pytest.approx(150.0)
+
+    def test_applies_negative_adjustment(self, mixin_instance):
+        """Adjusted CLI cost less than original reduces total (common cutoff scenario)."""
+        rows = [{"user_email": "u1", "total_cost_usd": 500.0, "_cli_cost_original": 100.0}]
+        mixin_instance._apply_cli_adjustment_to_rows(rows, {"u1": 10.0}, "user_email")
+        # 500 + (10 - 100) = 410
+        assert rows[0]["total_cost_usd"] == pytest.approx(410.0)
+
+    def test_removes_temp_field(self, mixin_instance):
+        """_cli_cost_original is stripped from every row after adjustment."""
+        rows = [{"user_email": "u1", "total_cost_usd": 200.0, "_cli_cost_original": 50.0}]
+        mixin_instance._apply_cli_adjustment_to_rows(rows, {}, "user_email")
+        assert "_cli_cost_original" not in rows[0]
+
+    def test_defaults_to_zero_for_missing_key(self, mixin_instance):
+        """Entity with no CLI usage in adjusted period gets zero adjustment (not KeyError)."""
+        rows = [{"project_name": "proj-x", "total_cost_usd": 300.0, "_cli_cost_original": 80.0}]
+        mixin_instance._apply_cli_adjustment_to_rows(rows, {}, "project_name")
+        # 300 + (0 - 80) = 220
+        assert rows[0]["total_cost_usd"] == pytest.approx(220.0)
+
+    def test_handles_empty_rows(self, mixin_instance):
+        """Empty rows list is a no-op."""
+        mixin_instance._apply_cli_adjustment_to_rows([], {"u1": 10.0}, "user_email")
+
+    def test_handles_multiple_rows(self, mixin_instance):
+        """All rows are adjusted independently."""
+        rows = [
+            {"user_email": "u1", "total_cost_usd": 500.0, "_cli_cost_original": 100.0},
+            {"user_email": "u2", "total_cost_usd": 200.0, "_cli_cost_original": 50.0},
+        ]
+        mixin_instance._apply_cli_adjustment_to_rows(rows, {"u1": 10.0, "u2": 0.0}, "user_email")
+        assert rows[0]["total_cost_usd"] == pytest.approx(410.0)  # 500 + (10 - 100)
+        assert rows[1]["total_cost_usd"] == pytest.approx(150.0)  # 200 + (0 - 50)
+        assert "_cli_cost_original" not in rows[0]
+        assert "_cli_cost_original" not in rows[1]

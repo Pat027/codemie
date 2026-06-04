@@ -143,7 +143,11 @@ class MetricsElasticRepository:
             logger.debug(f"Executing aggregation query on index {self._index}, body={body}")
             start_time = time.time()
 
-            result = await self._client.search(index=self._index, body=body, request_timeout=request_timeout)
+            result = await self._client.search(
+                index=self._index,
+                body={"track_total_hits": False, **body},
+                request_timeout=request_timeout,
+            )
 
             execution_time = (time.time() - start_time) * 1000
             logger.info(f"Aggregation query completed in {execution_time:.2f}ms")

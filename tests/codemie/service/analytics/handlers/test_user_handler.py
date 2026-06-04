@@ -167,6 +167,83 @@ class TestGetUsersSpending:
         assert rows[1]["user_email"] == "user2@example.com"
         assert rows[1]["total_cost_usd"] == 5.25
 
+    def test_parse_users_spending_rows_raw_stores_cli_cost_original(self, handler):
+        """Raw parser must store _cli_cost_original and not apply adjustment."""
+        result = {
+            "aggregations": {
+                "paginated_results": {
+                    "buckets": [
+                        {
+                            "key": "user1@example.com",
+                            "total_cost": {"value": 500.0},
+                            "cli_cost": {"sum": {"value": 100.0}},
+                        },
+                        {
+                            "key": "user2@example.com",
+                            "total_cost": {"value": 200.0},
+                            "cli_cost": {"sum": {"value": 0.0}},
+                        },
+                    ]
+                }
+            }
+        }
+
+        rows = handler._parse_users_spending_rows_raw(result)
+
+        assert len(rows) == 2
+        assert rows[0]["user_email"] == "user1@example.com"
+        assert rows[0]["total_cost_usd"] == 500.0
+        assert rows[0]["_cli_cost_original"] == 100.0
+        assert rows[1]["user_email"] == "user2@example.com"
+        assert rows[1]["total_cost_usd"] == 200.0
+        assert rows[1]["_cli_cost_original"] == 0.0
+
+    def test_parse_users_spending_rows_raw_skips_empty_keys(self, handler):
+        """Empty user keys are skipped (same as existing parser)."""
+        result = {
+            "aggregations": {
+                "paginated_results": {
+                    "buckets": [
+                        {
+                            "key": "user1@example.com",
+                            "total_cost": {"value": 10.0},
+                            "cli_cost": {"sum": {"value": 0.0}},
+                        },
+                        {"key": "", "total_cost": {"value": 5.0}, "cli_cost": {"sum": {"value": 0.0}}},
+                    ]
+                }
+            }
+        }
+        rows = handler._parse_users_spending_rows_raw(result)
+        assert len(rows) == 1
+        assert rows[0]["user_email"] == "user1@example.com"
+
+    @pytest.mark.asyncio
+    async def test_get_users_spending_applies_cli_adjustment_after_gather(self, handler):
+        """get_users_spending must apply CLI adjustment to gathered rows and strip temp field."""
+        raw_rows = [
+            {"user_email": "user1", "total_cost_usd": 500.0, "_cli_cost_original": 100.0},
+        ]
+        mock_pipeline_result = {
+            "data": {"rows": raw_rows, "columns": []},
+            "totals": {},
+            "pagination": {"page": 0, "per_page": 20, "total_count": 1, "has_more": False},
+        }
+
+        with (
+            patch.object(handler._pipeline, "execute_tabular_query", new=AsyncMock(return_value=mock_pipeline_result)),
+            patch.object(handler, "get_cli_costs_grouped_by", new=AsyncMock(return_value={"user1": 10.0})),
+            patch(
+                "codemie.service.analytics.handlers.user_handler.UserIdentityResolver.resolve_rows",
+                new=AsyncMock(),
+            ),
+        ):
+            result = await handler.get_users_spending(time_period="last_30_days")
+
+        rows = result["data"]["rows"]
+        assert rows[0]["total_cost_usd"] == pytest.approx(410.0)  # 500 + (10 - 100)
+        assert "_cli_cost_original" not in rows[0]
+
 
 class TestGetUsersActivity:
     """Tests for get_users_activity method."""
