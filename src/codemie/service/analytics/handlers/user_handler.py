@@ -547,7 +547,7 @@ class UserHandler(CLICostAdjustmentMixin):
     def _get_cli_spending_columns(self) -> list[dict]:
         """Get column definitions for CLI spending."""
         return [
-            {"id": "user_name", "label": "User Name", "type": "string"},
+            {"id": "user_name", "label": "User Email", "type": "string"},
             {"id": "total_cost_usd", "label": "CLI Cost ($)", "type": "number", "format": "currency"},
         ]
 

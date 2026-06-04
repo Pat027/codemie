@@ -235,7 +235,7 @@ class WebhookHandler:
     def _get_webhooks_invocation_columns(self) -> list[dict]:
         """Get column definitions for webhooks invocation."""
         return [
-            {"id": "user_id", "label": "User", "type": "string"},
+            {"id": "user_id", "label": "User Email", "type": "string"},
             {"id": "project", "label": "Project", "type": "string"},
             {"id": "webhook_alias", "label": "Webhook Alias", "type": "string"},
             {"id": "total_invocations", "label": "Total Invocations", "type": "number"},
