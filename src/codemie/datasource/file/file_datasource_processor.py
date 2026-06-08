@@ -61,6 +61,7 @@ class FileDatasourceProcessor(BaseDatasourceProcessor):
         embedding_model: Optional[str] = None,
         guardrail_assignments: Optional[List[GuardrailAssignmentItem]] = None,
         include_email_attachments: bool = True,
+        uploaded_files: list[str] | None = None,
     ):
         """
         Initialize FileDatasourceProcessor with the provided parameters.
@@ -84,6 +85,7 @@ class FileDatasourceProcessor(BaseDatasourceProcessor):
         self.index = index
         self.embedding_model = embedding_model
         self.include_email_attachments = include_email_attachments
+        self.uploaded_files = uploaded_files or []
 
         # Required for CSV processing
         self.csv_separator = csv_separator

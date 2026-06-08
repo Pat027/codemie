@@ -252,11 +252,13 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
     complete_state: int = 0
     current__chunks_state: Optional[int] = 0
     processed_files: Optional[List] = SQLField(default_factory=list, sa_column=Column(MutableList.as_mutable(JSONB())))
+    uploaded_files: Optional[List] = SQLField(default_factory=list, sa_column=Column(MutableList.as_mutable(JSONB())))
     error: bool = SQLField(default=False, index=True)
     completed: bool = SQLField(default=False, index=True)
     text: str = ""
     full_name: str = ""
     created_by: Optional[CreatedByUser] = SQLField(default=None, sa_column=Column(PydanticType(CreatedByUser)))
+    updated_by: Optional[CreatedByUser] = SQLField(default=None, sa_column=Column(PydanticType(CreatedByUser)))
     project_space_visible: bool = True
     docs_generation: bool = False
     branch: Optional[str] = None
@@ -404,6 +406,7 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
             completed=False,
             user=user,
             embeddings_model=file_processor.embedding_model or llm_service.default_embedding_model,
+            uploaded_files=file_processor.uploaded_files,
         )
 
     def update(self, refresh=False, validate=True):
@@ -601,6 +604,7 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
         azure_devops_work_item = kwargs.get("azure_devops_work_item")
         sharepoint = kwargs.get("sharepoint")
         google_doc_link = kwargs.get("google_doc_link", "")
+        uploaded_files = kwargs.get("uploaded_files", [])
         obj = cls(
             project_name=project_name,
             repo_name=repo_name,
@@ -624,6 +628,7 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
             azure_devops_work_item=azure_devops_work_item,
             sharepoint=sharepoint,
             google_doc_link=google_doc_link,
+            uploaded_files=uploaded_files,
         )
         obj.save(refresh=True)
         return obj
@@ -731,6 +736,7 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
         setting_id: Optional[str] = None,
         project_name: Optional[str] = None,
         guardrail_assignments: Optional[List[GuardrailAssignmentItem]] = None,
+        updated_by: Optional[CreatedByUser] = None,
         **kwargs,
     ) -> "IndexInfo":
         files_filter = kwargs.get("files_filter")
@@ -773,6 +779,8 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
             if self.index_type.startswith("knowledge_base"):
                 self._reindex_to_new_project(project_name)
             self.project_name = project_name
+        if updated_by is not None:
+            self.updated_by = updated_by
 
         self.update()
 
@@ -1321,6 +1329,61 @@ class UpdateKnowledgeBaseFilesRequest(BaseModel):
     project_space_visible: Optional[bool] = None
     new_project_name: Optional[str] = None  # Field to support project change
     guardrail_assignments: Optional[List[GuardrailAssignmentItem]] = None
+
+
+class UpdateKnowledgeBaseFileRequest(BaseModel):
+    """Form-based request for PUT /index/knowledge_base/file.
+
+    Supports metadata-only updates and file changes (additions/removals).
+    Non-UploadFile fields are passed as query parameters when used with Depends().
+    """
+
+    name: str = Field(min_length=1, max_length=500)
+    project_name: str
+    uploaded_files: Optional[str] = None  # JSON-encoded List[str] of filenames to keep
+    description: Optional[str] = None
+    project_space_visible: Optional[bool] = None
+    new_project_name: Optional[str] = None
+    guardrail_assignments: Optional[str] = None  # JSON-encoded list of GuardrailAssignmentItem
+    files: Optional[List[UploadFile]] = None  # new files to add
+    csv_separator: Optional[str] = None
+    csv_start_row: Optional[int] = None
+    csv_rows_per_document: Optional[int] = 1
+    embedding_model: Optional[str] = None
+    include_email_attachments: bool = True
+
+    MAX_FILE_COUNT: ClassVar[int] = 10
+
+    @field_validator("files")
+    @classmethod
+    def validate_files_count(cls, files: Optional[List[UploadFile]]) -> Optional[List[UploadFile]]:
+        if files and len(files) > cls.MAX_FILE_COUNT:
+            raise RequestValidationError(
+                [
+                    {
+                        "loc": ["files"],
+                        "msg": f"Too many files. Maximum count is {cls.MAX_FILE_COUNT}",
+                        "type": "value_error",
+                    }
+                ]
+            )
+        return files
+
+    @field_validator("files")
+    @classmethod
+    def validate_files_sizes(cls, files: Optional[List[UploadFile]]) -> Optional[List[UploadFile]]:
+        for file in files or []:
+            if file.size > config.FILES_STORAGE_MAX_UPLOAD_SIZE:
+                raise RequestValidationError(
+                    [
+                        {
+                            "loc": ["files"],
+                            "msg": f"File too large. Maximum size is {config.FILES_STORAGE_MAX_UPLOAD_SIZE} bytes",
+                            "type": "value_error",
+                        }
+                    ]
+                )
+        return files
 
 
 class UpdateKnowledgeBaseConfluenceRequest(CronExpressionValidatorMixin, BaseModel):

@@ -23,7 +23,7 @@ from typing import Callable, Generator
 from codemie.core.exceptions import ExtendedHTTPException
 from codemie.rest_api.main import app
 from codemie.rest_api.models.index import IndexKnowledgeBaseJIRARequest
-from codemie.core.models import CreatedByUser
+from codemie.core.models import BaseResponse, CreatedByUser
 from codemie.rest_api.routers.index import router
 from codemie.rest_api.routers.index import validate_json_file
 from codemie.rest_api.security.authentication import authenticate
@@ -141,12 +141,17 @@ async def test_full_reindex_knowledge_base_jira(
 @patch('codemie.core.ability.Ability.can')
 @patch('codemie.rest_api.models.index.IndexInfo.get_by_id')
 @patch("codemie.service.guardrail.guardrail_service.GuardrailService.remove_guardrail_assignments_for_entity")
-async def test_index_deletion(mock_remove_guardrails, mock_get_index_info, mock_can, auth_headers):
+@patch("codemie.rest_api.routers.index.AgentMonitoringService.send_count_metric")
+async def test_index_deletion(mock_send_metric, mock_remove_guardrails, mock_get_index_info, mock_can, auth_headers):
     mock_remove_guardrails.return_value = None
+    mock_send_metric.return_value = None
 
     mock_index_info = MagicMock()
     mock_index_info.repo_name = "test_index"
     mock_index_info.id = 1
+    mock_index_info.error = None
+    mock_index_info.completed = True
+    mock_index_info.is_fetching = None
 
     mock_can.return_value = True
 
@@ -167,6 +172,9 @@ async def test_index_deletion_not_found(mock_get_index_info, mock_can, auth_head
     mock_index_info = MagicMock()
     mock_index_info.repo_name = "test_index"
     mock_index_info.id = 1
+    mock_index_info.error = None
+    mock_index_info.completed = True
+    mock_index_info.is_fetching = None
     mock_index_info.delete.side_effect = NotFoundError(body="Index not found", meta={}, message="Index not found")
 
     mock_get_index_info.return_value = mock_index_info
@@ -176,9 +184,9 @@ async def test_index_deletion_not_found(mock_get_index_info, mock_can, auth_head
     with pytest.raises(ExtendedHTTPException) as e:
         client.delete(f"/v1/index/{mock_index_info.id}", headers=auth_headers)
 
-        assert e.code == 404
-        assert e.message == "Index not found"
-        assert e.details == f"ndex {mock_index_info.repo_name} could not be found in the system."
+    assert e.value.code == 404
+    assert e.value.message == "Index not found"
+    assert e.value.details == f"Index {mock_index_info.repo_name} could not be found in the system."
 
 
 @pytest.mark.asyncio
@@ -194,9 +202,30 @@ async def test_index_deletion_no_permissions(mock_get_index_info, mock_can, auth
     with pytest.raises(ExtendedHTTPException) as e:
         client.delete("/v1/index/1", headers=auth_headers)
 
-        assert e.code == 404
-        assert e.message == "Access denied"
-        assert e.details == f"You don't have permission to delete the index with ID '{mock_index_info.repo_name}'."
+    assert e.value.code == 403
+    assert e.value.message == "Access denied"
+    assert e.value.details == "You don't have permission to delete the index with ID '1'."
+
+
+@pytest.mark.asyncio
+@patch('codemie.core.ability.Ability.can')
+@patch('codemie.rest_api.models.index.IndexInfo.get_by_id')
+async def test_index_deletion_in_progress(mock_get_index_info, mock_can, auth_headers):
+    mock_index_info = MagicMock()
+    mock_index_info.repo_name = "test_index"
+    mock_index_info.id = 1
+    mock_index_info.error = None
+    mock_index_info.completed = False
+    mock_index_info.is_fetching = True
+
+    mock_get_index_info.return_value = mock_index_info
+    mock_can.return_value = True
+
+    with pytest.raises(ExtendedHTTPException) as e:
+        client.delete(f"/v1/index/{mock_index_info.id}", headers=auth_headers)
+
+    assert e.value.code == 409
+    assert e.value.message == "Indexing or fetching is in progress."
 
 
 @pytest.mark.asyncio
@@ -892,3 +921,192 @@ async def test_put_reindex_uses_none_when_no_stored_wiql(
     _, kwargs = mock_processor_cls.call_args
     # None — processor's own default will apply
     assert kwargs["wiql_query"] is None
+
+
+# ---------------------------------------------------------------------------
+# Constants shared by file-datasource tests
+# ---------------------------------------------------------------------------
+
+_FILE_DS_NAME = "file-ds"
+_FILE_DS_PROJECT = "test_project"
+_FILE_DS_DESCRIPTION = "test description"
+_FILE_POST_URL = "/v1/index/knowledge_base/file"
+_FILE_PUT_URL = "/v1/index/knowledge_base/file"
+
+
+# ---------------------------------------------------------------------------
+# Tests for POST /index/knowledge_base/file
+# ---------------------------------------------------------------------------
+
+
+@patch('codemie.rest_api.routers.index._kb_demo_user_check')
+@patch('codemie.rest_api.routers.index._index_unique_check')
+@patch('codemie.rest_api.routers.index.FileRepositoryFactory.get_current_repository')
+@patch('codemie.rest_api.routers.index.FileDatasourceProcessor')
+def test_post_file_datasource_success(
+    mock_processor_cls, mock_file_repo_factory, mock_unique_check, mock_demo_check, auth_headers
+):
+    """Happy path: files uploaded, processor scheduled, 200 with started message."""
+    mock_file_object = MagicMock()
+    mock_file_object.name = "uploaded_test.txt"
+    mock_file_object.owner = "test_user"
+    mock_file_repo_factory.return_value.write_file.return_value = mock_file_object
+
+    mock_processor = MagicMock()
+    mock_processor.started_message = f"Indexing of {_FILE_DS_NAME} has started in the background"
+    mock_processor_cls.return_value = mock_processor
+
+    response = app_client.post(
+        _FILE_POST_URL,
+        params={"name": _FILE_DS_NAME, "project_name": _FILE_DS_PROJECT, "description": _FILE_DS_DESCRIPTION},
+        files=[("files", ("test.txt", b"hello world", "text/plain"))],
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"message": f"Indexing of {_FILE_DS_NAME} has started in the background"}
+    mock_unique_check.assert_called_once_with(_FILE_DS_PROJECT, _FILE_DS_NAME)
+    mock_processor.schedule.assert_called_once()
+
+
+@patch('codemie.rest_api.routers.index._index_unique_check')
+def test_post_file_datasource_duplicate_raises_409(mock_unique_check, auth_headers):
+    """_index_unique_check raises 409 when the datasource already exists."""
+    mock_unique_check.side_effect = ExtendedHTTPException(
+        code=status.HTTP_409_CONFLICT,
+        message="Index already exists",
+        details=f"An index with name '{_FILE_DS_NAME}' already exists.",
+        help="Choose a different name.",
+    )
+
+    response = app_client.post(
+        _FILE_POST_URL,
+        params={"name": _FILE_DS_NAME, "project_name": _FILE_DS_PROJECT, "description": _FILE_DS_DESCRIPTION},
+        files=[("files", ("test.txt", b"hello", "text/plain"))],
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 409
+    assert response.json()['error']['message'] == "Index already exists"
+
+
+@patch('codemie.rest_api.routers.index._kb_demo_user_check')
+@patch('codemie.rest_api.routers.index._index_unique_check')
+def test_post_file_datasource_demo_user_blocked_raises_403(mock_unique_check, mock_demo_check, auth_headers):
+    """_kb_demo_user_check raises 403 for demo users who reached the repository limit."""
+    mock_demo_check.side_effect = ExtendedHTTPException(
+        code=status.HTTP_403_FORBIDDEN,
+        message="Repository limit reached",
+        details="Demo users can index only one repository.",
+        help="Upgrade your account.",
+    )
+
+    response = app_client.post(
+        _FILE_POST_URL,
+        params={"name": _FILE_DS_NAME, "project_name": _FILE_DS_PROJECT, "description": _FILE_DS_DESCRIPTION},
+        files=[("files", ("test.txt", b"hello", "text/plain"))],
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 403
+    assert response.json()['error']['message'] == "Repository limit reached"
+
+
+@patch('codemie.rest_api.routers.index._kb_demo_user_check')
+@patch('codemie.rest_api.routers.index._index_unique_check')
+def test_post_file_datasource_invalid_guardrail_assignments_raises_400(
+    mock_unique_check, mock_demo_check, auth_headers
+):
+    """Invalid JSON in guardrail_assignments query param → 400 response."""
+    response = app_client.post(
+        _FILE_POST_URL,
+        params={
+            "name": _FILE_DS_NAME,
+            "project_name": _FILE_DS_PROJECT,
+            "description": _FILE_DS_DESCRIPTION,
+            "guardrail_assignments": "not-valid-json",
+        },
+        files=[("files", ("test.txt", b"hello", "text/plain"))],
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()['error']['message'] == "Invalid guardrail_assignments parameter"
+
+
+# ---------------------------------------------------------------------------
+# Tests for PUT /index/knowledge_base/file
+# ---------------------------------------------------------------------------
+
+
+@patch('codemie.rest_api.routers.index.UpdateFileDatasourceUseCase')
+def test_put_file_datasource_metadata_only_returns_edit_successful(mock_use_case_cls, auth_headers):
+    """No file changes: use case returns 'Edit successful'."""
+    mock_use_case_cls.return_value.execute.return_value = BaseResponse(message="Edit successful")
+
+    response = app_client.put(
+        _FILE_PUT_URL,
+        params={"name": _FILE_DS_NAME, "project_name": _FILE_DS_PROJECT},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"message": "Edit successful"}
+    mock_use_case_cls.return_value.execute.assert_called_once()
+
+
+@patch('codemie.rest_api.routers.index.UpdateFileDatasourceUseCase')
+def test_put_file_datasource_file_changes_returns_started_message(mock_use_case_cls, auth_headers):
+    """File changes present: use case returns the processor started message."""
+    started_msg = f"Indexing of {_FILE_DS_NAME} has started in the background"
+    mock_use_case_cls.return_value.execute.return_value = BaseResponse(message=started_msg)
+
+    response = app_client.put(
+        _FILE_PUT_URL,
+        params={"name": _FILE_DS_NAME, "project_name": _FILE_DS_PROJECT},
+        files=[("files", ("new.txt", b"new content", "text/plain"))],
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"message": started_msg}
+
+
+@patch('codemie.rest_api.routers.index.UpdateFileDatasourceUseCase')
+def test_put_file_datasource_not_found_returns_404(mock_use_case_cls, auth_headers):
+    """Index not found: use case raises 404 and the handler returns 404."""
+    mock_use_case_cls.return_value.execute.side_effect = ExtendedHTTPException(
+        code=status.HTTP_404_NOT_FOUND,
+        message="Index not found",
+        details="The index could not be found.",
+        help="Verify the index name.",
+    )
+
+    response = app_client.put(
+        _FILE_PUT_URL,
+        params={"name": _FILE_DS_NAME, "project_name": _FILE_DS_PROJECT},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 404
+    assert response.json()['error']['message'] == "Index not found"
+
+
+@patch('codemie.rest_api.routers.index.UpdateFileDatasourceUseCase')
+def test_put_file_datasource_blocked_while_indexing_returns_409(mock_use_case_cls, auth_headers):
+    """Indexing in progress: use case raises 409 and the handler returns 409."""
+    mock_use_case_cls.return_value.execute.side_effect = ExtendedHTTPException(
+        code=status.HTTP_409_CONFLICT,
+        message="Indexing or fetching is in progress.",
+        details="Updates are not allowed while indexing is in progress.",
+        help="Retry once indexing has finished.",
+    )
+
+    response = app_client.put(
+        _FILE_PUT_URL,
+        params={"name": _FILE_DS_NAME, "project_name": _FILE_DS_PROJECT},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 409
+    assert response.json()['error']['message'] == "Indexing or fetching is in progress."

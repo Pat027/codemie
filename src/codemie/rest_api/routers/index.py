@@ -82,7 +82,7 @@ from codemie.rest_api.models.index import (
     ReIndexKnowledgeBaseRequest,
     UpdateKnowledgeBaseGoogleRequest,
     ElasticsearchStatsResponse,
-    UpdateKnowledgeBaseFilesRequest,
+    UpdateKnowledgeBaseFileRequest,
     UpdateKnowledgeBaseConfluenceRequest,
     UpdateKnowledgeBaseJiraRequest,
     UpdateKnowledgeBaseXrayRequest,
@@ -118,6 +118,9 @@ from codemie.service.index.index_encrypted_settings_service import (
     IndexEncryptedSettingsService,
     IndexEncryptedSettingsError,
 )
+
+from codemie.service.datasource.file_datasource_service import FileDatasourceService
+from codemie.use_cases.datasource.update_file_datasource_use_case import UpdateFileDatasourceUseCase
 
 
 def _parse_jwt_exp(token: str) -> int:
@@ -411,6 +414,19 @@ def delete_index(request: Request, index_id: str, user: User = Depends(authentic
             message=ACCESS_DENIED_MESSAGE,
             details=f"You don't have permission to delete the index with ID '{index_id}'.",
             help=CHECK_PERMISSIONS_MESSAGE,
+        )
+
+    is_in_progress = (not index.error and not index.completed) or bool(index.is_fetching)
+
+    if is_in_progress:
+        raise ExtendedHTTPException(
+            code=status.HTTP_409_CONFLICT,
+            message="Indexing or fetching is in progress.",
+            details=(
+                "Deletion is not allowed while indexing or fetching is in progress. "
+                "Wait for the current indexing run to complete or fail before deleting."
+            ),
+            help="Check the datasource status and retry once indexing has finished.",
         )
 
     try:
@@ -1112,31 +1128,17 @@ def update_knowledge_base_google(
 
 
 @router.put("/index/knowledge_base/file", status_code=status.HTTP_200_OK)
-def update_knowledge_base_files(request: UpdateKnowledgeBaseFilesRequest, user: User = Depends(authenticate)):
-    kb_index = KnowledgeBaseIndexInfo.filter_by_project_and_repo(
-        project_name=request.project_name, repo_name=request.name
+def update_knowledge_base_files(
+    background_tasks: BackgroundTasks,
+    raw_request: Request,
+    request: UpdateKnowledgeBaseFileRequest = Depends(),
+):
+    return UpdateFileDatasourceUseCase(FileDatasourceService()).execute(
+        request=request,
+        user=raw_request.state.user,
+        background_tasks=background_tasks,
+        request_uuid=raw_request.state.uuid,
     )
-
-    if not kb_index:
-        raise ExtendedHTTPException(
-            code=status.HTTP_404_NOT_FOUND,
-            message=INDEX_NOT_FOUND_MESSAGE,
-            details=f"The index with name '{request.name}' in project '{request.project_name}' could not be found.",
-            help=INDEX_NOT_FOUND_HELP,
-        )
-
-    # Check if project change is requested
-    _validate_project_change(request.new_project_name, request.project_name, request.name, user)
-
-    # Update the index
-    kb_index[0].update_index(
-        user=user,
-        description=request.description,
-        project_space_visible=request.project_space_visible,
-        project_name=request.new_project_name,
-        guardrail_assignments=request.guardrail_assignments,
-    )
-    return BaseResponse(message=EDIT_SUCCESSFUL)
 
 
 @router.put("/index/knowledge_base/confluence", status_code=status.HTTP_200_OK)
@@ -1755,6 +1757,7 @@ def index_knowledge_base_files(
             )
 
     file_repo = FileRepositoryFactory.get_current_repository()
+    uploaded_files = []
 
     for file in request.files:
         content = file.file.read()
@@ -1768,10 +1771,13 @@ def index_knowledge_base_files(
         if file.filename.split(".")[-1] == IndexKnowledgeBaseFileTypes.JSON.value:
             validate_json_file(file.filename, content)
         files_paths.append(FILE_PATH_DATA_NT(name=file_object.name, owner=file_object.owner))
+        uploaded_files.append(file_object.name)
+
     file_data_source_processor = FileDatasourceProcessor(
         datasource_name=request.name,
         project_name=request.project_name,
         files_paths=files_paths,
+        uploaded_files=uploaded_files,
         description=request.description,
         project_space_visible=request.project_space_visible,
         csv_separator=request.csv_separator,

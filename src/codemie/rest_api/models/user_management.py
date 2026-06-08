@@ -109,8 +109,8 @@ class UserEnrichment(SQLModel, table=True):
     __tablename__ = "user_enrichment"
     __table_args__ = {"schema": "codemie"}
 
-    email: str = SQLField(primary_key=True, foreign_key="codemie.users.email")
-    user_id: str = SQLField(foreign_key="codemie.users.id", nullable=False, index=True)
+    email: str = SQLField(primary_key=True, foreign_key="users.email")
+    user_id: str = SQLField(foreign_key="users.id", nullable=False, index=True)
     first_name: Optional[str] = SQLField(default=None)
     last_name: Optional[str] = SQLField(default=None)
     job_title: Optional[str] = SQLField(default=None, index=True)

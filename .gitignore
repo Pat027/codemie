@@ -5,6 +5,8 @@ src/codemie-repos
 .devcontainer/
 .vscode/
 
+google_credentials.json
+
 .env.local
 .env_local
 

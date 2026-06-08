@@ -375,3 +375,26 @@ def test_segregate_documents_input_scenarios(
     assert len(single_docs) == expected_single
     assert len(json_docs) == expected_json
     assert len(list_of_docs) == expected_list
+
+
+def test_processor_stores_uploaded_files():
+    user = User(id="u1", username="u1", name="u1")
+    processor = FileDatasourceProcessor(
+        datasource_name="ds",
+        user=user,
+        files_paths=[FILE_PATH_DATA_NT(name="doc.pdf", owner="u1")],
+        project_name="proj",
+        uploaded_files=["doc.pdf", "sheet.csv"],
+    )
+    assert processor.uploaded_files == ["doc.pdf", "sheet.csv"]
+
+
+def test_processor_defaults_uploaded_files_to_empty_list():
+    user = User(id="u1", username="u1", name="u1")
+    processor = FileDatasourceProcessor(
+        datasource_name="ds",
+        user=user,
+        files_paths=[],
+        project_name="proj",
+    )
+    assert processor.uploaded_files == []

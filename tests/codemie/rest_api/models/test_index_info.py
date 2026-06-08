@@ -405,3 +405,27 @@ class TestIndexInfoGetIndexIdentifier:
     def test_code_index_space_in_project_name_replaced(self):
         index = self._make_code_index("My Project", "repo")
         assert index.get_index_identifier() == "my_project-repo-code"
+
+
+@patch.object(IndexInfo, 'new')
+def test_create_from_file_processor_sets_uploaded_files(mock_new):
+    mock_processor = MagicMock()
+    mock_processor.uploaded_files = ["a.pdf", "b.csv"]
+    mock_processor.embedding_model = None
+
+    IndexInfo.create_from_file_processor(mock_processor, MagicMock(spec=User))
+
+    _, kwargs = mock_new.call_args
+    assert kwargs["uploaded_files"] == ["a.pdf", "b.csv"]
+
+
+@patch.object(IndexInfo, 'new')
+def test_create_from_file_processor_empty_uploaded_files(mock_new):
+    mock_processor = MagicMock()
+    mock_processor.uploaded_files = []
+    mock_processor.embedding_model = None
+
+    IndexInfo.create_from_file_processor(mock_processor, MagicMock(spec=User))
+
+    _, kwargs = mock_new.call_args
+    assert kwargs["uploaded_files"] == []
