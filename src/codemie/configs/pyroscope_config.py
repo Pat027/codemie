@@ -107,7 +107,7 @@ def pyroscope_profile(tags_fn: Callable[..., dict[str, str]]) -> Callable[[Any],
 
             @functools.wraps(fn)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                tags = tags_fn(*args, **kwargs)
+                tags = {k: str(v) if v is not None else "" for k, v in tags_fn(*args, **kwargs).items()}
                 with pyroscope.tag_wrapper(tags):
                     return await fn(*args, **kwargs)
 
@@ -115,7 +115,7 @@ def pyroscope_profile(tags_fn: Callable[..., dict[str, str]]) -> Callable[[Any],
 
         @functools.wraps(fn)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-            tags = tags_fn(*args, **kwargs)
+            tags = {k: str(v) if v is not None else "" for k, v in tags_fn(*args, **kwargs).items()}
             with pyroscope.tag_wrapper(tags):
                 return fn(*args, **kwargs)
 
