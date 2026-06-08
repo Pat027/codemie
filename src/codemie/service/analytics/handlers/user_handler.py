@@ -21,7 +21,10 @@ import logging
 import time
 from datetime import datetime, timezone
 
+from codemie.clients.postgres import get_async_session
+from codemie.configs import config
 from codemie.repository.metrics_elastic_repository import MetricsElasticRepository
+from codemie.repository.user_repository import user_repository
 from codemie.rest_api.security.user import User
 from codemie.service.analytics.handlers.field_constants import (
     METRIC_NAME_KEYWORD_FIELD,
@@ -64,6 +67,7 @@ class UserHandler(CLICostAdjustmentMixin):
         end_date: datetime | None = None,
         users: list[str] | None = None,
         projects: list[str] | None = None,
+        search: str | None = None,
     ) -> dict:
         """Get list of unique users from metrics logs.
 
@@ -81,23 +85,26 @@ class UserHandler(CLICostAdjustmentMixin):
         Returns:
             Response with users list, total count, and metadata
         """
+        from codemie.service.analytics.access_filter import AccessFilter
+
         logger.info("Requesting users-list analytics")
+        access_ctx = AccessFilter(self._user).get_project_access_context()
 
-        if self._user.is_admin_or_maintainer:
+        # Super admins bypass project filtering entirely (unrestricted access)
+        if access_ctx.is_admin and config.ENABLE_USER_MANAGEMENT:
             start_time = time.monotonic()
-            start_dt, end_dt = TimeParser.parse(time_period, start_date, end_date)
-            query = self._pipeline._build_query(start_dt, end_dt, users, projects, None)
+            async with get_async_session() as session:
+                pg_users = await user_repository.aquery_active_users(session, search=search)
 
-            all_buckets = await self._fetch_all_users_with_after_key(query)
+            users_list = [{"id": u.id, "name": u.name or u.username} for u in pg_users]
+            total_count = len(users_list)
 
             execution_time_ms = (time.monotonic() - start_time) * 1000
+            start_dt, end_dt = TimeParser.parse(time_period, start_date, end_date)
             filters_applied = self._pipeline._build_filters_applied(time_period, start_dt, end_dt, users, projects)
             metadata = ResponseFormatter.create_metadata(filters_applied, execution_time_ms)
 
-            users_list = [{"id": b["key"]["user_id"], "name": b["key"]["user_name"]} for b in all_buckets]
-            users_list = await UserIdentityResolver.resolve_and_merge(users_list)
-            total_count = len(users_list)
-            logger.info(f"Parsed users-list result: total_users={total_count}")
+            logger.info(f"Super-user users list from PG: total_users={total_count}, search={search!r}")
             return {"data": {"users": users_list, "total_count": total_count}, "metadata": metadata}
 
         result = await self._pipeline.execute_composite_query(

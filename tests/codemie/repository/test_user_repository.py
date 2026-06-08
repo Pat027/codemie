@@ -366,3 +366,60 @@ class TestAfindUsersByIdentifiers:
         result = await repo.afind_users_by_identifiers(async_session, {"alice"})
         assert "alice" in result
         assert result["alice"].email == "alice@example.com"
+
+
+class TestAqueryActiveUsers:
+    """Tests for UserRepository.aquery_active_users (async)."""
+
+    @pytest.fixture
+    def repo(self):
+        return UserRepository()
+
+    def _make_session(self, rows):
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = rows
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        session = AsyncMock(spec=AsyncSession)
+        session.execute = AsyncMock(return_value=mock_result)
+        return session
+
+    def _make_user(self, uid="uuid-1", name="Alice", username="alice"):
+        u = MagicMock()
+        u.id = uid
+        u.name = name
+        u.username = username
+        return u
+
+    @pytest.mark.asyncio
+    async def test_returns_rows_from_session(self, repo):
+        """aquery_active_users returns whatever scalars().all() provides."""
+        user = self._make_user()
+        session = self._make_session([user])
+
+        result = await repo.aquery_active_users(session, search=None)
+
+        assert result == [user]
+        session.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_search_term_triggers_execute(self, repo):
+        """When search is provided, execute is still called once."""
+        session = self._make_session([])
+
+        result = await repo.aquery_active_users(session, search="alice")
+
+        assert result == []
+        session.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_empty_search_string_treated_as_no_filter(self, repo):
+        """Empty string is falsy — behaves same as search=None (one execute call each)."""
+        session_a = self._make_session([])
+        session_b = self._make_session([])
+
+        await repo.aquery_active_users(session_a, search="")
+        await repo.aquery_active_users(session_b, search=None)
+
+        session_a.execute.assert_called_once()
+        session_b.execute.assert_called_once()

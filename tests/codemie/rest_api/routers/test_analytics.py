@@ -861,6 +861,7 @@ class TestUsersListEndpoint:
             end_date=datetime(2025, 1, 31),
             users="u1,u2",
             projects="p1",
+            search=None,
         )
 
         # Assert
@@ -870,6 +871,7 @@ class TestUsersListEndpoint:
             end_date=datetime(2025, 1, 31),
             users=["u1", "u2"],
             projects=["p1"],
+            search=None,
         )
 
 

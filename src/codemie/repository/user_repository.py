@@ -629,6 +629,31 @@ class UserRepository:
         await session.flush()
         return True
 
+    async def aquery_active_users(self, session: AsyncSession, search: Optional[str] = None) -> list["UserDB"]:
+        """Return all active, non-deleted users, optionally filtered by text search.
+
+        Args:
+            session: Async database session
+            search: Optional ILIKE pattern applied to email, username, and name
+
+        Returns:
+            List of UserDB instances ordered by name then username
+        """
+        stmt = select(UserDB).where(UserDB.is_active == True, UserDB.deleted_at.is_(None))  # noqa: E712
+        if search:
+            escaped = escape_like_wildcards(search)
+            pattern = f"%{escaped}%"
+            stmt = stmt.where(
+                or_(
+                    UserDB.email.ilike(pattern, escape="\\"),
+                    UserDB.username.ilike(pattern, escape="\\"),
+                    UserDB.name.ilike(pattern, escape="\\"),
+                )
+            )
+        stmt = stmt.order_by(UserDB.name, UserDB.username)
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
     @staticmethod
     def _apply_filters(query, search: Optional[str], filters: UserListFilters):
         """Apply search text and structured filters to a UserDB SELECT query."""

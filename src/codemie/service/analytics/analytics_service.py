@@ -545,6 +545,7 @@ class AnalyticsService:
         end_date: datetime | None = None,
         users: list[str] | None = None,
         projects: list[str] | None = None,
+        search: str | None = None,
     ) -> dict:
         """Get list of unique users from metrics logs."""
         return await self._user_handler.get_users_list(
@@ -553,6 +554,7 @@ class AnalyticsService:
             end_date=end_date,
             users=users,
             projects=projects,
+            search=search,
         )
 
     # Project endpoints

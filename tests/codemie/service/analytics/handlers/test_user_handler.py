@@ -446,6 +446,15 @@ def _make_es_page(user_ids: list[str], after_key: dict | None = None) -> dict:
 class TestGetUsersList:
     """Tests for get_users_list / _fetch_all_users_with_after_key."""
 
+    @pytest.fixture(autouse=True)
+    def _enable_user_management(self):
+        from codemie.service.analytics.access_filter import AccessFilter
+
+        AccessFilter._context_cache.clear()
+        with patch("codemie.service.analytics.handlers.user_handler.config") as mock_cfg:
+            mock_cfg.ENABLE_USER_MANAGEMENT = True
+            yield mock_cfg
+
     @pytest.mark.asyncio
     async def test_single_page_returns_all_users(self, handler, mock_repository):
         """When ES returns fewer than page_size buckets with no after_key, stops after 1 call."""
@@ -547,6 +556,123 @@ class TestGetUsersList:
         assert buckets == []
         mock_repository.execute_aggregation_query.assert_called_once()
 
+    # ── Super-user (PG) path ──────────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    @patch("codemie.service.analytics.handlers.user_handler.get_async_session")
+    @patch("codemie.service.analytics.handlers.user_handler.user_repository")
+    async def test_get_users_list_superadmin_uses_pg_not_es(
+        self, mock_pg_repo, mock_session_ctx, handler, mock_repository, mock_user
+    ):
+        """Super-admin path queries PostgreSQL and does NOT call Elasticsearch."""
+        mock_user.is_admin = True
+        mock_user.is_admin_or_maintainer = True
+
+        pg_user = MagicMock()
+        pg_user.id = "uuid-1"
+        pg_user.name = "Alice"
+        pg_user.username = "alice"
+
+        mock_pg_repo.aquery_active_users = AsyncMock(return_value=[pg_user])
+        mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        response = await handler.get_users_list(time_period="last_30_days")
+
+        data = response["data"]
+        assert data["users"] == [{"id": "uuid-1", "name": "Alice"}]
+        assert data["total_count"] == 1
+        assert "metadata" in response
+        mock_repository.execute_aggregation_query.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("codemie.service.analytics.handlers.user_handler.get_async_session")
+    @patch("codemie.service.analytics.handlers.user_handler.user_repository")
+    async def test_get_users_list_superadmin_username_fallback(
+        self, mock_pg_repo, mock_session_ctx, handler, mock_user
+    ):
+        """When UserDB.name is None, username is used as the display name."""
+        mock_user.is_admin = True
+        mock_user.is_admin_or_maintainer = True
+
+        pg_user = MagicMock()
+        pg_user.id = "uuid-2"
+        pg_user.name = None
+        pg_user.username = "bob"
+
+        mock_pg_repo.aquery_active_users = AsyncMock(return_value=[pg_user])
+        mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        response = await handler.get_users_list(time_period="last_30_days")
+
+        assert response["data"]["users"] == [{"id": "uuid-2", "name": "bob"}]
+
+    @pytest.mark.asyncio
+    @patch("codemie.service.analytics.handlers.user_handler.get_async_session")
+    @patch("codemie.service.analytics.handlers.user_handler.user_repository")
+    async def test_get_users_list_superadmin_passes_search_to_pg(
+        self, mock_pg_repo, mock_session_ctx, handler, mock_user
+    ):
+        """search parameter is forwarded to aquery_active_users."""
+        mock_user.is_admin = True
+        mock_user.is_admin_or_maintainer = True
+
+        mock_pg_repo.aquery_active_users = AsyncMock(return_value=[])
+        mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await handler.get_users_list(time_period="last_30_days", search="alice")
+
+        mock_pg_repo.aquery_active_users.assert_called_once()
+        call_kwargs = mock_pg_repo.aquery_active_users.call_args
+        assert call_kwargs.kwargs.get("search") == "alice" or (
+            len(call_kwargs.args) > 1 and call_kwargs.args[1] == "alice"
+        )
+
+    @pytest.mark.asyncio
+    @patch("codemie.service.analytics.handlers.user_handler.get_async_session")
+    @patch("codemie.service.analytics.handlers.user_handler.user_repository")
+    async def test_get_users_list_superadmin_empty_result(self, mock_pg_repo, mock_session_ctx, handler, mock_user):
+        """Empty PG result produces users=[] and total_count=0."""
+        mock_user.is_admin = True
+        mock_user.is_admin_or_maintainer = True
+
+        mock_pg_repo.aquery_active_users = AsyncMock(return_value=[])
+        mock_session_ctx.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
+        mock_session_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        response = await handler.get_users_list(time_period="last_30_days")
+
+        assert response["data"]["users"] == []
+        assert response["data"]["total_count"] == 0
+
+    # ── Super-admin with ENABLE_USER_MANAGEMENT=False falls back to ES ───────
+
+    @pytest.mark.asyncio
+    @patch(
+        "codemie.service.analytics.handlers.user_identity_resolver.UserIdentityResolver.resolve_and_merge",
+        new_callable=AsyncMock,
+    )
+    @patch("codemie.service.analytics.handlers.user_handler.get_async_session")
+    @patch("codemie.service.analytics.handlers.user_handler.user_repository")
+    async def test_get_users_list_superadmin_falls_back_to_es_when_flag_disabled(
+        self, mock_pg_repo, mock_session_ctx, mock_resolve_and_merge, handler, mock_repository, mock_user
+    ):
+        """When ENABLE_USER_MANAGEMENT=False, admin uses ES path and PG is not called."""
+        mock_user.is_admin = True
+        mock_resolve_and_merge.side_effect = lambda users: users
+        mock_repository.execute_aggregation_query = AsyncMock(return_value=_make_es_page([]))
+
+        with patch("codemie.service.analytics.handlers.user_handler.config") as mock_cfg:
+            mock_cfg.ENABLE_USER_MANAGEMENT = False
+            response = await handler.get_users_list(time_period="last_30_days")
+
+        mock_pg_repo.aquery_active_users.assert_not_called()
+        assert response["data"]["users"] == []
+
+    # ── Non-admin (ES) path — unchanged ──────────────────────────────────────
+
     @pytest.mark.asyncio
     @patch(
         "codemie.service.analytics.handlers.user_identity_resolver.UserIdentityResolver.resolve_and_merge",
@@ -557,6 +683,7 @@ class TestGetUsersList:
     ):
         """Non-admin get_users_list uses single-page query and returns correct response shape."""
         mock_resolve_and_merge.side_effect = lambda users: users
+        mock_user.is_admin = False
         mock_user.is_admin_or_maintainer = False
         mock_repository.execute_aggregation_query = AsyncMock(return_value=_make_es_page(["alice", "bob"]))
 
@@ -574,37 +701,12 @@ class TestGetUsersList:
         "codemie.service.analytics.handlers.user_identity_resolver.UserIdentityResolver.resolve_and_merge",
         new_callable=AsyncMock,
     )
-    async def test_get_users_list_superadmin_uses_after_key_pagination(
-        self, mock_resolve_and_merge, handler, mock_repository, mock_user
-    ):
-        """Superadmin get_users_list uses after_key pagination to fetch beyond 10,000 users."""
-        mock_resolve_and_merge.side_effect = lambda users: users
-        mock_user.is_admin_or_maintainer = True
-        page1_ids = [f"u{i}" for i in range(10000)]
-        page2_ids = ["u10000", "u10001"]
-        mock_repository.execute_aggregation_query = AsyncMock(
-            side_effect=[
-                _make_es_page(page1_ids, after_key={"user_id": "u9999", "user_name": "User u9999"}),
-                _make_es_page(page2_ids),
-            ]
-        )
-
-        response = await handler.get_users_list(time_period="last_24_hours")
-
-        data = response["data"]
-        assert data["total_count"] == 10002
-        assert mock_repository.execute_aggregation_query.call_count == 2
-
-    @pytest.mark.asyncio
-    @patch(
-        "codemie.service.analytics.handlers.user_identity_resolver.UserIdentityResolver.resolve_and_merge",
-        new_callable=AsyncMock,
-    )
     async def test_get_users_list_non_admin_uses_single_query(
         self, mock_resolve_and_merge, handler, mock_repository, mock_user
     ):
         """Non-admin get_users_list executes exactly one ES query (no pagination loop)."""
         mock_resolve_and_merge.side_effect = lambda users: users
+        mock_user.is_admin = False
         mock_user.is_admin_or_maintainer = False
         mock_repository.execute_aggregation_query = AsyncMock(
             return_value=_make_es_page([f"u{i}" for i in range(10000)])

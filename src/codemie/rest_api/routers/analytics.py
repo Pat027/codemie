@@ -1229,6 +1229,10 @@ async def get_users_list(
         description=USERS_FILTER_DESC,
     ),
     projects: str | None = Query(None, description=PROJECTS_FILTER_DESC, examples=["codemie,project-alpha"]),
+    search: str | None = Query(
+        None,
+        description="Text search for super-admins: filters users by email, username, or display name (ILIKE).",
+    ),
 ) -> JSONResponse:
     """Get list of unique users from metrics logs.
 
@@ -1248,6 +1252,7 @@ async def get_users_list(
     **Additional Filters:**
     - `users`: Filter by specific user IDs (within access control)
     - `projects`: Filter by specific projects (within access control)
+    - `search`: Super-admin only — type-ahead filter on email/username/name
 
     **Response:**
     - Returns list of users with id and name
@@ -1260,7 +1265,7 @@ async def get_users_list(
     logger.info(
         f"User {user.id} requesting users list. "
         f"Period={time_period}, StartDate={start_date}, EndDate={end_date}, "
-        f"Users={users}, Projects={projects}"
+        f"Users={users}, Projects={projects}, Search={search!r}"
     )
 
     service = AnalyticsService(user)
@@ -1270,6 +1275,7 @@ async def get_users_list(
         end_date=end_date,
         users=[u.strip() for u in users.split(",")] if users else None,
         projects=[p.strip() for p in projects.split(",")] if projects else None,
+        search=search,
     )
 
     return _create_response(response_data, UsersListResponse)
