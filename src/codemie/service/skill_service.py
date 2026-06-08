@@ -29,7 +29,12 @@ from typing import Any, NamedTuple
 import yaml
 
 from codemie.configs import logger
+from codemie.configs.logger import current_user_email, logging_user_id
 from codemie.core.ability import Ability, Action
+from codemie.core.dependecies import get_llm_by_credentials
+from codemie.service.monitoring.base_monitoring_service import emit_llm_token_metric
+from codemie.service.monitoring.metrics_constants import SKILL_GENERATOR_TOTAL_METRIC, MetricsAttributes
+from codemie.service.request_summary_manager import request_summary_manager
 from codemie.service.mcp.access_control import MCPAccessControlService
 from codemie.core.exceptions import ExtendedHTTPException
 from codemie.core.models import CreatedByUser
@@ -1573,7 +1578,6 @@ description: {skill.description}
         mode = "unknown"
         model_to_use = llm_model or "unknown"
 
-        from codemie.core.dependecies import get_llm_by_credentials
         from codemie.service.llm_service.llm_service import llm_service
         from pydantic import BaseModel, Field as PydanticField
 
@@ -1602,8 +1606,9 @@ description: {skill.description}
                 f"User={user.id}, RequestID={request_id}"
             )
 
-            # Initialize LLM with structured output
-            llm = get_llm_by_credentials(llm_model=model_to_use, temperature=0.7, streaming=False)
+            llm = get_llm_by_credentials(
+                llm_model=model_to_use, temperature=0.7, streaming=False, request_id=request_id
+            )
 
             class SkillInstructionsStructured(BaseModel):
                 """Structured sections for skill instructions - validated independently."""
@@ -1681,6 +1686,16 @@ description: {skill.description}
                 model=model_to_use,
             )
 
+            emit_llm_token_metric(
+                name=SKILL_GENERATOR_TOTAL_METRIC,
+                request_id=request_id,
+                base_attributes={
+                    MetricsAttributes.LLM_MODEL: model_to_use or "default",
+                    MetricsAttributes.USER_ID: logging_user_id.get("-"),
+                    MetricsAttributes.USER_NAME: current_user_email.get("-"),
+                },
+            )
+
             logger.info(f"Successfully generated skill instructions. Mode={mode}, Length={len(instructions)}")
 
             # Return response
@@ -1700,6 +1715,9 @@ description: {skill.description}
             raise
         except Exception as e:
             SkillService._send_error_metric_and_raise(user=user, mode=mode, model=model_to_use, error=e)
+        finally:
+            if request_id:
+                request_summary_manager.clear_summary(request_id)
 
 
 # Create singleton instance for sync access from tools

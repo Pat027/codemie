@@ -470,3 +470,28 @@ class TestMetricNameIntegration:
         # Assert
         assert set(explicit_result) == set(group_result), "Both methods should produce equivalent metric sets"
         assert len(explicit_result) == len(group_result), "Both methods should produce same number of metrics"
+
+
+class TestGeneratorMetricNames:
+    """Tests for generator metric name constants."""
+
+    def test_assistant_generator_total_exists_with_correct_value(self):
+        """Verify ASSISTANT_GENERATOR_TOTAL is defined with the correct string value."""
+        assert hasattr(MetricName, "ASSISTANT_GENERATOR_TOTAL")
+        assert MetricName.ASSISTANT_GENERATOR_TOTAL.value == "codemie_assistant_generator_total"
+
+    def test_prompt_generator_total_exists_with_correct_value(self):
+        """Verify PROMPT_GENERATOR_TOTAL is defined with the correct string value."""
+        assert hasattr(MetricName, "PROMPT_GENERATOR_TOTAL")
+        assert MetricName.PROMPT_GENERATOR_TOTAL.value == "codemie_prompt_generator_total"
+
+    def test_skill_generator_total_exists_with_correct_value(self):
+        """Verify SKILL_GENERATOR_TOTAL is defined with the correct string value."""
+        assert hasattr(MetricName, "SKILL_GENERATOR_TOTAL")
+        assert MetricName.SKILL_GENERATOR_TOTAL.value == "codemie_skill_generator_total"
+
+    def test_generator_metrics_in_spending_metrics(self):
+        """Verify all three generator metrics appear in SPENDING_METRICS so platform_cost includes them."""
+        assert MetricName.ASSISTANT_GENERATOR_TOTAL in MetricName.SPENDING_METRICS
+        assert MetricName.PROMPT_GENERATOR_TOTAL in MetricName.SPENDING_METRICS
+        assert MetricName.SKILL_GENERATOR_TOTAL in MetricName.SPENDING_METRICS

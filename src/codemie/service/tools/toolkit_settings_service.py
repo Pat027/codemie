@@ -51,7 +51,11 @@ class ToolkitSettingService:
         return None
 
     @staticmethod
-    def _build_image_generator(assistant: Optional[Assistant] = None, request: Optional[object] = None):
+    def _build_image_generator(
+        assistant: Optional[Assistant] = None,
+        request: Optional[object] = None,
+        request_uuid: Optional[str] = None,
+    ):
         from codemie_tools.data_management.file_system.image_generator import (
             ChatModelImageGenerator,
             LiteLLMImageConfig,
@@ -82,10 +86,8 @@ class ToolkitSettingService:
             )
 
         if image_generation_model:
-            from codemie.core.dependecies import get_llm_by_credentials_raw
-
             return ChatModelImageGenerator(
-                model=get_llm_by_credentials_raw(llm_model=image_generation_model),
+                model=get_llm_by_credentials(llm_model=image_generation_model, request_id=request_uuid),
                 model_id=image_generation_model,
             )
 
@@ -200,7 +202,7 @@ class ToolkitSettingService:
         configs = {
             "user_id": user.id,
         }
-        image_generator = cls._build_image_generator(assistant)
+        image_generator = cls._build_image_generator(assistant, request_uuid=request_uuid)
         if assistant.context:
             for context in assistant.context:
                 if context.context_type == ContextType.CODE:

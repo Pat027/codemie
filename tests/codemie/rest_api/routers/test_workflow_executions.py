@@ -476,7 +476,9 @@ async def test_request_workflow_execution_output_changes(
 
         assert response.status_code == 200
         assert response.json()['message'] == "New Output"
-        mock_changes_service.assert_called_once_with(original_output="New Output", changes_request="Change the output")
+        mock_changes_service.assert_called_once_with(
+            original_output="New Output", changes_request="Change the output", request_id="test-request-uuid"
+        )
 
 
 @patch("codemie.rest_api.routers.workflow_executions.Ability")

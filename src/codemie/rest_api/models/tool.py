@@ -32,6 +32,7 @@ class ToolInvokeRequest(BaseModel):
     tool_creds: Optional[Dict[str, Any]] = None
     datasource_id: Optional[str] = None
     params: Optional[InvokeParams] = None
+    request_id: Optional[str] = None
 
 
 class ToolInvokeResponse(BaseModel):

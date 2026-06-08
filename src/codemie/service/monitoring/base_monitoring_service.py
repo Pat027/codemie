@@ -51,6 +51,37 @@ def send_log_metric(name: str, attributes: dict):
     logger.info(json.dumps({"metric_name": name, "attributes": attributes, "time": datetime.now().isoformat()}))
 
 
+def emit_llm_token_metric(name: str, request_id: Optional[str], base_attributes: dict) -> None:
+    """Emit a metric enriched with LLM token usage from RequestSummaryManager.
+
+    Reads the token summary for request_id (if provided) and merges token fields
+    into base_attributes before emitting. Does NOT clear the summary — callers
+    are responsible for calling clear_summary in a finally block.
+    """
+    from codemie.service.request_summary_manager import request_summary_manager
+
+    summary = request_summary_manager.get_summary(request_id) if request_id else None
+    tokens = summary.tokens_usage if summary else None
+    send_log_metric(
+        name=name,
+        attributes={
+            **base_attributes,
+            **(
+                {
+                    MetricsAttributes.INPUT_TOKENS: tokens.input_tokens,
+                    MetricsAttributes.OUTPUT_TOKENS: tokens.output_tokens,
+                    MetricsAttributes.CACHE_READ_INPUT_TOKENS: tokens.cached_tokens,
+                    MetricsAttributes.MONEY_SPENT: tokens.money_spent,
+                    MetricsAttributes.CACHED_TOKENS_MONEY_SPENT: tokens.cached_tokens_money_spent,
+                    MetricsAttributes.CACHE_CREATION_TOKENS_MONEY_SPENT: tokens.cached_tokens_creation_money_spent,
+                }
+                if tokens
+                else {}
+            ),
+        },
+    )
+
+
 class BaseMonitoringService:
     METER_NAME = "codemie-business-metrics"
 

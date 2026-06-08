@@ -115,6 +115,7 @@ def test_invoke_tool_with_direct_creds_success():
     mock_request = Mock(spec=ToolInvokeRequest)
     mock_request.tool_args = {"arg1": "value"}
     mock_request.tool_attributes = {"attr1": "value"}
+    mock_request.request_id = None
 
     mock_tool = Mock(spec=BaseTool)
     mock_tool.execute = Mock(return_value="Success result")
@@ -141,6 +142,7 @@ def test_invoke_file_analysis_tool_with_image():
     mock_request.tool_args = {"file_names": ["test_image.jpg"], "query": "analyze this"}
     mock_request.tool_attributes = None
     mock_request.llm_model = "gpt-4"
+    mock_request.request_id = None
 
     mock_file_object = Mock()
     mock_file_object.is_image = Mock(return_value=True)
@@ -179,6 +181,7 @@ def test_invoke_file_analysis_tool_with_document():
     mock_request.tool_args = {"file_names": ["test_document.pdf"], "query": "extract text"}
     mock_request.tool_attributes = None
     mock_request.llm_model = "gpt-4"
+    mock_request.request_id = None
 
     mock_file_object = Mock()
     mock_file_object.is_image = Mock(return_value=False)
@@ -218,6 +221,7 @@ def test_invoke_file_analysis_tool_with_attributes():
     mock_request.tool_args = {"file_names": ["test.pdf"]}
     mock_request.tool_attributes = {"attr1": "value1"}
     mock_request.llm_model = "gpt-4"
+    mock_request.request_id = None
 
     mock_file_object = Mock()
     mock_file_object.is_image = Mock(return_value=False)
@@ -257,6 +261,7 @@ def test_invoke_file_analysis_tool_missing_file_name():
     # Setup
     mock_request = Mock(spec=ToolInvokeRequest)
     mock_request.tool_args = {}  # No file_names
+    mock_request.request_id = None
 
     # Call method and expect ValueError
     with pytest.raises(ValueError) as excinfo:
@@ -271,6 +276,7 @@ def test_invoke_file_analysis_tool_none_file_name():
     # Setup
     mock_request = Mock(spec=ToolInvokeRequest)
     mock_request.tool_args = {"file_names": []}
+    mock_request.request_id = None
 
     # Call method and expect ValueError
     with pytest.raises(ValueError) as excinfo:
@@ -287,6 +293,7 @@ def test_invoke_file_analysis_tool_execution_error():
     mock_request.tool_args = {"file_names": ["test.pdf"]}
     mock_request.tool_attributes = None
     mock_request.llm_model = "gpt-4"
+    mock_request.request_id = None
 
     mock_file_object = Mock()
     mock_file_object.is_image = Mock(return_value=False)

@@ -19,7 +19,6 @@ from __future__ import annotations
 import gc
 import os
 import tempfile
-import uuid
 
 
 from langchain_community.document_loaders import CSVLoader, UnstructuredPowerPointLoader
@@ -87,7 +86,7 @@ def _build_images_parser(request_uuid: str | None) -> BaseImageBlobParser:
         llm = get_llm_by_credentials(
             llm_model=multimodal_llms[0],
             streaming=False,
-            request_id=request_uuid or str(uuid.uuid4()),
+            request_id=request_uuid,
         )
         return LLMImageBlobParser(model=llm)
 

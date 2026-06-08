@@ -38,17 +38,19 @@ from codemie.rest_api.models.index import IndexInfo
 from codemie.rest_api.security.user import User
 from codemie.service.assistant.category_service import category_service
 from codemie.service.llm_service.llm_service import llm_service
-from codemie.service.monitoring.base_monitoring_service import send_log_metric
+from codemie.service.monitoring.base_monitoring_service import emit_llm_token_metric, send_log_metric
 from codemie.service.monitoring.metrics_constants import (
     ASSISTANT_GENERATOR_ERRORS_METRIC,
     ASSISTANT_GENERATOR_TOTAL_METRIC,
     MARKETPLACE_ASSISTANT_VALIDATION_ERROR_METRIC,
     MARKETPLACE_ASSISTANT_VALIDATION_FAILED_METRIC,
     MARKETPLACE_ASSISTANT_VALIDATION_SUCCESS_METRIC,
+    MARKETPLACE_ASSISTANT_VALIDATION_TOTAL_METRIC,
     PROMPT_GENERATOR_ERRORS_METRIC,
     PROMPT_GENERATOR_TOTAL_METRIC,
     MetricsAttributes,
 )
+from codemie.service.request_summary_manager import request_summary_manager
 from codemie.service.tools.tools_info_service import ToolsInfoService
 from codemie.templates.agents.assistant_generator_prompt import (
     ASSISTANT_GENERATOR_CATEGORY,
@@ -157,10 +159,10 @@ class AssistantGeneratorService:
 
             categories = cls._validate_categories_for_refine(response.categories) if response.categories else []
 
-            # Send metrics for successful generation
-            send_log_metric(
+            emit_llm_token_metric(
                 name=ASSISTANT_GENERATOR_TOTAL_METRIC,
-                attributes={
+                request_id=request_id,
+                base_attributes={
                     MetricsAttributes.LLM_MODEL: llm_model or "default",
                     MetricsAttributes.USER_ID: logging_user_id.get("-"),
                     MetricsAttributes.USER_NAME: current_user_email.get("-"),
@@ -193,6 +195,9 @@ class AssistantGeneratorService:
                 details=f"An error occurred while generating assistant details: {str(e)}",
                 help=HELP_MESSAGE,
             )
+        finally:
+            if request_id:
+                request_summary_manager.clear_summary(request_id)
 
     @classmethod
     def generate_assistant_prompt(
@@ -249,10 +254,10 @@ class AssistantGeneratorService:
                 f"prompt_length={len(response.system_prompt)}"
             )
 
-            # Send success metrics
-            send_log_metric(
+            emit_llm_token_metric(
                 name=PROMPT_GENERATOR_TOTAL_METRIC,
-                attributes={
+                request_id=request_id,
+                base_attributes={
                     MetricsAttributes.LLM_MODEL: llm_model or "default",
                     MetricsAttributes.USER_ID: logging_user_id.get("-"),
                     MetricsAttributes.USER_NAME: current_user_email.get("-"),
@@ -280,6 +285,9 @@ class AssistantGeneratorService:
                 details=f"An error occurred: {str(e)}",
                 help=HELP_MESSAGE,
             )
+        finally:
+            if request_id:
+                request_summary_manager.clear_summary(request_id)
 
     @classmethod
     def generate_refine_prompt(
@@ -317,9 +325,10 @@ class AssistantGeneratorService:
                 },
             )
 
-            send_log_metric(
+            emit_llm_token_metric(
                 name=ASSISTANT_GENERATOR_TOTAL_METRIC,
-                attributes={
+                request_id=request_id,
+                base_attributes={
                     MetricsAttributes.LLM_MODEL: llm_model or "default",
                     MetricsAttributes.USER_ID: logging_user_id.get("-"),
                     MetricsAttributes.USER_NAME: current_user_email.get("-"),
@@ -373,6 +382,8 @@ class AssistantGeneratorService:
                 details=f"An error occurred while refining: {str(e)}",
                 help=HELP_MESSAGE,
             )
+        finally:
+            request_summary_manager.clear_summary(request_id)
 
     @classmethod
     def validate_assistant_for_publish(
@@ -442,6 +453,16 @@ class AssistantGeneratorService:
                     },
                 )
 
+            emit_llm_token_metric(
+                name=MARKETPLACE_ASSISTANT_VALIDATION_TOTAL_METRIC,
+                request_id=request_id,
+                base_attributes={
+                    MetricsAttributes.LLM_MODEL: llm_model,
+                    MetricsAttributes.USER_ID: user.id,
+                    MetricsAttributes.USER_NAME: user.name,
+                },
+            )
+
             logger.info(f"Marketplace validation for assistant {assistant.name} completed: decision={decision}")
             return validation_result
 
@@ -464,6 +485,9 @@ class AssistantGeneratorService:
                 details=f"An error occurred during v2 quality validation: {str(e)}",
                 help="Please try again later. If the issue persists, contact support.",
             )
+        finally:
+            if request_id:
+                request_summary_manager.clear_summary(request_id)
 
     @classmethod
     def _process_field_recommendation(cls, field, original_values: dict[str, Any]):

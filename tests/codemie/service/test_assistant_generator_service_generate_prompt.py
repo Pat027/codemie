@@ -38,7 +38,7 @@ class TestGenerateAssistantPrompt(unittest.TestCase):
         self.mock_user.current_project = "test-project"
         self.mock_user.is_admin = False
 
-    @patch("codemie.service.assistant_generator_service.send_log_metric")
+    @patch("codemie.service.monitoring.base_monitoring_service.send_log_metric")
     @patch("codemie.service.assistant_generator_service.PromptGeneratorChain")
     def test_generate_new_prompt_with_text_no_existing(self, mock_chain_class, mock_send_metric):
         """Test generating a new prompt from text with no existing prompt"""
@@ -319,7 +319,7 @@ class TestGenerateAssistantPrompt(unittest.TestCase):
         self.assertIn("had_instructions=True", log_message)  # text provided
         self.assertIn("prompt_length=1000", log_message)
 
-    @patch("codemie.service.assistant_generator_service.send_log_metric")
+    @patch("codemie.service.monitoring.base_monitoring_service.send_log_metric")
     @patch("codemie.service.assistant_generator_service.PromptGeneratorChain")
     def test_metrics_tracking_success(self, mock_chain_class, mock_send_metric):
         """Test that success metrics are tracked correctly"""

@@ -513,7 +513,9 @@ def request_workflow_execution_output_changes(
 
     try:
         result = WorkflowOutputChangeRequestService.run(
-            original_output=body.original_output, changes_request=body.request
+            original_output=body.original_output,
+            changes_request=body.request,
+            request_id=raw_request.state.uuid,
         )
         return BaseResponse(message=result)
     except Exception as e:

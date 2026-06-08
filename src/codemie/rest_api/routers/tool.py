@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 
 from codemie_tools.base import toolkit_provider
 from codemie.core.exceptions import ExtendedHTTPException
@@ -106,7 +106,8 @@ async def get_tool_schema(
     status_code=status.HTTP_200_OK,
     response_model=ToolInvokeResponse,
 )
-def invoke_tool(request: ToolInvokeRequest, tool_name: str, user: User = Depends(authenticate)):
+def invoke_tool(request: ToolInvokeRequest, tool_name: str, raw_request: Request, user: User = Depends(authenticate)):
+    request.request_id = raw_request.state.uuid
     try:
         output = ToolExecutionService.invoke(request, tool_name, user)
         return ToolInvokeResponse(output=str(output))

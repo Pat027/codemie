@@ -807,3 +807,28 @@ class TestPlatformCostCalculation:
         # Validation: breakdown sums to total
         calculated_total = platform_cost_metric["value"] + cli_cost_metric["value"] + embedding_cost_metric["value"]
         assert abs(calculated_total - total_money_metric["value"]) <= 0.01
+
+
+class TestPlatformLLMCostIncludesGeneratorMetrics:
+    """Verify platform_llm_cost terms filter includes generator metric names."""
+
+    def test_platform_llm_cost_includes_assistant_generator(self, handler):
+        from codemie.service.analytics.metric_names import MetricName
+
+        agg_body = handler._build_summaries_aggregation({"bool": {"filter": []}})
+        terms = agg_body["aggs"]["platform_llm_cost"]["filter"]["terms"]["metric_name.keyword"]
+        assert MetricName.ASSISTANT_GENERATOR_TOTAL.value in terms
+
+    def test_platform_llm_cost_includes_prompt_generator(self, handler):
+        from codemie.service.analytics.metric_names import MetricName
+
+        agg_body = handler._build_summaries_aggregation({"bool": {"filter": []}})
+        terms = agg_body["aggs"]["platform_llm_cost"]["filter"]["terms"]["metric_name.keyword"]
+        assert MetricName.PROMPT_GENERATOR_TOTAL.value in terms
+
+    def test_platform_llm_cost_includes_skill_generator(self, handler):
+        from codemie.service.analytics.metric_names import MetricName
+
+        agg_body = handler._build_summaries_aggregation({"bool": {"filter": []}})
+        terms = agg_body["aggs"]["platform_llm_cost"]["filter"]["terms"]["metric_name.keyword"]
+        assert MetricName.SKILL_GENERATOR_TOTAL.value in terms

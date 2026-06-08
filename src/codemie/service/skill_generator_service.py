@@ -28,12 +28,13 @@ from codemie.rest_api.models.skill import SkillCategory
 from codemie.rest_api.models.skill_generator import AssistantToolkit, SkillGeneratorResponse
 from codemie.rest_api.security.user import User
 from codemie.service.llm_service.llm_service import llm_service
-from codemie.service.monitoring.base_monitoring_service import send_log_metric
+from codemie.service.monitoring.base_monitoring_service import emit_llm_token_metric, send_log_metric
 from codemie.service.monitoring.metrics_constants import (
     SKILL_GENERATOR_ERRORS_METRIC,
     SKILL_GENERATOR_TOTAL_METRIC,
     MetricsAttributes,
 )
+from codemie.service.request_summary_manager import request_summary_manager
 from codemie.service.tools.tools_info_service import ToolsInfoService
 from codemie.templates.agents.skill_generator_prompt import (
     SKILL_GENERATOR_CATEGORY,
@@ -130,9 +131,10 @@ class SkillGeneratorService:
 
             categories = cls._validate_categories(response.categories)
 
-            send_log_metric(
+            emit_llm_token_metric(
                 name=SKILL_GENERATOR_TOTAL_METRIC,
-                attributes={
+                request_id=request_id,
+                base_attributes={
                     MetricsAttributes.LLM_MODEL: llm_model,
                     MetricsAttributes.USER_ID: logging_user_id.get("-"),
                     MetricsAttributes.USER_NAME: current_user_email.get("-"),
@@ -163,6 +165,9 @@ class SkillGeneratorService:
                 details=f"An error occurred while generating skill details: {str(e)}",
                 help=HELP_MESSAGE,
             )
+        finally:
+            if request_id:
+                request_summary_manager.clear_summary(request_id)
 
     @classmethod
     def _validate_categories(cls, categories: list[str]) -> list[str]:
@@ -266,6 +271,16 @@ class SkillGeneratorService:
             result.toolkits = cls._filter_keep_toolkits(result.toolkits)
             result.context = []
 
+            emit_llm_token_metric(
+                name=SKILL_GENERATOR_TOTAL_METRIC,
+                request_id=request_id,
+                base_attributes={
+                    MetricsAttributes.LLM_MODEL: llm_model or "default",
+                    MetricsAttributes.USER_ID: logging_user_id.get("-"),
+                    MetricsAttributes.USER_NAME: current_user_email.get("-"),
+                },
+            )
+
             return result
 
         except ExtendedHTTPException:
@@ -286,6 +301,9 @@ class SkillGeneratorService:
                 details=f"An error occurred while refining skill details: {str(e)}",
                 help=HELP_MESSAGE,
             )
+        finally:
+            if request_id:
+                request_summary_manager.clear_summary(request_id)
 
     @classmethod
     def _transform_toolkits(cls, toolkits: list[dict]) -> list[dict]:

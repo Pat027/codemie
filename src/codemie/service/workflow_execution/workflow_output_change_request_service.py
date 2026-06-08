@@ -13,9 +13,13 @@
 # limitations under the License.
 
 from codemie.chains.pure_chat_chain import PureChatChain
+from codemie.configs.logger import current_user_email, logging_user_id
+from codemie.core.dependecies import get_llm_by_credentials
 from codemie.core.models import AssistantChatRequest
 from codemie.service.llm_service.llm_service import llm_service
-from codemie.core.dependecies import get_llm_by_credentials
+from codemie.service.monitoring.base_monitoring_service import emit_llm_token_metric
+from codemie.service.monitoring.metrics_constants import WORKFLOW_OUTPUT_CHANGE_TOTAL_METRIC, MetricsAttributes
+from codemie.service.request_summary_manager import request_summary_manager
 from codemie.templates.workflow_output_change_prompt import PROMPT
 
 
@@ -23,15 +27,29 @@ class WorkflowOutputChangeRequestService:
     """Based on workflow execution output, ask LLM to change the output according to the request."""
 
     @staticmethod
-    def run(original_output: str, changes_request: str) -> str:
+    def run(original_output: str, changes_request: str, request_id: str | None = None) -> str:
         llm_model = llm_service.default_llm_model
-        llm = get_llm_by_credentials(llm_model=llm_model)
         chat_request = AssistantChatRequest(text=changes_request)
-        response = PureChatChain(
-            request=chat_request,
-            system_prompt=PROMPT.format(output=original_output),
-            llm_model=llm_model,
-            llm=llm,
-        ).generate()
+        try:
+            llm = get_llm_by_credentials(llm_model=llm_model, request_id=request_id)
+            response = PureChatChain(
+                request=chat_request,
+                system_prompt=PROMPT.format(output=original_output),
+                llm_model=llm_model,
+                llm=llm,
+            ).generate()
 
-        return response.generated
+            emit_llm_token_metric(
+                name=WORKFLOW_OUTPUT_CHANGE_TOTAL_METRIC,
+                request_id=request_id,
+                base_attributes={
+                    MetricsAttributes.LLM_MODEL: llm_model or "default",
+                    MetricsAttributes.USER_ID: logging_user_id.get("-"),
+                    MetricsAttributes.USER_NAME: current_user_email.get("-"),
+                },
+            )
+
+            return response.generated
+        finally:
+            if request_id:
+                request_summary_manager.clear_summary(request_id)

@@ -26,6 +26,9 @@ from sqlmodel import select, and_, or_
 from codemie.clients.postgres import get_session
 from codemie.configs import config, logger
 from codemie.core.dependecies import get_llm_by_credentials, set_disable_prompt_cache
+from codemie.service.monitoring.base_monitoring_service import emit_llm_token_metric
+from codemie.service.monitoring.metrics_constants import CONVERSATION_ANALYSIS_TOTAL_METRIC, MetricsAttributes
+from codemie.service.request_summary_manager import request_summary_manager
 from codemie.repository.conversation_analysis_queue_repository import ConversationAnalysisQueueRepository
 from codemie.repository.conversation_analytics_repository import ConversationAnalyticsRepository
 from codemie.rest_api.models.conversation import Conversation
@@ -373,45 +376,56 @@ class ConversationAnalysisService:
         set_disable_prompt_cache(disable=True)
         llm = get_llm_by_credentials(llm_model=llm_model, streaming=False, request_id=conversation_id)
 
-        # Apply structured output schema
-        llm_with_structured_output = llm.with_structured_output(ConversationAnalysisSchema)
+        try:
+            # Apply structured output schema
+            llm_with_structured_output = llm.with_structured_output(ConversationAnalysisSchema)
 
-        # Build prompt directly to avoid format string issues with conversation text
-        # (conversation may contain curly braces from JSON, code snippets, etc.)
-        prompt_text = CONVERSATION_ANALYSIS_PROMPT.template.replace("{conversation}", conversation_text)
+            # Build prompt directly to avoid format string issues with conversation text
+            # (conversation may contain curly braces from JSON, code snippets, etc.)
+            prompt_text = CONVERSATION_ANALYSIS_PROMPT.template.replace("{conversation}", conversation_text)
 
-        logger.debug(f"Analyzing conversation {conversation_id} with LLM")
-        structured_output = llm_with_structured_output.invoke(prompt_text)
+            logger.debug(f"Analyzing conversation {conversation_id} with LLM")
+            structured_output = llm_with_structured_output.invoke(prompt_text)
 
-        # Combine static fields (from conversation data) with LLM-generated analysis
-        analytics = ConversationAnalytics(
-            conversation_id=conversation_id,
-            # Static fields from conversation data
-            user_id=conversation.user_id,
-            user_name=conversation.user_name,
-            project=conversation.project,
-            assistants_used=assistants_used,
-            # LLM-generated analysis fields
-            topics=structured_output.topics,
-            satisfaction=structured_output.satisfaction,
-            maturity=structured_output.maturity,
-            anti_patterns=structured_output.anti_patterns,
-            # Reprocessing tracking
-            last_analysis_date=datetime.now(UTC),
-            message_count_at_analysis=current_message_count,
-            # Metadata
-            analyzed_at=datetime.now(UTC),
-            llm_model_used=llm_model,
-            analysis_duration_seconds=time.time() - start_time,
-        )
+            # Combine static fields (from conversation data) with LLM-generated analysis
+            analytics = ConversationAnalytics(
+                conversation_id=conversation_id,
+                # Static fields from conversation data
+                user_id=conversation.user_id,
+                user_name=conversation.user_name,
+                project=conversation.project,
+                assistants_used=assistants_used,
+                # LLM-generated analysis fields
+                topics=structured_output.topics,
+                satisfaction=structured_output.satisfaction,
+                maturity=structured_output.maturity,
+                anti_patterns=structured_output.anti_patterns,
+                # Reprocessing tracking
+                last_analysis_date=datetime.now(UTC),
+                message_count_at_analysis=current_message_count,
+                # Metadata
+                analyzed_at=datetime.now(UTC),
+                llm_model_used=llm_model,
+                analysis_duration_seconds=time.time() - start_time,
+            )
 
-        logger.info(
-            f"Completed analysis of conversation {conversation_id} "
-            f"({current_message_count} messages) "
-            f"in {analytics.analysis_duration_seconds:.2f}s"
-        )
+            logger.info(
+                f"Completed analysis of conversation {conversation_id} "
+                f"({current_message_count} messages) "
+                f"in {analytics.analysis_duration_seconds:.2f}s"
+            )
 
-        return analytics
+            return analytics
+        finally:
+            emit_llm_token_metric(
+                name=CONVERSATION_ANALYSIS_TOTAL_METRIC,
+                request_id=conversation_id,
+                base_attributes={
+                    MetricsAttributes.LLM_MODEL: llm_model,
+                    MetricsAttributes.CONVERSATION_ID: conversation_id,
+                },
+            )
+            request_summary_manager.clear_summary(conversation_id)
 
     def _extract_toolkit_tool_names(self, assistant) -> List[str]:
         """

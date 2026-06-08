@@ -66,6 +66,7 @@ def test_invoke_tool_with_direct_creds_success():
     mock_request = Mock(spec=ToolInvokeRequest)
     mock_request.tool_args = {"arg1": "value"}
     mock_request.tool_attributes = {"attr1": "value"}
+    mock_request.request_id = None
 
     mock_tool = Mock(spec=BaseTool)
     mock_tool.execute = Mock(return_value="Success result")
@@ -91,6 +92,7 @@ def test_invoke_tool_with_direct_creds_error():
     mock_request = Mock(spec=ToolInvokeRequest)
     mock_request.tool_args = {"arg1": "value"}
     mock_request.tool_attributes = {"attr1": "value"}
+    mock_request.request_id = None
 
     mock_tool = Mock(spec=BaseTool)
     mock_tool.execute = Mock(side_effect=ValueError("Tool execution error"))

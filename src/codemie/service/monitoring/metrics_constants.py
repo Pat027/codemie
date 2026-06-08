@@ -34,6 +34,7 @@ MARKETPLACE_ASSISTANT_VALIDATION_SUCCESS_METRIC = "codemie_marketplace_assistant
 MARKETPLACE_ASSISTANT_VALIDATION_FAILED_METRIC = "codemie_marketplace_assistant_validation_failed"
 MARKETPLACE_ASSISTANT_VALIDATION_ERROR_METRIC = "codemie_marketplace_assistant_validation_error"
 MARKETPLACE_ASSISTANT_VALIDATION_LLM_INVOKE_METRIC = "codemie_marketplace_assistant_validation_llm_invoke"
+MARKETPLACE_ASSISTANT_VALIDATION_TOTAL_METRIC = "codemie_marketplace_assistant_validation_total"
 
 KATA_MANAGEMENT_METRIC = "codemie_kata_management"
 KATA_REACTION_METRIC = "codemie_kata_reaction"
@@ -48,6 +49,11 @@ SKILL_TOOL_COMPANION_FILE_INVOKED_METRIC = "codemie_skill_tool_companion_file_in
 SKILL_EXPORTED_METRIC = "codemie_skill_exported"
 SKILL_GENERATOR_TOTAL_METRIC = "codemie_skill_generator_total"
 SKILL_GENERATOR_ERRORS_METRIC = "codemie_skill_generator_errors_total"
+
+WORKFLOW_OUTPUT_CHANGE_TOTAL_METRIC = "codemie_workflow_output_change_total"
+WORKFLOW_OUTPUT_CHANGE_ERRORS_METRIC = "codemie_workflow_output_change_errors_total"
+
+CONVERSATION_ANALYSIS_TOTAL_METRIC = "codemie_conversation_analysis_total"
 
 
 class MetricsAttributes:

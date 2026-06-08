@@ -32,6 +32,7 @@ from codemie.agents.tools.kb.search_kb import SearchKBTool
 
 # Plugin toolkit now provided via enterprise package
 from codemie.configs import logger
+from codemie.core.constants import REQUEST_ID
 from codemie.core.dependecies import get_llm_by_credentials
 from codemie.core.models import CodeFields
 from codemie.core.utils import build_unique_file_objects_list
@@ -45,6 +46,9 @@ from codemie.rest_api.models.tool import (
 from codemie.rest_api.security.user import User
 from codemie.service.assistant import VirtualAssistantService
 from codemie.service.assistant_service import AssistantService
+from codemie.service.monitoring.base_monitoring_service import emit_llm_token_metric
+from codemie.service.monitoring.metrics_constants import TOOLS_USAGE_TOKENS_METRIC, MetricsAttributes
+from codemie.service.request_summary_manager import request_summary_manager
 from codemie.service.tools.discovery import ToolDiscoveryService, ToolInfo
 from codemie.service.tools.tool_service import ToolsService
 from codemie.service.tools.toolkit_service import ToolkitService
@@ -125,6 +129,17 @@ class ToolExecutionService:
         except Exception as e:
             logger.error(f"Error occurred on tool invocation: {str(e)}", exc_info=True)
             raise e
+        finally:
+            if request.request_id:
+                emit_llm_token_metric(
+                    name=TOOLS_USAGE_TOKENS_METRIC,
+                    request_id=request.request_id,
+                    base_attributes={
+                        MetricsAttributes.LLM_MODEL: request.llm_model or "default",
+                        MetricsAttributes.TOOL_NAME: tool_name,
+                    },
+                )
+                request_summary_manager.clear_summary(request.request_id)
 
     @classmethod
     def get_tool_with_direct_creds(cls, request: ToolInvokeRequest, tool_name: str) -> BaseTool:
@@ -176,7 +191,7 @@ class ToolExecutionService:
         creds = request.tool_creds
 
         if issubclass(tool_info.toolkit_class, (CustomGitHubToolkit, CustomGitLabToolkit, CustomBitbucketToolkit)):
-            llm = get_llm_by_credentials(llm_model=request.llm_model)
+            llm = get_llm_by_credentials(llm_model=request.llm_model, request_id=request.request_id)
             git_toolkit = GitToolkit.get_toolkit(creds, llm)
             return GitToolkit(git_toolkit=git_toolkit)
 
@@ -190,7 +205,10 @@ class ToolExecutionService:
 
         tool = cls._get_context_tools(assistant, request, tool_name, user)
         if tool:
-            tool.metadata = {'llm_model': request.llm_model}
+            tool.metadata = {
+                'llm_model': request.llm_model,
+                REQUEST_ID: request.request_id or "",
+            }
         else:
             tool = ToolsService.find_tool_by_invoke_request(tool_name, toolkits, assistant, user, request.project)
         return tool
@@ -219,6 +237,16 @@ class ToolExecutionService:
             logger.error(f"Error occurred on tool invocation: {str(e)}", exc_info=True)
             raise e
         finally:
+            if request.request_id:
+                emit_llm_token_metric(
+                    name=TOOLS_USAGE_TOKENS_METRIC,
+                    request_id=request.request_id,
+                    base_attributes={
+                        MetricsAttributes.LLM_MODEL: request.llm_model or "default",
+                        MetricsAttributes.TOOL_NAME: tool_name,
+                    },
+                )
+                request_summary_manager.clear_summary(request.request_id)
             if assistant:
                 VirtualAssistantService.delete(assistant.id)
 
@@ -404,7 +432,7 @@ class ToolExecutionService:
             project_name=request.project,
             user_id=user.id,
             llm_model=request.llm_model,
-            request_uuid="",
+            request_uuid=request.request_id or "",
             assistant_id=assistant.id,
             is_react=assistant.is_react,
         )
@@ -450,7 +478,7 @@ class ToolExecutionService:
                 raise ValueError(error_msg)
 
             file_objects = build_unique_file_objects_list(file_urls)
-            llm = get_llm_by_credentials(llm_model=request.llm_model)
+            llm = get_llm_by_credentials(llm_model=request.llm_model, request_id=request.request_id)
             if tool_name == IMAGE_TOOL.name:
                 toolkit = VisionToolkit.get_toolkit(files=file_objects, chat_model=llm)
             else:
@@ -463,10 +491,23 @@ class ToolExecutionService:
             logger.debug(f"Tool `{tool_name}` executed with args: {request.tool_args}")
             if request.tool_attributes:
                 tool = cls.update_tool_attributes(tool, request.tool_attributes)
-            return tool.execute(**request.tool_args)
+            result = tool.execute(**request.tool_args)
+
+            emit_llm_token_metric(
+                name=TOOLS_USAGE_TOKENS_METRIC,
+                request_id=request.request_id,
+                base_attributes={
+                    MetricsAttributes.LLM_MODEL: request.llm_model or "default",
+                    MetricsAttributes.TOOL_NAME: tool_name,
+                },
+            )
+            return result
         except Exception as e:
             logger.error(f"Error occurred on tool invocation: {str(e)}", exc_info=True)
             raise e
+        finally:
+            if request.request_id:
+                request_summary_manager.clear_summary(request.request_id)
 
     @classmethod
     def _is_file_dependent_tool(cls, tool_name: str) -> bool:

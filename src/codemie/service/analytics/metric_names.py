@@ -73,6 +73,15 @@ class MetricName(str, Enum):
     CLI_SKILL_COMMAND_TOTAL = "codemie_cli_skill_command_total"
     SKILL_TOOL_INVOKED = "codemie_skill_tool_invoked"
 
+    # Generator metrics
+    ASSISTANT_GENERATOR_TOTAL = "codemie_assistant_generator_total"
+    PROMPT_GENERATOR_TOTAL = "codemie_prompt_generator_total"
+    SKILL_GENERATOR_TOTAL = "codemie_skill_generator_total"
+
+    # Workflow output change
+    WORKFLOW_OUTPUT_CHANGE_TOTAL = "codemie_workflow_output_change_total"
+    MARKETPLACE_ASSISTANT_VALIDATION_TOTAL = "codemie_marketplace_assistant_validation_total"
+
     # LLM Proxy metrics
     LLM_PROXY_REQUESTS_TOTAL = "llm_proxy_requests_total"
     LLM_PROXY_ERRORS_TOTAL = "llm_proxy_errors_total"
@@ -163,6 +172,12 @@ MetricName.SPENDING_METRICS = [
     MetricName.CLI_LLM_USAGE_TOTAL,  # Token/cost data from LiteLLM proxy (cli_request=true for CLI costs)
     MetricName.WORKFLOW_EXECUTION_TOTAL,
     MetricName.DATASOURCE_TOKENS_USAGE,
+    MetricName.ASSISTANT_GENERATOR_TOTAL,
+    MetricName.PROMPT_GENERATOR_TOTAL,
+    MetricName.SKILL_GENERATOR_TOTAL,
+    MetricName.WORKFLOW_OUTPUT_CHANGE_TOTAL,
+    MetricName.CODEMIE_TOOLS_USAGE_TOKENS,
+    MetricName.MARKETPLACE_ASSISTANT_VALIDATION_TOTAL,
 ]
 
 # CLI-only metrics - used to scope user/project aggregations to CLI documents only,
