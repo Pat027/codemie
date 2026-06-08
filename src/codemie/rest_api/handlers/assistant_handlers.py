@@ -61,6 +61,7 @@ from codemie.service.conversation_service import ConversationService
 from codemie.service.dynamic_config_service import DynamicConfigService
 from codemie.service.llm_service.llm_service import llm_service
 from codemie.service.request_summary_manager import request_summary_manager
+from codemie.configs.pyroscope_config import pyroscope_profile
 
 # Constants
 NDJSON_MEDIA_TYPE = "application/x-ndjson"
@@ -412,6 +413,13 @@ class AssistantRequestHandler(ABC):
 
 
 class StandardAssistantHandler(AssistantRequestHandler):
+    @pyroscope_profile(
+        lambda self, request, *a, **kw: {
+            "operation": "assistant",
+            "assistant_id": self.assistant.id,
+            "request_uuid": self.request_uuid,
+        }
+    )
     def process_request(
         self,
         request: AssistantChatRequest,
@@ -873,6 +881,13 @@ class A2AAssistantHandler(AssistantRequestHandler):
             agent_card=self.agent_card,
         )
 
+    @pyroscope_profile(
+        lambda self, request, *a, **kw: {
+            "operation": "assistant",
+            "assistant_id": self.assistant.id,
+            "request_uuid": self.request_uuid,
+        }
+    )
     def process_request(
         self,
         request: AssistantChatRequest,

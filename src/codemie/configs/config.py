@@ -485,7 +485,30 @@ class Config(BaseSettings):
     #   OTEL_EXPORTER_OTLP_HEADERS   — "key=val,key2=val2" auth headers
     #   OTEL_RESOURCE_ATTRIBUTES     — extra resource tags, e.g. "k8s.cluster.name=dev"
     OTEL_ENABLED: bool = False
-    OTEL_EXCLUDED_URLS: str = "healthcheck"  # comma-separated URL fragment exclusions
+    OTEL_EXCLUDED_URLS: str = "healthcheck,metrics"  # comma-separated URL fragment exclusions
+
+    # ===========================================
+    # Grafana Pyroscope Continuous Profiling
+    # ===========================================
+    # ===========================================
+    # Prometheus Metrics
+    # ===========================================
+    PROMETHEUS_ENABLED: bool = False
+    PROMETHEUS_ENDPOINT: str = "/metrics"
+    PROMETHEUS_METRICS_HOST: str = "0.0.0.0"
+    PROMETHEUS_METRICS_PORT: int = 9091
+
+    PYROSCOPE_ENABLED: bool = False
+    PYROSCOPE_SERVER_URL: str = "http://localhost:4040"
+    PYROSCOPE_APP_NAME: str = "codemie"
+    PYROSCOPE_SAMPLE_RATE: int = 100  # samples per second
+    PYROSCOPE_ONCPU: bool = True  # CPU profiling via wall-clock sampling
+    PYROSCOPE_GIL_ONLY: bool = False  # restrict sampling to GIL-holding threads
+    PYROSCOPE_ENABLE_LOGGING: bool = False
+    PYROSCOPE_DETECT_SUBPROCESSES: bool = False
+    # Global tags appended to every profile — JSON object or "key=value,key=value" pairs
+    # e.g. '{"region": "us-east", "cluster": "prod"}' or "region=us-east,cluster=prod"
+    PYROSCOPE_TAGS: str = ""
 
     CODEMIE_SUPPORT: str = "https://epa.ms/codemie-support"
     CODEMIE_SUPPORT_MSG: str = f"For assistance, please contact support at {CODEMIE_SUPPORT}"

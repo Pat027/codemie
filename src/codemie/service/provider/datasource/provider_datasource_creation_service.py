@@ -23,6 +23,7 @@ from codemie.service.provider.datasource.constants import PROVIDER_INDEX_TYPE
 from codemie.service.provider.util import encrypt_datasource_provider_fields
 
 from .provider_datasource_base_service import ProviderDatasourceBaseService
+from codemie.configs.pyroscope_config import pyroscope_profile
 
 
 class ProviderDatasourceCreationService(ProviderDatasourceBaseService):
@@ -37,6 +38,14 @@ class ProviderDatasourceCreationService(ProviderDatasourceBaseService):
         self.values = values
         self.user = user
 
+    @pyroscope_profile(
+        lambda self, *a, **kw: {
+            "operation": "datasource_create",
+            "provider": self.provider.name,
+            "toolkit_id": self.toolkit_id,
+            "project": str(self.values.get("project_name", "")),
+        }
+    )
     def run(self):
         """Runs the service"""
         toolkit = self._find_toolkit(self.toolkit_id)

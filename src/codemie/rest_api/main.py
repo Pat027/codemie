@@ -15,6 +15,7 @@
 import asyncio
 import uuid
 import traceback
+import contextlib
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
@@ -496,6 +497,15 @@ async def _shutdown_services(app: FastAPI, tasks: list):
     await close_llm_proxy_client()
     logger.info("LLM Proxy HTTP client closed")
 
+    prometheus_metrics_server = getattr(app.state, "prometheus_metrics_server", None)
+    prometheus_metrics_task = getattr(app.state, "prometheus_metrics_task", None)
+    if prometheus_metrics_server is not None:
+        prometheus_metrics_server.should_exit = True
+        if prometheus_metrics_task is not None:
+            with contextlib.suppress(asyncio.TimeoutError, asyncio.CancelledError):
+                await asyncio.wait_for(prometheus_metrics_task, timeout=5.0)
+        logger.info("Prometheus metrics server shutdown complete")
+
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
@@ -568,6 +578,13 @@ async def lifespan(app: FastAPI):
             # Enrich span names from "SELECT" to "SELECT <table>" for better visibility.
             # Must be called after instrument() so our listener runs after OTel's.
             enrich_sqlalchemy_spans(engines)
+
+    register_prometheus_db_pool_metrics()
+
+    if config.PROMETHEUS_ENABLED:
+        metrics_task, metrics_server = await start_metrics_server()
+        app.state.prometheus_metrics_server = metrics_server
+        app.state.prometheus_metrics_task = metrics_task
 
     # Initialize JWT keys and SuperAdmin for user management (EPMCDME-10160)
     _initialize_jwt_keys()
@@ -959,9 +976,34 @@ app.add_middleware(
 # Initialize OTEL at module level so that OTelMiddleware is included in the
 # middleware stack from its first compile (before the first HTTP request).
 # Must come after all app.add_middleware / @app.middleware registrations above.
-from codemie.configs.otel_config import configure_opentelemetry  # noqa: E402
+from codemie.configs.otel_config import configure_opentelemetry, configure_prometheus_metrics  # noqa: E402
+from codemie.configs.prometheus_config import (  # noqa: E402
+    configure_prometheus_http_metrics,
+    register_prometheus_db_pool_metrics,
+    start_metrics_server,
+)
 
 configure_opentelemetry(app)
+
+# Prometheus: set up OTel MeterProvider with PrometheusMetricReader so that all
+# OTel business metrics (BaseMonitoringService counters/histograms) are bridged
+# to Prometheus scrape format.  Must run before any metrics are recorded.
+configure_prometheus_metrics()
+
+if config.PROMETHEUS_ENABLED:
+    configure_prometheus_http_metrics(app)
+
+
+# Pyroscope: register endpoint-tagging middleware and start the profiler.
+# Must come after OTEL so that profiling spans the full request including OTEL overhead.
+if config.PYROSCOPE_ENABLED:
+    from codemie.configs.pyroscope_config import configure_pyroscope  # noqa: E402
+    from codemie.rest_api.middleware.pyroscope_middleware import (  # noqa: E402
+        pyroscope_endpoint_tagging_middleware,
+    )
+
+    app.middleware("http")(pyroscope_endpoint_tagging_middleware)
+    configure_pyroscope()
 
 
 if __name__ == '__main__':

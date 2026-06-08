@@ -61,6 +61,40 @@ class _DropAsgiSendSpansProcessor(SpanProcessor):
         return self._inner.force_flush(timeout_millis)
 
 
+def _create_resource() -> Resource:
+    # Resource.create() automatically merges OTEL_SERVICE_NAME and OTEL_RESOURCE_ATTRIBUTES
+    # from the environment via OTELResourceDetector.  Explicitly passed attributes take
+    # precedence, so SERVICE_NAME is only set here as a default when the env var is absent.
+    return Resource.create(
+        {
+            **({ResourceAttributes.SERVICE_NAME: "codemie"} if not os.environ.get("OTEL_SERVICE_NAME") else {}),
+            ResourceAttributes.SERVICE_VERSION: config.APP_VERSION,
+            ResourceAttributes.DEPLOYMENT_ENVIRONMENT: config.ENV,
+            "k8s.pod.name": os.environ.get("POD_NAME", ""),
+            "k8s.namespace.name": os.environ.get("POD_NAMESPACE", ""),
+        }
+    )
+
+
+def configure_prometheus_metrics() -> None:
+    """Set up OTel MeterProvider with PrometheusMetricReader.
+
+    Bridges all OTel business metrics (BaseMonitoringService counters/histograms)
+    to Prometheus scrape format at PROMETHEUS_ENDPOINT. No-op when PROMETHEUS_ENABLED=False.
+    Must be called before any metrics are recorded (module-level in main.py).
+    """
+    if not config.PROMETHEUS_ENABLED:
+        return
+
+    from opentelemetry import metrics
+    from opentelemetry.exporter.prometheus import PrometheusMetricReader
+    from opentelemetry.sdk.metrics import MeterProvider
+
+    reader = PrometheusMetricReader()
+    provider = MeterProvider(resource=_create_resource(), metric_readers=[reader])
+    metrics.set_meter_provider(provider)
+
+
 def configure_opentelemetry(app: FastAPI) -> None:
     """Initialize OpenTelemetry tracing for the application.
 
@@ -79,18 +113,7 @@ def configure_opentelemetry(app: FastAPI) -> None:
     if not config.OTEL_ENABLED:
         return
 
-    # Resource.create() automatically merges OTEL_SERVICE_NAME and OTEL_RESOURCE_ATTRIBUTES
-    # from the environment via OTELResourceDetector.  Explicitly passed attributes take
-    # precedence, so SERVICE_NAME is only set here as a default when the env var is absent.
-    resource = Resource.create(
-        {
-            **({ResourceAttributes.SERVICE_NAME: "codemie"} if not os.environ.get("OTEL_SERVICE_NAME") else {}),
-            ResourceAttributes.SERVICE_VERSION: config.APP_VERSION,
-            ResourceAttributes.DEPLOYMENT_ENVIRONMENT: config.ENV,
-            "k8s.pod.name": os.environ.get("POD_NAME", ""),
-            "k8s.namespace.name": os.environ.get("POD_NAMESPACE", ""),
-        }
-    )
+    resource = _create_resource()
 
     _configure_tracing(resource)
 

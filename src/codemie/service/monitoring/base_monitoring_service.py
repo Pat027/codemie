@@ -55,6 +55,8 @@ class BaseMonitoringService:
     METER_NAME = "codemie-business-metrics"
 
     _counters = {}
+    _histograms = {}
+    _updown_counters = {}
 
     @classmethod
     def _get_or_create_counter(cls, name: str, description: str = "", unit: str = ""):
@@ -62,6 +64,20 @@ class BaseMonitoringService:
             meter = metrics.get_meter(cls.METER_NAME)
             cls._counters[name] = meter.create_counter(name=name, description=description, unit=unit)
         return cls._counters[name]
+
+    @classmethod
+    def _get_or_create_histogram(cls, name: str, description: str = "", unit: str = "s"):
+        if name not in cls._histograms:
+            meter = metrics.get_meter(cls.METER_NAME)
+            cls._histograms[name] = meter.create_histogram(name=name, description=description, unit=unit)
+        return cls._histograms[name]
+
+    @classmethod
+    def _get_or_create_updown_counter(cls, name: str, description: str = "", unit: str = ""):
+        if name not in cls._updown_counters:
+            meter = metrics.get_meter(cls.METER_NAME)
+            cls._updown_counters[name] = meter.create_up_down_counter(name=name, description=description, unit=unit)
+        return cls._updown_counters[name]
 
     @classmethod
     def send_count_metric(
@@ -88,3 +104,41 @@ class BaseMonitoringService:
             return counter.add(count, attributes)
         except Exception as e:
             logger.error(f"Error sending count metric: {str(e)}")
+
+    @classmethod
+    def send_updown_metric(
+        cls,
+        name: str,
+        amount: int = 1,
+        description: str = "",
+        unit: str = "",
+        attributes: Optional[dict] = None,
+    ):
+        try:
+            counter = cls._get_or_create_updown_counter(name, description, unit)
+            attributes = attributes or {}
+            attributes.update({"env": config.ENV})
+            attributes = {k: limit_string(v) if isinstance(v, str) else v for k, v in attributes.items()}
+            counter.add(amount, attributes)
+        except Exception as e:
+            logger.error(f"Error sending updown metric: {str(e)}")
+
+    @classmethod
+    def record_duration_metric(
+        cls,
+        name: str,
+        duration_seconds: float,
+        description: str = "",
+        attributes: Optional[dict] = None,
+    ):
+        """Record operation duration as an OTel Histogram (exposed as Prometheus histogram)."""
+        try:
+            histogram = cls._get_or_create_histogram(name, description)
+            attributes = attributes or {}
+            if not attributes.get(MetricsAttributes.USER_ID):
+                attributes.update({MetricsAttributes.USER_ID: logging_user_id.get("-")})
+            attributes.update({"env": config.ENV})
+            attributes = {k: limit_string(v) if isinstance(v, str) else v for k, v in attributes.items()}
+            histogram.record(duration_seconds, attributes)
+        except Exception as e:
+            logger.error(f"Error recording duration metric: {str(e)}")

@@ -31,6 +31,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from codemie.clients.elasticsearch import ElasticSearchClient
 from codemie.configs import logger
 from codemie.configs.logger import set_logging_info
+from codemie.configs.pyroscope_config import pyroscope_profile
 from codemie.core.dependecies import get_elasticsearch
 from codemie.core.otel_tracing import get_otel_context_for_thread, propagated_span, record_exception_on_span
 from codemie.datasource.callback.base_datasource_callback import DatasourceProcessorCallback
@@ -127,6 +128,14 @@ class BaseDatasourceProcessor(ABC):
         target = func if func is not None else self.process
         background_tasks.add_task(datasource_concurrency_manager.run, target, self.index)
 
+    @pyroscope_profile(
+        lambda self, *a, **kw: {
+            "operation": "datasource.process",
+            "datasource_name": self.index.full_name if self.index else "not_provided",
+            "datasource_id": self.index.id if self.index else "not_provided",
+            "request_uuid": self.request_uuid,
+        }
+    )
     def process(self):
         """
         Processes the data source by initializing the necessary components, starting the fetching process,

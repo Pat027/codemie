@@ -24,6 +24,7 @@ from codemie.service.provider.util import decrypt_datasource_provider_fields
 
 from .provider_datasource_base_service import ProviderDatasourceBaseService
 from .provider_datasource_update_service import ProviderDatasourceUpdateService
+from codemie.configs.pyroscope_config import pyroscope_profile
 
 
 class ProviderDatasourceReindexService(ProviderDatasourceBaseService):
@@ -41,6 +42,14 @@ class ProviderDatasourceReindexService(ProviderDatasourceBaseService):
         )
         self.user = user
 
+    @pyroscope_profile(
+        lambda self, *a, **kw: {
+            "operation": "datasource_reindex",
+            "provider": self.provider.name,
+            "toolkit_id": self.toolkit_id,
+            "project": self.datasource.project_name,
+        }
+    )
     def run(self):
         self._clear_error(self.datasource)
 

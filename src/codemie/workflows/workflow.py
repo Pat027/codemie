@@ -99,6 +99,7 @@ from codemie.workflows.validation import (
     PydanticErrorTransformer,
 )
 from codemie.workflows.utils.json_utils import UnwrappingJsonPointerEvaluator
+from codemie.configs.pyroscope_config import pyroscope_profile
 
 
 class WorkflowExecutor:
@@ -802,6 +803,14 @@ class WorkflowExecutor:
                 map_nodes.append(state.next.state_id or state.next.condition.then)
         return map_nodes
 
+    @pyroscope_profile(
+        lambda self, *a, **kw: {
+            "operation": "workflow",
+            "workflow_id": str(self.workflow_config.id or ""),
+            "workflow_name": self.workflow_config.name or "",
+            "project": self.workflow_config.project or "",
+        }
+    )
     def _execute_workflow_stream(self, enable_verbose_consumer: bool = False):
         """
         Shared workflow execution logic for both background and streaming modes.
@@ -860,11 +869,7 @@ class WorkflowExecutor:
                 self._handle_task_exception(e, chunks_collector)
             finally:
                 self.thought_queue.close()
-                if consumer_future is not None:
-                    try:
-                        consumer_future.result(timeout=30)
-                    except Exception as exc:
-                        logger.error(f"ThoughtConsumer failed to drain: {exc}")
+                self._drain_thought_consumer(consumer_future)
                 if workflow_succeeded:
                     self.workflow_execution_service.finish()
                 if self.delete_on_completion:
@@ -878,6 +883,14 @@ class WorkflowExecutor:
         if enable_verbose_consumer:
             return ThoughtConsumer.run(execution_id=self.execution_id, message_queue=self.thought_queue)
         return None
+
+    def _drain_thought_consumer(self, consumer_future) -> None:
+        if consumer_future is None:
+            return
+        try:
+            consumer_future.result(timeout=30)
+        except Exception as exc:
+            logger.error(f"ThoughtConsumer failed to drain: {exc}")
 
     def _build_graph_config(self) -> RunnableConfig:
         """Build LangGraph configuration with callbacks and limits."""
