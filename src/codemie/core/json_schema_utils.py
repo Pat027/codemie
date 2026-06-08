@@ -35,6 +35,12 @@ type TypeAnnotation = Any
 type FieldDefinition = tuple[TypeAnnotation, FieldInfo]
 
 
+class _ExcludeUnsetModel(BaseModel):
+    def model_dump(self, **kwargs) -> dict[str, Any]:
+        kwargs.setdefault("exclude_unset", True)
+        return super().model_dump(**kwargs)
+
+
 class Cache:
     def __init__(self) -> None:
         self.ref_path: list[str] = ["#"]
@@ -137,7 +143,7 @@ def _create_model_from_schema(model_name: TypeName, schema: JsonSchema, cache: M
     #    Fields from 'properties' override any identically named fields from 'allOf' base.
     model = create_model(
         model_name,
-        __base__=base_model,
+        __base__=base_model or _ExcludeUnsetModel,
         __config__=model_config,
         **field_definitions,
     )
@@ -173,7 +179,7 @@ def _handle_object(model_name: TypeName, schema: JsonSchema, cache: ModelCache) 
     #    Fields from 'properties' override any identically named fields from 'allOf' base.
     model = create_model(
         model_name.capitalize(),
-        __base__=base_model,
+        __base__=base_model or _ExcludeUnsetModel,
         __config__=model_config,
         **field_definitions,
     )
@@ -510,7 +516,7 @@ def _create_allof_composed_model(
     unique_bases: tuple[type[BaseModel], ...] = tuple(dict.fromkeys(model_bases))
 
     # If no models were found, the base is just BaseModel
-    actual_bases = unique_bases if unique_bases else (BaseModel,)
+    actual_bases = unique_bases if unique_bases else (_ExcludeUnsetModel,)
 
     # Create an intermediate class inheriting from all model bases
     # This resolves MRO before adding primitive fields.
