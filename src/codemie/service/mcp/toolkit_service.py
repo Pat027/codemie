@@ -562,6 +562,7 @@ class MCPToolkitService:
             "mcp_config_id": mcp_server.mcp_config_id,
             "mcp_resource_url": server_config.url,
             "www_authenticate_header": www_authenticate,
+            "allow_issuer_prefix_match": server_config.allow_issuer_prefix_match,
         }
 
     @classmethod

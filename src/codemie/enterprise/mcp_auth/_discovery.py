@@ -203,6 +203,7 @@ async def _resolve_discovered_candidate_payload(
                 enforce_https=deps._mcp_auth_service.config.enforce_https,
             ),
             dcr_timeout_seconds=deps._mcp_auth_service.config.dcr_registration_timeout_seconds,
+            allow_issuer_prefix_match=bool(candidate.get("allow_issuer_prefix_match")),
         )
         deps._require_initialized_discovered_flow_store().store(resolution.snapshot)
     except MCPAuthRedisUnavailable as exc:

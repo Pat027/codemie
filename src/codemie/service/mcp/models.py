@@ -185,6 +185,13 @@ class MCPServerConfig(BaseModel):
         repr=False,
         description="Local-only catalog MCP config display name for auth-required payloads.",
     )
+    allow_issuer_prefix_match: bool = Field(
+        default=False,
+        repr=False,
+        description="When True, accepts an Authorization Server whose metadata returns a base issuer URL "
+        "that is a URL prefix of the tenant-specific discovery URL (e.g. Atlassian Rovo). "
+        "Only takes effect when auth_config is absent and OAuth2 auto-discovery is used.",
+    )
     bucket_key: str | None = Field(
         None,
         exclude=True,

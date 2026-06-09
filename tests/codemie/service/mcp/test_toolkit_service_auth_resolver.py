@@ -2226,3 +2226,46 @@ def test_get_mcp_server_tools_isolates_auth_required_payload_context(
     assert len(failures) == 1
     assert failures[0]["mcp_server_name"] == "oauth-server"
     assert "initiate_url" not in failures[0]
+
+
+def test_build_discovery_candidate_includes_allow_issuer_prefix_match_true() -> None:
+    server = MCPServerDetails(
+        name="atlassian-rovo",
+        enabled=True,
+        mcp_config_id="mcp-rovo",
+        config=MCPServerConfig(
+            url="https://api.atlassian.com/ex/rovo/mcp",
+            allow_issuer_prefix_match=True,
+        ),
+    )
+    http_error = _http_status_error(
+        401,
+        www_authenticate='Bearer resource_metadata="https://api.atlassian.com/.well-known/oauth-protected-resource"',
+    )
+    exc = MCPToolLoadException("atlassian-rovo", http_error)
+    exc.__cause__ = http_error
+
+    candidate = MCPToolkitService._build_discovery_candidate_from_challenge(server, exc)
+
+    assert candidate is not None
+    assert candidate["allow_issuer_prefix_match"] is True
+
+
+def test_build_discovery_candidate_defaults_allow_issuer_prefix_match_false() -> None:
+    server = MCPServerDetails(
+        name="default-server",
+        enabled=True,
+        mcp_config_id="mcp-default",
+        config=MCPServerConfig(url="https://mcp.example.com/api"),
+    )
+    http_error = _http_status_error(
+        401,
+        www_authenticate='Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"',
+    )
+    exc = MCPToolLoadException("default-server", http_error)
+    exc.__cause__ = http_error
+
+    candidate = MCPToolkitService._build_discovery_candidate_from_challenge(server, exc)
+
+    assert candidate is not None
+    assert candidate["allow_issuer_prefix_match"] is False
