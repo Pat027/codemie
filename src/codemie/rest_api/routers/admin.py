@@ -14,7 +14,7 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, status, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, status, Depends, BackgroundTasks
 
 from codemie.configs import config
 from codemie.core.models import (
@@ -162,6 +162,60 @@ async def reindex_marketplace_assistants(
     background_tasks.add_task(reindex_task)
 
     return BaseResponse(message="Marketplace assistants reindexing started in background. Check logs for progress.")
+
+
+@router.post(
+    "/admin/spend-tracking/collect",
+    status_code=status.HTTP_200_OK,
+    response_model=BaseResponseWithData,
+)
+async def trigger_spend_collection(admin: User = Depends(authenticate)):
+    from codemie.repository.application_repository import ApplicationRepository
+    from codemie.repository.project_spend_tracking_repository import ProjectSpendTrackingRepository
+    from codemie.service.spend_tracking.spend_collector_service import LiteLLMSpendCollectorService
+
+    if not config.LITELLM_SPEND_COLLECTOR_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Spend collection is disabled (LITELLM_SPEND_COLLECTOR_ENABLED=False)",
+        )
+    if not config.LLM_PROXY_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Spend collection requires the LiteLLM proxy (LLM_PROXY_ENABLED=False)",
+        )
+
+    logger.info(
+        "Spend collection triggered by admin",
+        extra={"admin_id": admin.id, "admin_name": admin.name},
+    )
+
+    service = LiteLLMSpendCollectorService(
+        app_repository=ApplicationRepository(),
+        tracking_repository=ProjectSpendTrackingRepository(),
+    )
+    try:
+        rows_inserted = await service.collect()
+    except Exception as e:
+        logger.error(
+            "Spend collection failed",
+            exc_info=True,
+            extra={"admin_id": admin.id},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Spend collection failed: {e}",
+        )
+
+    logger.info(
+        "Spend collection completed",
+        extra={"admin_id": admin.id, "rows_inserted": rows_inserted},
+    )
+
+    return BaseResponseWithData(
+        message="Spend collection completed",
+        data={"rows_inserted": rows_inserted},
+    )
 
 
 @router.get(
