@@ -16,18 +16,16 @@
 
 import time
 
-from fastapi import status
 
 from codemie.configs import logger
 from codemie.configs.logger import set_logging_info
-from codemie.core.exceptions import ExtendedHTTPException
 from codemie.core.models import CreatedByUser
 from codemie.core.otel_tracing import propagated_span, record_exception_on_span
 from codemie.datasource.callback.datasource_monitoring_callback import DatasourceMonitoringCallback
 from codemie.datasource.file.file_datasource_processor import FILE_PATH_DATA_NT, FileDatasourceProcessor
 from codemie.datasource.loader.base_datasource_loader import BaseDatasourceLoader
 from codemie.datasource.loader.file_loader import FilesDatasourceLoader
-from codemie.rest_api.models.index import GuardrailBlockedException, IndexDeletedException, IndexInfo
+from codemie.rest_api.models.index import GuardrailBlockedException, IndexDeletedException
 from codemie.rest_api.utils.default_applications import ensure_application_exists
 
 
@@ -59,28 +57,6 @@ class FileDatasourceUpdateProcessor(FileDatasourceProcessor):
         self.removed_files = removed_files
         super().__init__(*args, **kwargs)
         self.updated_by = CreatedByUser(id=self.user.id, username=self.user.username, name=self.user.name)
-
-    @staticmethod
-    def validate_can_update(index: IndexInfo) -> None:
-        """Raise 409 if the datasource is currently being indexed or fetched.
-
-        State semantics:
-          - ``error=True``       → indexing completed with an error    (allow all changes)
-          - ``completed=True``   → indexing completed successfully      (allow all changes)
-          - not error and not completed → indexing in progress          (block all changes)
-          - ``is_fetching=True`` → fetching remote stats in progress    (block all changes)
-        """
-        is_in_progress = (not index.error and not index.completed) or bool(index.is_fetching)
-        if is_in_progress:
-            raise ExtendedHTTPException(
-                code=status.HTTP_409_CONFLICT,
-                message="Indexing or fetching is in progress.",
-                details=(
-                    "Updates are not allowed while indexing or fetching is in progress. "
-                    "Wait for the current indexing run to complete or fail before making changes."
-                ),
-                help="Check the datasource status and retry once indexing has finished.",
-            )
 
     def init_index(self) -> None:
         """Update metadata on the existing IndexInfo record.
@@ -336,8 +312,7 @@ class FileDatasourceUpdateProcessor(FileDatasourceProcessor):
             )
         except Exception as e:
             logger.error(
-                f"FileDatasourceUpdateProcessor. Failed to delete removed files from ES index "
-                f"'{self._index_name}': {e}"
+                f"FileDatasourceUpdateProcessor. Failed to delete removed files from ES index '{self._index_name}': {e}"
             )
 
     def _load_es_chunks_count(self) -> int:

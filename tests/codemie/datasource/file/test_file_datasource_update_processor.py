@@ -13,12 +13,10 @@
 # limitations under the License.
 
 import pytest
-from fastapi import status
 from unittest.mock import MagicMock, patch
 
 from codemie.datasource.file.file_datasource_update_processor import FileDatasourceUpdateProcessor
 from codemie.datasource.file.file_datasource_processor import FILE_PATH_DATA_NT
-from codemie.core.exceptions import ExtendedHTTPException
 from codemie.rest_api.models.index import GuardrailBlockedException, IndexDeletedException, IndexInfo
 from codemie.rest_api.security.user import User
 
@@ -262,45 +260,6 @@ class TestBackgroundPathsNoInitIndex:
             proc.reprocess()
 
         proc.init_index.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# validate_can_update
-# ---------------------------------------------------------------------------
-
-
-class TestValidateCanUpdate:
-    def test_raises_409_when_not_error_and_not_completed(self):
-        index = MagicMock(spec=IndexInfo)
-        index.error = False
-        index.completed = False
-        index.is_fetching = False
-        with pytest.raises(ExtendedHTTPException) as exc_info:
-            FileDatasourceUpdateProcessor.validate_can_update(index)
-        assert exc_info.value.code == status.HTTP_409_CONFLICT
-
-    def test_raises_409_when_is_fetching_is_true(self):
-        index = MagicMock(spec=IndexInfo)
-        index.error = True
-        index.completed = False
-        index.is_fetching = True
-        with pytest.raises(ExtendedHTTPException) as exc_info:
-            FileDatasourceUpdateProcessor.validate_can_update(index)
-        assert exc_info.value.code == status.HTTP_409_CONFLICT
-
-    def test_allows_update_when_completed(self):
-        index = MagicMock(spec=IndexInfo)
-        index.error = False
-        index.completed = True
-        index.is_fetching = False
-        FileDatasourceUpdateProcessor.validate_can_update(index)  # must not raise
-
-    def test_allows_update_when_error(self):
-        index = MagicMock(spec=IndexInfo)
-        index.error = True
-        index.completed = False
-        index.is_fetching = False
-        FileDatasourceUpdateProcessor.validate_can_update(index)  # must not raise
 
 
 # ---------------------------------------------------------------------------

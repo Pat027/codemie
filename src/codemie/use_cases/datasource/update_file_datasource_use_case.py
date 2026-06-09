@@ -17,8 +17,9 @@
 from __future__ import annotations
 
 from codemie.core.ability import Ability, Action
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, status
 
+from codemie.core.exceptions import ExtendedHTTPException
 from codemie.core.models import BaseResponse
 from codemie.datasource.file.file_datasource_update_processor import FileDatasourceUpdateProcessor
 from codemie.rest_api.models.index import UpdateKnowledgeBaseFileRequest
@@ -26,6 +27,8 @@ from codemie.rest_api.security.user import User
 from codemie.service.datasource.file_datasource_service import FileDatasourceService
 
 _EDIT_SUCCESSFUL = "Edit successful"
+_ACCESS_DENIED_MESSAGE = "Access denied"
+_CHECK_PERMISSIONS_MESSAGE = "Please check your user permissions or contact an administrator for assistance."
 
 
 class UpdateFileDatasourceUseCase:
@@ -54,7 +57,13 @@ class UpdateFileDatasourceUseCase:
         # 1. Resolve the datasource record.
         index = self._service.find_or_raise(request.project_name, request.name)
 
-        Ability(user).can(Action.WRITE, index)
+        if not Ability(user).can(Action.WRITE, index):
+            raise ExtendedHTTPException(
+                code=status.HTTP_403_FORBIDDEN,
+                message=_ACCESS_DENIED_MESSAGE,
+                details=f"You don't have permission to update the index '{request.name}'.",
+                help=_CHECK_PERMISSIONS_MESSAGE,
+            )
 
         # 2. Parse request parameters that require deserialization.
         uploaded_files_to_keep = self._service.parse_uploaded_files(request.uploaded_files, index)
@@ -65,7 +74,6 @@ class UpdateFileDatasourceUseCase:
 
         # 4. Business validations.
         self._service.validate_project_change(request.new_project_name, request.project_name, request.name, user)
-        FileDatasourceUpdateProcessor.validate_can_update(index)
 
         # 5a. Metadata-only path — no background task needed.
         if not changes.has_file_changes:

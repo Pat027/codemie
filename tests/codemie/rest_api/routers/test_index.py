@@ -208,27 +208,6 @@ async def test_index_deletion_no_permissions(mock_get_index_info, mock_can, auth
 
 
 @pytest.mark.asyncio
-@patch('codemie.core.ability.Ability.can')
-@patch('codemie.rest_api.models.index.IndexInfo.get_by_id')
-async def test_index_deletion_in_progress(mock_get_index_info, mock_can, auth_headers):
-    mock_index_info = MagicMock()
-    mock_index_info.repo_name = "test_index"
-    mock_index_info.id = 1
-    mock_index_info.error = None
-    mock_index_info.completed = False
-    mock_index_info.is_fetching = True
-
-    mock_get_index_info.return_value = mock_index_info
-    mock_can.return_value = True
-
-    with pytest.raises(ExtendedHTTPException) as e:
-        client.delete(f"/v1/index/{mock_index_info.id}", headers=auth_headers)
-
-    assert e.value.code == 409
-    assert e.value.message == "Indexing or fetching is in progress."
-
-
-@pytest.mark.asyncio
 @patch('codemie.service.index.index_service.IndexStatusService.get_users')
 async def test_index_users(mock_get_users, auth_headers):
     mock_get_users.return_value = {"users": [CreatedByUser(id="user1", username="User One", name="User One")]}

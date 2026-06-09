@@ -78,8 +78,7 @@ class TestExecuteMetadataOnlyPath:
         mock_changes.has_file_changes = False
         mock_service.compute_file_changes.return_value = mock_changes
 
-        with patch(f"{_PROCESSOR_PATH}.validate_can_update"):
-            result = use_case.execute(mock_request, mock_user, BackgroundTasks(), "req-uuid")
+        result = use_case.execute(mock_request, mock_user, BackgroundTasks(), "req-uuid")
 
         assert result.message == "Edit successful"
 
@@ -88,8 +87,7 @@ class TestExecuteMetadataOnlyPath:
         mock_changes.has_file_changes = False
         mock_service.compute_file_changes.return_value = mock_changes
 
-        with patch(f"{_PROCESSOR_PATH}.validate_can_update"):
-            use_case.execute(mock_request, mock_user, BackgroundTasks(), "req-uuid")
+        use_case.execute(mock_request, mock_user, BackgroundTasks(), "req-uuid")
 
         mock_service.update_metadata_only.assert_called_once()
 
@@ -98,8 +96,7 @@ class TestExecuteMetadataOnlyPath:
         mock_changes.has_file_changes = False
         mock_service.compute_file_changes.return_value = mock_changes
 
-        with patch(f"{_PROCESSOR_PATH}.validate_can_update"):
-            use_case.execute(mock_request, mock_user, BackgroundTasks(), "req-uuid")
+        use_case.execute(mock_request, mock_user, BackgroundTasks(), "req-uuid")
 
         mock_service.find_or_raise.assert_called_once_with(mock_request.project_name, mock_request.name)
         mock_service.parse_uploaded_files.assert_called_once()
@@ -112,8 +109,7 @@ class TestExecuteMetadataOnlyPath:
         mock_changes.has_file_changes = False
         mock_service.compute_file_changes.return_value = mock_changes
 
-        with patch(f"{_PROCESSOR_PATH}.validate_can_update"):
-            use_case.execute(mock_request, mock_user, BackgroundTasks(), "req-uuid")
+        use_case.execute(mock_request, mock_user, BackgroundTasks(), "req-uuid")
 
         mock_service.upload_and_prepare_files.assert_not_called()
 
@@ -143,10 +139,7 @@ class TestExecuteFileChangesPath:
         mock_processor = MagicMock()
         mock_processor.started_message = "Indexing has started"
 
-        with (
-            patch(f"{_PROCESSOR_PATH}.validate_can_update"),
-            patch(_PROCESSOR_PATH, return_value=mock_processor),
-        ):
+        with patch(_PROCESSOR_PATH, return_value=mock_processor):
             result = use_case.execute(mock_request, mock_user, BackgroundTasks(), "req-uuid")
 
         assert result.message == "Indexing has started"
@@ -157,10 +150,7 @@ class TestExecuteFileChangesPath:
         mock_processor = MagicMock()
         mock_processor.started_message = "started"
 
-        with (
-            patch(f"{_PROCESSOR_PATH}.validate_can_update"),
-            patch(_PROCESSOR_PATH, return_value=mock_processor),
-        ):
+        with patch(_PROCESSOR_PATH, return_value=mock_processor):
             use_case.execute(mock_request, mock_user, BackgroundTasks(), "req-uuid")
 
         mock_processor.init_index.assert_called_once()
@@ -172,10 +162,7 @@ class TestExecuteFileChangesPath:
         mock_processor = MagicMock()
         mock_processor.started_message = "started"
 
-        with (
-            patch(f"{_PROCESSOR_PATH}.validate_can_update"),
-            patch(_PROCESSOR_PATH, return_value=mock_processor),
-        ):
+        with patch(_PROCESSOR_PATH, return_value=mock_processor):
             use_case.execute(mock_request, mock_user, BackgroundTasks(), "req-uuid")
 
         mock_service.upload_and_prepare_files.assert_called_once()
@@ -200,26 +187,14 @@ class TestExecuteErrorPropagation:
 
         assert exc_info.value.code == status.HTTP_404_NOT_FOUND
 
-    def test_propagates_409_from_validate_can_update(self, use_case, mock_service, mock_request, mock_user):
-        mock_changes = MagicMock()
-        mock_changes.has_file_changes = False
-        mock_service.compute_file_changes.return_value = mock_changes
+    def test_raises_403_when_ability_denies_write(self, use_case, mock_service, mock_request, mock_user):
+        with patch("codemie.use_cases.datasource.update_file_datasource_use_case.Ability") as mock_ability_cls:
+            mock_ability_cls.return_value.can.return_value = False
 
-        with (
-            patch(
-                f"{_PROCESSOR_PATH}.validate_can_update",
-                side_effect=ExtendedHTTPException(
-                    code=status.HTTP_409_CONFLICT,
-                    message="Indexing in progress",
-                    details="...",
-                    help="...",
-                ),
-            ),
-            pytest.raises(ExtendedHTTPException) as exc_info,
-        ):
-            use_case.execute(mock_request, mock_user, BackgroundTasks(), "req-uuid")
+            with pytest.raises(ExtendedHTTPException) as exc_info:
+                use_case.execute(mock_request, mock_user, BackgroundTasks(), "req-uuid")
 
-        assert exc_info.value.code == status.HTTP_409_CONFLICT
+        assert exc_info.value.code == status.HTTP_403_FORBIDDEN
 
     def test_propagates_403_from_validate_project_change(self, use_case, mock_service, mock_request, mock_user):
         mock_changes = MagicMock()
@@ -232,10 +207,7 @@ class TestExecuteErrorPropagation:
             help="...",
         )
 
-        with (
-            patch(f"{_PROCESSOR_PATH}.validate_can_update"),
-            pytest.raises(ExtendedHTTPException) as exc_info,
-        ):
+        with pytest.raises(ExtendedHTTPException) as exc_info:
             use_case.execute(mock_request, mock_user, BackgroundTasks(), "req-uuid")
 
         assert exc_info.value.code == status.HTTP_403_FORBIDDEN

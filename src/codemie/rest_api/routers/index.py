@@ -416,19 +416,6 @@ def delete_index(request: Request, index_id: str, user: User = Depends(authentic
             help=CHECK_PERMISSIONS_MESSAGE,
         )
 
-    is_in_progress = (not index.error and not index.completed) or bool(index.is_fetching)
-
-    if is_in_progress:
-        raise ExtendedHTTPException(
-            code=status.HTTP_409_CONFLICT,
-            message="Indexing or fetching is in progress.",
-            details=(
-                "Deletion is not allowed while indexing or fetching is in progress. "
-                "Wait for the current indexing run to complete or fail before deleting."
-            ),
-            help="Check the datasource status and retry once indexing has finished.",
-        )
-
     try:
         if index.index_type == PROVIDER_INDEX_TYPE:
             ProviderDatasourceDeletionService(datasource=index, user=user).run()
