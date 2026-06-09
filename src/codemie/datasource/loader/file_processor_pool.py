@@ -22,6 +22,7 @@ from typing import Any, Callable, Optional
 
 from codemie.configs import logger
 from codemie.configs import config
+from codemie.configs.pyroscope_config import configure_pyroscope
 # from codemie.core.exceptions import CodeMieException
 
 
@@ -62,7 +63,12 @@ class FileProcessPoolManager:
 
         if max_tasks_per_child < 0:
             max_tasks_per_child = None
-        cls._executor = ProcessPoolExecutor(max_workers=max_workers, max_tasks_per_child=max_tasks_per_child)
+        cls._executor = ProcessPoolExecutor(
+            max_workers=max_workers,
+            max_tasks_per_child=max_tasks_per_child,
+            initializer=configure_pyroscope,
+            initargs=({"process_type": "subprocess", "process_pool": cls.__name__},),
+        )
         cls._initialized = True
 
         # Register shutdown on exit

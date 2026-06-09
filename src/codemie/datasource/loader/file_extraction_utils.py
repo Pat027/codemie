@@ -36,6 +36,7 @@ from langchain_markitdown import (
 )
 
 from codemie.configs import logger
+from codemie.configs.pyroscope_config import pyroscope_profile
 from codemie.core.utils import get_file_extension
 from codemie.datasource.datasource_file_storage import DatasourceFileStorage
 from codemie.datasource.loader.binary.image_loader import ImageLoader
@@ -106,6 +107,12 @@ def is_binary_extractable(file_path: str) -> bool:
 _EMAIL_EXTENSIONS = {IndexKnowledgeBaseFileTypes.MSG.value, IndexKnowledgeBaseFileTypes.EML.value}
 
 
+@pyroscope_profile(
+    lambda file_bytes, file_name, *a, **kw: {
+        "operation": "file_extraction",
+        "file_ext": file_name.rsplit(".", 1)[-1] if "." in file_name else "unknown",
+    }
+)
 def extract_documents_from_bytes(
     file_bytes: bytes,
     file_name: str,

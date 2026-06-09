@@ -18,6 +18,7 @@ import functools
 import inspect
 import json
 import logging
+import multiprocessing
 import os
 import socket
 from collections.abc import Callable
@@ -28,7 +29,7 @@ from codemie.configs.config import config
 logger = logging.getLogger(__name__)
 
 
-def configure_pyroscope() -> None:
+def configure_pyroscope(additional_tags: dict[str, str] | None = None) -> None:
     """Initialize Grafana Pyroscope continuous CPU profiling.
 
     When PYROSCOPE_ENABLED=False this is a no-op.  Automatically enriches
@@ -54,6 +55,9 @@ def configure_pyroscope() -> None:
         return
 
     tags = _build_tags()
+
+    if additional_tags:
+        tags.update(additional_tags)
 
     pyroscope.configure(
         application_name=config.PYROSCOPE_APP_NAME,
@@ -130,6 +134,7 @@ def _build_tags() -> dict[str, str]:
         "env": config.ENV,
         "version": config.APP_VERSION,
         "hostname": os.environ.get("POD_NAME") or socket.gethostname(),
+        "process_name": multiprocessing.current_process().name,
     }
     namespace = os.environ.get("POD_NAMESPACE")
     if namespace:
