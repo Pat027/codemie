@@ -1,0 +1,7 @@
+extraEnv: []
+customEnv:
+  - name: PROMETHEUS_METRICS_PORT
+    value: "8888"
+metrics:
+  enabled: true
+  port: 9091

@@ -1,0 +1,90 @@
+suite: codemie.metrics
+templates:
+  - templates/deployment.yaml
+values:
+  - ../values.yaml
+
+tests:
+  - it: metrics disabled - no metrics port exposed
+    values:
+      - values/metrics_disabled.yaml
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.containers[0].ports
+          count: 1
+      - notContains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: metrics
+
+  - it: metrics disabled - no PROMETHEUS env vars injected
+    values:
+      - values/metrics_disabled.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROMETHEUS_ENABLED
+            value: "true"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROMETHEUS_METRICS_PORT
+            value: "9091"
+
+  - it: metrics enabled - metrics containerPort added
+    values:
+      - values/metrics_enabled.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: metrics
+            containerPort: 9091
+            protocol: TCP
+
+  - it: metrics enabled - PROMETHEUS_ENABLED and PROMETHEUS_METRICS_PORT injected
+    values:
+      - values/metrics_enabled.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROMETHEUS_ENABLED
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROMETHEUS_METRICS_PORT
+            value: "9091"
+
+  - it: metrics enabled - customEnv overrides PROMETHEUS_METRICS_PORT (user wins)
+    values:
+      - values/metrics_user_override.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROMETHEUS_METRICS_PORT
+            value: "8888"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROMETHEUS_METRICS_PORT
+            value: "9091"
+
+  - it: metrics enabled with custom port - containerPort and env var use custom port
+    values:
+      - values/metrics_custom_port.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: metrics
+            containerPort: 9999
+            protocol: TCP
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PROMETHEUS_METRICS_PORT
+            value: "9999"

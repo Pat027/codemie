@@ -52,6 +52,11 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+            {{- if .Values.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+            {{- end }}
           startupProbe:
             {{- toYaml .Values.startupProbe | nindent 12 }}
           livenessProbe:
@@ -68,7 +73,8 @@ spec:
                 secretKeyRef:
                   name: {{ include "codemie.processAuthSecretName" . }}
                   key: {{ include "codemie.processAuthSecretField" . }}
-            {{- include "codemie.mergeEnvLists" (list .Values.extraEnv .Values.customEnv) | nindent 12 }}
+            {{- $metricsEnv := include "codemie.metrics.envList" . | fromYamlArray -}}
+            {{- include "codemie.mergeEnvLists" (list $metricsEnv .Values.extraEnv .Values.customEnv) | nindent 12 }}
           volumeMounts:
             {{- with .Values.extraVolumeMounts }}
             {{- tpl . $ | nindent 12 }}

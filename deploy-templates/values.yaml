@@ -249,6 +249,13 @@ service:
   # -- AI/Run API service annotations
   annotations: {}
 
+# -- Prometheus metrics server configuration
+metrics:
+  # -- Enable Prometheus metrics scraping endpoint
+  enabled: false
+  # -- The port the metrics server listens on
+  port: 9091
+
 ## AI/Run API ingress configuration
 ingress:
   # -- Enable an ingress resource for the AI/Run API

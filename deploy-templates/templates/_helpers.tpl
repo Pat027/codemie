@@ -121,6 +121,19 @@ Example:
   env:
     {{- include "codemie.mergeEnvLists" (list .Values.baseEnv .Values.extraEnv) | nindent 4 }}
 */}}
+{{/*
+Metrics env vars list when metrics.enabled is true.
+Returns a YAML array parsed by callers via fromYamlArray.
+*/}}
+{{- define "codemie.metrics.envList" -}}
+{{- if .Values.metrics.enabled }}
+- name: PROMETHEUS_ENABLED
+  value: "true"
+- name: PROMETHEUS_METRICS_PORT
+  value: {{ .Values.metrics.port | quote }}
+{{- end }}
+{{- end }}
+
 {{- define "codemie.mergeEnvLists" -}}
 {{- $index := dict -}}
 {{- $order := list -}}

@@ -75,6 +75,9 @@ A Helm chart for AI/Run API
 | livenessProbe.periodSeconds | int | `30` | How often (in seconds) to perform the probe |
 | livenessProbe.successThreshold | int | `1` | Minimum consecutive successes for the probe to be considered successful after having failed |
 | livenessProbe.timeoutSeconds | int | `1` | Number of seconds after which the probe times out |
+| metrics | object | `{"enabled":false,"port":9091}` | Prometheus metrics server configuration |
+| metrics.enabled | bool | `false` | Enable Prometheus metrics scraping endpoint |
+| metrics.port | int | `9091` | The port the metrics server listens on |
 | nameOverride | string | `""` |  |
 | nodeSelector | object | `{}` | Node selector to be added to the AI/Run API pods |
 | podAnnotations | object | `{}` | Annotations to be added to AI/Run API pods |
