@@ -408,6 +408,21 @@ def _setup_leaderboard_scheduler(app: FastAPI):
     logger.info("Leaderboard scheduler started successfully")
 
 
+def _setup_stale_datasource_scheduler(app: FastAPI):
+    """Setup stale datasource detection scheduler if enabled."""
+    if not config.STALE_DATASOURCE_ENABLED:
+        return
+
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from codemie.service.stale_datasource.scheduler import StaleDatasourceScheduler
+
+    stale_datasource_scheduler_instance = AsyncIOScheduler()
+    stale_datasource_scheduler = StaleDatasourceScheduler(scheduler=stale_datasource_scheduler_instance)
+    stale_datasource_scheduler.start()
+    app.state.stale_datasource_scheduler = stale_datasource_scheduler
+    logger.info("Stale datasource scheduler started successfully")
+
+
 def _initialize_jwt_keys():
     """Auto-generate RSA keys for local auth if not present (EPMCDME-10160)"""
     if config.IDP_PROVIDER == "local" and config.ENABLE_USER_MANAGEMENT:
@@ -494,6 +509,11 @@ async def _shutdown_services(app: FastAPI, tasks: list):
     if leaderboard_scheduler is not None:
         leaderboard_scheduler.stop()
         logger.info("Leaderboard scheduler shutdown complete")
+
+    stale_datasource_scheduler = getattr(app.state, 'stale_datasource_scheduler', None)
+    if stale_datasource_scheduler is not None:
+        stale_datasource_scheduler.stop()
+        logger.info("Stale datasource scheduler shutdown complete")
 
     await close_llm_proxy_client()
     logger.info("LLM Proxy HTTP client closed")
@@ -613,6 +633,7 @@ async def lifespan(app: FastAPI):
     _setup_conversation_analysis_scheduler(app)
     _setup_spend_tracking_scheduler(app)
     _setup_leaderboard_scheduler(app)
+    _setup_stale_datasource_scheduler(app)
     _schedule_budget_reconciliation(app, tasks)
 
     yield

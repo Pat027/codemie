@@ -36,6 +36,7 @@ from codemie.service.constants import FullDatasourceTypes
 from codemie.service.llm_service.llm_service import llm_service
 from sqlmodel import Field as SQLField, Session, select, Column, and_, or_, Index, text as sqltext
 from sqlalchemy import update as sa_update
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.mutable import MutableList
 from sqlalchemy.orm.exc import StaleDataError
@@ -75,6 +76,12 @@ class IndexInfoStatus(str, Enum):
 
 class IndexInfoType(str, Enum):
     KB_BEDROCK = "knowledge_base_bedrock"
+
+
+class LifecycleState(str, Enum):
+    ACTIVE = "ACTIVE"
+    STALE = "STALE"
+    ARCHIVED = "ARCHIVED"
 
 
 class IndexTypeByContextTypeMapping(Enum):
@@ -298,6 +305,26 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
             "If True, uses legacy ES index naming (repo_name only) "
             "for backward compatibility with pre-EPMCDME-10809 datasources"
         ),
+    )
+    lifecycle_state: str = SQLField(
+        default=LifecycleState.ACTIVE,
+        sa_column=Column(
+            SAEnum(LifecycleState, native_enum=True, name="lifecyclestate"),
+            nullable=False,
+            default=LifecycleState.ACTIVE,
+            index=True,
+        ),
+        description=(
+            "Lifecycle state of the datasource: "
+            "'active' (default, in use), "
+            "'stale' (unused beyond threshold), "
+            "'archived' (marked for deletion)"
+        ),
+    )
+    marked_stale_at: Optional[datetime] = SQLField(
+        default=None,
+        index=True,
+        description="Timestamp when datasource was marked as stale (for traceability and reporting)",
     )
     # Custom PostgreSQL indexes
 

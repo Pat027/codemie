@@ -20,14 +20,12 @@ for multi-pod safety.
 
 from __future__ import annotations
 
-import asyncio
-
 from apscheduler.triggers.cron import CronTrigger
 
 from codemie.clients.postgres import get_async_session
 from codemie.configs import config, logger
 from codemie.repository.metrics_elastic_repository import MetricsElasticRepository
-from codemie.service.conversation_analysis.leader_lock import LeaderLockContext
+from codemie.utils.leader_lock import async_leader_lock
 from codemie.service.leaderboard.config import LEADERBOARD_LOCK_ID
 from codemie.service.leaderboard.leaderboard_service import LeaderboardService
 
@@ -78,41 +76,24 @@ class LeaderboardScheduler:
 
     async def _run_leaderboard_computation(self) -> None:
         """Nightly job with leader lock for multi-pod safety."""
-        lock = await asyncio.to_thread(self._acquire_leader_lock)
-        if lock is None:
-            return
+        async with async_leader_lock(LEADERBOARD_LOCK_ID) as acquired:
+            if not acquired:
+                logger.info("Leaderboard computation: not the leader, skipping")
+                return
 
-        try:
-            async with get_async_session() as session:
-                service = LeaderboardService(session, MetricsElasticRepository())
-                rolling_snapshot_id = await service.compute_rolling_snapshot(
-                    period_days=config.LEADERBOARD_PERIOD_DAYS,
-                )
-                archived_snapshot_ids = await service.compute_missing_archives()
-                logger.info(
-                    f"Leaderboard computation completed: rolling_snapshot_id={rolling_snapshot_id}, "
-                    f"archived_snapshot_ids={archived_snapshot_ids}"
-                )
-        except Exception as e:
-            logger.error(f"Leaderboard computation failed: {e}", exc_info=True)
-        finally:
-            await asyncio.to_thread(self._release_leader_lock, lock)
-
-    @staticmethod
-    def _acquire_leader_lock() -> LeaderLockContext | None:
-        """Acquire the leader lock synchronously (run via to_thread)."""
-        lock = LeaderLockContext(lock_id=LEADERBOARD_LOCK_ID)
-        lock.__enter__()
-        if not lock.acquired:
-            logger.info("Leaderboard computation: not the leader, skipping")
-            lock.__exit__(None, None, None)
-            return None
-        return lock
-
-    @staticmethod
-    def _release_leader_lock(lock: LeaderLockContext) -> None:
-        """Release the leader lock synchronously (run via to_thread)."""
-        lock.__exit__(None, None, None)
+            try:
+                async with get_async_session() as session:
+                    service = LeaderboardService(session, MetricsElasticRepository())
+                    rolling_snapshot_id = await service.compute_rolling_snapshot(
+                        period_days=config.LEADERBOARD_PERIOD_DAYS,
+                    )
+                    archived_snapshot_ids = await service.compute_missing_archives()
+                    logger.info(
+                        f"Leaderboard computation completed: rolling_snapshot_id={rolling_snapshot_id}, "
+                        f"archived_snapshot_ids={archived_snapshot_ids}"
+                    )
+            except Exception as e:
+                logger.error(f"Leaderboard computation failed: {e}", exc_info=True)
 
     def stop(self) -> None:
         if self.scheduler.running:

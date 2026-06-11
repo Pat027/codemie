@@ -20,6 +20,9 @@ using PostgreSQL advisory locks in a connection pooling environment.
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
+
 from sqlalchemy import text
 from sqlmodel import Session
 
@@ -179,3 +182,25 @@ class LeaderLockContext:
                 logger.error(f"Error closing connection: {e}")
             finally:
                 self._connection = None
+
+
+@asynccontextmanager
+async def async_leader_lock(lock_id: int):
+    """Async wrapper around LeaderLockContext for use in asyncio code.
+
+    Yields True if this process acquired the advisory lock, False otherwise.
+    The sync acquire/release calls are dispatched via asyncio.to_thread so
+    the event loop is never blocked on database I/O.
+
+    Usage:
+        async with async_leader_lock(MY_LOCK_ID) as acquired:
+            if not acquired:
+                return
+            # Do leader work here
+    """
+    lock = LeaderLockContext(lock_id=lock_id)
+    await asyncio.to_thread(lock.__enter__)
+    try:
+        yield lock.acquired
+    finally:
+        await asyncio.to_thread(lock.__exit__, None, None, None)

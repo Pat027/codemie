@@ -35,7 +35,7 @@ from codemie.rest_api.models.conversation import Conversation
 from codemie.service.conversation_analysis.conversation_analytics_elasticsearch_service import (
     ConversationAnalyticsElasticsearchService,
 )
-from codemie.service.conversation_analysis.leader_lock import LeaderLockContext
+from codemie.utils.leader_lock import LeaderLockContext
 from codemie.rest_api.models.conversation_analysis import (
     ConversationAnalytics,
     AssistantUsed,

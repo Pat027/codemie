@@ -21,7 +21,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from codemie.service.conversation_analysis.leader_lock import LeaderLockContext
+from codemie.utils.leader_lock import LeaderLockContext
 
 
 class TestLeaderLockContext:
@@ -29,7 +29,7 @@ class TestLeaderLockContext:
 
     def test_lock_acquisition_success(self):
         """Test successful lock acquisition when lock is available."""
-        with patch("codemie.service.conversation_analysis.leader_lock.PostgresClient") as mock_client:
+        with patch("codemie.utils.leader_lock.PostgresClient") as mock_client:
             # Setup mocks
             mock_engine = Mock()
             mock_connection = Mock()
@@ -40,7 +40,7 @@ class TestLeaderLockContext:
             mock_engine.connect.return_value = mock_connection
             mock_client.get_engine.return_value = mock_engine
 
-            with patch("codemie.service.conversation_analysis.leader_lock.Session") as mock_session_class:
+            with patch("codemie.utils.leader_lock.Session") as mock_session_class:
                 mock_session_class.return_value = mock_session
                 mock_session.execute.return_value = mock_result
 
@@ -64,7 +64,7 @@ class TestLeaderLockContext:
 
     def test_lock_acquisition_failure_already_held(self):
         """Test lock acquisition failure when another process holds the lock."""
-        with patch("codemie.service.conversation_analysis.leader_lock.PostgresClient") as mock_client:
+        with patch("codemie.utils.leader_lock.PostgresClient") as mock_client:
             # Setup mocks
             mock_engine = Mock()
             mock_connection = Mock()
@@ -75,7 +75,7 @@ class TestLeaderLockContext:
             mock_engine.connect.return_value = mock_connection
             mock_client.get_engine.return_value = mock_engine
 
-            with patch("codemie.service.conversation_analysis.leader_lock.Session") as mock_session_class:
+            with patch("codemie.utils.leader_lock.Session") as mock_session_class:
                 mock_session_class.return_value = mock_session
                 mock_session.execute.return_value = mock_result
 
@@ -89,7 +89,7 @@ class TestLeaderLockContext:
 
     def test_lock_release_on_exception(self):
         """Test that lock is released even when exception occurs in context."""
-        with patch("codemie.service.conversation_analysis.leader_lock.PostgresClient") as mock_client:
+        with patch("codemie.utils.leader_lock.PostgresClient") as mock_client:
             # Setup mocks
             mock_engine = Mock()
             mock_connection = Mock()
@@ -100,7 +100,7 @@ class TestLeaderLockContext:
             mock_engine.connect.return_value = mock_connection
             mock_client.get_engine.return_value = mock_engine
 
-            with patch("codemie.service.conversation_analysis.leader_lock.Session") as mock_session_class:
+            with patch("codemie.utils.leader_lock.Session") as mock_session_class:
                 mock_session_class.return_value = mock_session
                 mock_session.execute.return_value = mock_result
 
@@ -118,7 +118,7 @@ class TestLeaderLockContext:
 
     def test_connection_cleanup_on_success(self):
         """Test that connection and session are properly cleaned up."""
-        with patch("codemie.service.conversation_analysis.leader_lock.PostgresClient") as mock_client:
+        with patch("codemie.utils.leader_lock.PostgresClient") as mock_client:
             # Setup mocks
             mock_engine = Mock()
             mock_connection = Mock()
@@ -129,7 +129,7 @@ class TestLeaderLockContext:
             mock_engine.connect.return_value = mock_connection
             mock_client.get_engine.return_value = mock_engine
 
-            with patch("codemie.service.conversation_analysis.leader_lock.Session") as mock_session_class:
+            with patch("codemie.utils.leader_lock.Session") as mock_session_class:
                 mock_session_class.return_value = mock_session
                 mock_session.execute.return_value = mock_result
 
@@ -142,7 +142,7 @@ class TestLeaderLockContext:
 
     def test_default_lock_id(self):
         """Test that default ADVISORY_LOCK_ID is used when no lock_id provided."""
-        with patch("codemie.service.conversation_analysis.leader_lock.PostgresClient") as mock_client:
+        with patch("codemie.utils.leader_lock.PostgresClient") as mock_client:
             # Setup mocks
             mock_engine = Mock()
             mock_connection = Mock()
@@ -153,7 +153,7 @@ class TestLeaderLockContext:
             mock_engine.connect.return_value = mock_connection
             mock_client.get_engine.return_value = mock_engine
 
-            with patch("codemie.service.conversation_analysis.leader_lock.Session") as mock_session_class:
+            with patch("codemie.utils.leader_lock.Session") as mock_session_class:
                 mock_session_class.return_value = mock_session
                 mock_session.execute.return_value = mock_result
 
@@ -164,7 +164,7 @@ class TestLeaderLockContext:
 
     def test_lock_release_returns_false(self):
         """Test warning when lock release returns false (lock wasn't held)."""
-        with patch("codemie.service.conversation_analysis.leader_lock.PostgresClient") as mock_client:
+        with patch("codemie.utils.leader_lock.PostgresClient") as mock_client:
             # Setup mocks
             mock_engine = Mock()
             mock_connection = Mock()
@@ -173,7 +173,7 @@ class TestLeaderLockContext:
             mock_engine.connect.return_value = mock_connection
             mock_client.get_engine.return_value = mock_engine
 
-            with patch("codemie.service.conversation_analysis.leader_lock.Session") as mock_session_class:
+            with patch("codemie.utils.leader_lock.Session") as mock_session_class:
                 mock_session_class.return_value = mock_session
 
                 # Mock acquire returning True, but release returning False
@@ -184,7 +184,7 @@ class TestLeaderLockContext:
 
                 mock_session.execute.side_effect = [mock_acquire_result, mock_release_result]
 
-                with patch("codemie.service.conversation_analysis.leader_lock.logger") as mock_logger:
+                with patch("codemie.utils.leader_lock.logger") as mock_logger:
                     with LeaderLockContext(lock_id=123456):
                         pass
 
@@ -195,7 +195,7 @@ class TestLeaderLockContext:
 
     def test_cleanup_handles_session_close_error(self):
         """Test that cleanup continues even if session.close() fails."""
-        with patch("codemie.service.conversation_analysis.leader_lock.PostgresClient") as mock_client:
+        with patch("codemie.utils.leader_lock.PostgresClient") as mock_client:
             # Setup mocks
             mock_engine = Mock()
             mock_connection = Mock()
@@ -207,11 +207,11 @@ class TestLeaderLockContext:
             mock_engine.connect.return_value = mock_connection
             mock_client.get_engine.return_value = mock_engine
 
-            with patch("codemie.service.conversation_analysis.leader_lock.Session") as mock_session_class:
+            with patch("codemie.utils.leader_lock.Session") as mock_session_class:
                 mock_session_class.return_value = mock_session
                 mock_session.execute.return_value = mock_result
 
-                with patch("codemie.service.conversation_analysis.leader_lock.logger"):
+                with patch("codemie.utils.leader_lock.logger"):
                     with LeaderLockContext(lock_id=123456):
                         pass
 
@@ -220,7 +220,7 @@ class TestLeaderLockContext:
 
     def test_cleanup_handles_connection_close_error(self):
         """Test that cleanup completes even if connection.close() fails."""
-        with patch("codemie.service.conversation_analysis.leader_lock.PostgresClient") as mock_client:
+        with patch("codemie.utils.leader_lock.PostgresClient") as mock_client:
             # Setup mocks
             mock_engine = Mock()
             mock_connection = Mock()
@@ -232,18 +232,18 @@ class TestLeaderLockContext:
             mock_engine.connect.return_value = mock_connection
             mock_client.get_engine.return_value = mock_engine
 
-            with patch("codemie.service.conversation_analysis.leader_lock.Session") as mock_session_class:
+            with patch("codemie.utils.leader_lock.Session") as mock_session_class:
                 mock_session_class.return_value = mock_session
                 mock_session.execute.return_value = mock_result
 
-                with patch("codemie.service.conversation_analysis.leader_lock.logger"):
+                with patch("codemie.utils.leader_lock.logger"):
                     # Should not raise exception
                     with LeaderLockContext(lock_id=123456):
                         pass
 
     def test_acquire_exception_triggers_cleanup(self):
         """Test that cleanup is called if lock acquisition fails with exception."""
-        with patch("codemie.service.conversation_analysis.leader_lock.PostgresClient") as mock_client:
+        with patch("codemie.utils.leader_lock.PostgresClient") as mock_client:
             # Setup mocks
             mock_engine = Mock()
             mock_connection = Mock()
@@ -253,7 +253,7 @@ class TestLeaderLockContext:
             mock_engine.connect.return_value = mock_connection
             mock_client.get_engine.return_value = mock_engine
 
-            with patch("codemie.service.conversation_analysis.leader_lock.Session") as mock_session_class:
+            with patch("codemie.utils.leader_lock.Session") as mock_session_class:
                 mock_session_class.return_value = mock_session
 
                 # Test that exception is raised and cleanup is called

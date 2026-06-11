@@ -16,6 +16,7 @@ import logging
 from pathlib import Path
 from typing import Literal, Self
 
+from apscheduler.triggers.cron import CronTrigger
 from dotenv import find_dotenv, load_dotenv
 from pydantic import BaseModel, model_validator
 from pydantic_settings import SettingsConfigDict, BaseSettings
@@ -695,6 +696,14 @@ class Config(BaseSettings):
     LITELLM_BUDGET_RESET_RECONCILIATION_WINDOW_MINUTES: int = 10  # Allowed midnight UTC execution window
     BUDGET_USAGE_STALENESS_THRESHOLD_MS: int = 600000  # 10 minutes — lazy-refresh threshold for /budget_usage
 
+    # Stale Datasource Detection Configuration
+    STALE_DATASOURCE_ENABLED: bool = False  # Enables nightly stale datasource detection job
+    STALE_DATASOURCE_SCHEDULE: str = "0 3 * * *"  # Cron schedule (UTC) — 3 AM daily
+    STALE_DATASOURCE_NO_USAGE_DAYS: int = 90  # Days without usage metrics to mark datasource as stale
+    STALE_DATASOURCE_NO_UPDATE_DAYS: int = 120  # Days without update (fallback criterion when no usage metrics)
+    STALE_DATASOURCE_GRACE_DAYS: int = 7  # Grace period: newly created datasources are never marked stale
+    STALE_DATASOURCE_BATCH_SIZE: int = 100  # Elasticsearch query batch size for metrics aggregation
+
     model_config = SettingsConfigDict(env_file=find_dotenv(".env", raise_error_if_not_found=False), extra="ignore")
 
     GLOBAL_FALLBACK_MSG: str = "External Service Exception"
@@ -802,6 +811,15 @@ class Config(BaseSettings):
                     "LITELLM_BUDGET_RESET_RECONCILIATION_SCHEDULE must run between 00:00 UTC "
                     "and 00:00 + LITELLM_BUDGET_RESET_RECONCILIATION_WINDOW_MINUTES"
                 )
+
+        if self.STALE_DATASOURCE_ENABLED:
+            try:
+                CronTrigger.from_crontab(self.STALE_DATASOURCE_SCHEDULE)
+            except ValueError as exc:
+                raise ValueError(
+                    f"STALE_DATASOURCE_SCHEDULE is not a valid cron expression: "
+                    f"{self.STALE_DATASOURCE_SCHEDULE!r} ({exc})"
+                ) from exc
         return self
 
     @property

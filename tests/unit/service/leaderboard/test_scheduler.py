@@ -150,33 +150,38 @@ async def _fake_session():
     yield AsyncMock()
 
 
-@pytest.mark.asyncio
-@patch(f"{MODULE}.asyncio.to_thread", new_callable=AsyncMock)
-async def test_run_computation_skips_when_lock_not_acquired(mock_to_thread, leaderboard_scheduler):
-    # Arrange - lock acquisition returns None (not the leader)
-    mock_to_thread.return_value = None
+def _async_lock_cm(acquired: bool):
+    """Build an async context manager that yields `acquired`."""
 
+    @asynccontextmanager
+    async def _cm(_lock_id):
+        yield acquired
+
+    return _cm
+
+
+@pytest.mark.asyncio
+@patch(f"{MODULE}.async_leader_lock", side_effect=_async_lock_cm(acquired=False))
+async def test_run_computation_skips_when_lock_not_acquired(mock_lock_cm, leaderboard_scheduler):
     # Act
     result = await leaderboard_scheduler._run_leaderboard_computation()
 
     # Assert
     assert result is None
-    mock_to_thread.assert_awaited_once()  # only the acquire call
+    mock_lock_cm.assert_called_once()
 
 
 @pytest.mark.asyncio
-@patch(f"{MODULE}.asyncio.to_thread", new_callable=AsyncMock)
+@patch(f"{MODULE}.async_leader_lock", side_effect=_async_lock_cm(acquired=True))
 @patch(f"{MODULE}.MetricsElasticRepository")
 @patch(f"{MODULE}.LeaderboardService")
 @patch(f"{MODULE}.get_async_session", side_effect=_fake_session)
 @patch(f"{MODULE}.config")
 async def test_run_computation_calls_service_when_lock_acquired(
-    mock_config, mock_get_session, mock_service_cls, mock_elastic_repo, mock_to_thread, leaderboard_scheduler
+    mock_config, mock_get_session, mock_service_cls, mock_elastic_repo, mock_lock_cm, leaderboard_scheduler
 ):
     # Arrange
     mock_config.LEADERBOARD_PERIOD_DAYS = 30
-    mock_lock = MagicMock()
-    mock_to_thread.side_effect = [mock_lock, None]  # acquire returns lock, release returns None
 
     mock_service = AsyncMock()
     mock_service.compute_rolling_snapshot.return_value = "snap-1"
@@ -189,82 +194,30 @@ async def test_run_computation_calls_service_when_lock_acquired(
     # Assert
     mock_service.compute_rolling_snapshot.assert_awaited_once_with(period_days=30)
     mock_service.compute_missing_archives.assert_awaited_once()
-    # Lock released in finally
-    assert mock_to_thread.await_count == 2
+    mock_lock_cm.assert_called_once()
 
 
 @pytest.mark.asyncio
 @patch(f"{MODULE}.logger")
-@patch(f"{MODULE}.asyncio.to_thread", new_callable=AsyncMock)
+@patch(f"{MODULE}.async_leader_lock", side_effect=_async_lock_cm(acquired=True))
 @patch(f"{MODULE}.LeaderboardService")
 @patch(f"{MODULE}.get_async_session", side_effect=_fake_session)
 @patch(f"{MODULE}.config")
 async def test_run_computation_releases_lock_on_exception(
-    mock_config, mock_get_session, mock_service_cls, mock_to_thread, mock_logger, leaderboard_scheduler
+    mock_config, mock_get_session, mock_service_cls, mock_lock_cm, mock_logger, leaderboard_scheduler
 ):
     # Arrange
     mock_config.LEADERBOARD_PERIOD_DAYS = 30
-    mock_lock = MagicMock()
-    mock_to_thread.side_effect = [mock_lock, None]  # acquire, then release
-
     mock_service = AsyncMock()
     mock_service.compute_rolling_snapshot.side_effect = RuntimeError("DB down")
     mock_service_cls.return_value = mock_service
 
-    # Act - should not raise
+    # Act - should not raise; async_leader_lock's finally still runs
     await leaderboard_scheduler._run_leaderboard_computation()
 
-    # Assert - lock is still released via finally (second to_thread call)
-    assert mock_to_thread.await_count == 2
+    # Assert
+    mock_lock_cm.assert_called_once()
     mock_logger.error.assert_called_once()
-
-
-# ── Leader lock helpers ──────────────────────────────────────────────
-
-
-@patch(f"{MODULE}.LeaderLockContext")
-def test_acquire_leader_lock_returns_lock_when_acquired(mock_lock_cls):
-    # Arrange
-    mock_lock = MagicMock()
-    mock_lock.acquired = True
-    mock_lock_cls.return_value = mock_lock
-
-    # Act
-    result = LeaderboardScheduler._acquire_leader_lock()
-
-    # Assert
-    assert result is mock_lock
-    mock_lock.__enter__.assert_called_once_with()
-    mock_lock.__exit__.assert_not_called()
-
-
-@patch(f"{MODULE}.logger")
-@patch(f"{MODULE}.LeaderLockContext")
-def test_acquire_leader_lock_releases_and_returns_none_when_not_leader(mock_lock_cls, mock_logger):
-    # Arrange
-    mock_lock = MagicMock()
-    mock_lock.acquired = False
-    mock_lock_cls.return_value = mock_lock
-
-    # Act
-    result = LeaderboardScheduler._acquire_leader_lock()
-
-    # Assert
-    assert result is None
-    mock_lock.__enter__.assert_called_once_with()
-    mock_lock.__exit__.assert_called_once_with(None, None, None)
-    mock_logger.info.assert_called_once_with("Leaderboard computation: not the leader, skipping")
-
-
-def test_release_leader_lock_calls_exit():
-    # Arrange
-    mock_lock = MagicMock()
-
-    # Act
-    LeaderboardScheduler._release_leader_lock(mock_lock)
-
-    # Assert
-    mock_lock.__exit__.assert_called_once_with(None, None, None)
 
 
 # ── stop() ───────────────────────────────────────────────────────────

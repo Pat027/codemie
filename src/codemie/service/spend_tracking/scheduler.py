@@ -20,7 +20,7 @@ from codemie.configs import config, logger
 from codemie.repository.application_repository import ApplicationRepository
 from codemie.repository.project_spend_tracking_repository import ProjectSpendTrackingRepository
 from codemie.service.spend_tracking.spend_collector_service import LiteLLMSpendCollectorService
-from codemie.service.conversation_analysis.leader_lock import LeaderLockContext
+from codemie.utils.leader_lock import LeaderLockContext
 
 # Distinct advisory lock ID for the spend tracking job — must differ from
 # LeaderLockContext.ADVISORY_LOCK_ID (987654321) used by ConversationAnalysisService.
