@@ -26,7 +26,6 @@ from langchain_community.document_loaders.parsers import BaseImageBlobParser
 from langchain_core.documents import Document
 from langchain_markitdown import (
     AudioLoader,
-    DocxLoader,
     EpubLoader,
     HtmlLoader,
     IpynbLoader,
@@ -41,9 +40,11 @@ from codemie.core.utils import get_file_extension
 from codemie.datasource.datasource_file_storage import DatasourceFileStorage
 from codemie.datasource.loader.binary.image_loader import ImageLoader
 from codemie.core.dependecies import get_llm_by_credentials
+from codemie.datasource.loader.docx_loader import DocxLoader
 from codemie.datasource.loader.eml_loader import EmlLoader
 from codemie.datasource.loader.binary.msg_loader import OutlookMsgWithAttachmentsLoader
 from codemie.datasource.loader.binary.pdf_plumber_loader import PDFPlumberLoader
+from codemie.datasource.loader.vsdx_loader import VsdxLoader
 from codemie.repository.repository_factory import FileRepositoryFactory
 from codemie.rest_api.models.index import IndexKnowledgeBaseFileTypes
 
@@ -64,6 +65,7 @@ LOADERS: dict[str, type] = {
     IndexKnowledgeBaseFileTypes.JPEG.value: ImageLoader,
     IndexKnowledgeBaseFileTypes.PNG.value: ImageLoader,
     IndexKnowledgeBaseFileTypes.GIF.value: ImageLoader,
+    IndexKnowledgeBaseFileTypes.VSDX.value: VsdxLoader,
 }
 
 DEFAULT_LOADER_KWARGS: dict[str, dict] = {

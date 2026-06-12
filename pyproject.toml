@@ -153,6 +153,7 @@ langchain-classic = "1.0.7"
 openai = "2.26.0"
 langsmith = "0.8.0"
 opentelemetry-exporter-prometheus = "^0.63b1"
+vsdx = "^0.6.1"
 
 [tool.poetry.extras]
 enterprise = ["codemie-enterprise"]

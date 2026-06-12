@@ -50,6 +50,7 @@ class TestIndexKnowledgeBaseFileTypes:
             'jpeg',
             'png',
             'gif',
+            'vsdx',
         ]
 
 

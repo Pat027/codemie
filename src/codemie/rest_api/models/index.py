@@ -1536,6 +1536,7 @@ class IndexKnowledgeBaseFileTypes(Enum):
     JPEG = 'jpeg'
     PNG = 'png'
     GIF = 'gif'
+    VSDX = 'vsdx'
 
     @classmethod
     def values(cls):
