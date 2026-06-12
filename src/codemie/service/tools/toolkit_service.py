@@ -494,7 +494,7 @@ class ToolkitService:
         tools.extend(
             cls.get_core_tools(
                 assistant_toolkits=selected_toolkits,
-                user_id=owner_user_id or user.id,
+                user_id=user.id,
                 project_name=assistant.project,
                 assistant_id=assistant.id,
                 tools_config=request.tools_config if request else None,

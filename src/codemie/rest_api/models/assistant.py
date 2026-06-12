@@ -143,11 +143,7 @@ class ToolKitDetails(ToolKit):
     is_external: Optional[bool] = False
 
     def get_tool_configs(self) -> list[ToolConfig]:
-        return [
-            ToolConfig(name=tool.settings.credential_type, integration_id=tool.settings.id)
-            for tool in self.tools
-            if tool.settings
-        ]
+        return [ToolConfig(name=tool.name, integration_id=tool.settings.id) for tool in self.tools if tool.settings]
 
 
 class MCPServerDetails(BaseModel):

@@ -98,16 +98,16 @@ test_cases = [
     ("empty_tools", []),
     ("tools_without_settings", []),
     ("tools_with_none_settings", []),
-    ("single_tool_git", [{"name": "Git", "integration_id": "settings_id_1"}]),
+    ("single_tool_git", [{"name": "tool1", "integration_id": "settings_id_1"}]),
     (
         "multiple_different_types",
-        [{"name": "Jira", "integration_id": "settings_id_1"}, {"name": "Git", "integration_id": "settings_id_2"}],
+        [{"name": "tool1", "integration_id": "settings_id_1"}, {"name": "tool2", "integration_id": "settings_id_2"}],
     ),
     (
         "same_credential_types",
-        [{"name": "Git", "integration_id": "settings_id_1"}, {"name": "Git", "integration_id": "settings_id_2"}],
+        [{"name": "tool1", "integration_id": "settings_id_1"}, {"name": "tool2", "integration_id": "settings_id_2"}],
     ),
-    ("mixed_tools", [{"name": "Git", "integration_id": "settings_id"}]),
+    ("mixed_tools", [{"name": "tool_with_settings", "integration_id": "settings_id"}]),
 ]
 
 

@@ -369,10 +369,17 @@ class ToolNode(BaseNode[AgentMessages]):
     def _owner_user_id(self) -> str | None:
         """Resolve the workflow owner's user ID for credential lookup.
 
-        For global workflows, tool credentials are stored under the creator's user ID.
+        For global workflows with an explicit integration_alias, credentials are resolved
+        under the creator's user ID so the pinned integration is used.
+        Automatic lookup mode (integration_alias=None) always uses the executing user's
+        credentials — bypassing this would let any user access the creator's integrations.
         Non-global workflows use the executing user's credentials directly.
         """
-        if self.workflow_config.is_global and self.workflow_config.created_by:
+        if (
+            self.workflow_config.is_global
+            and self.workflow_config.created_by
+            and self._tool_config.integration_alias is not None
+        ):
             return self.workflow_config.created_by.user_id or None
         return None
 

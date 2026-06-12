@@ -92,6 +92,7 @@ def mock_tool_config():
     tool_config.resolve_dynamic_values_in_response = False
     tool_config.input_key = None
     tool_config.tokens_size_limit = None
+    tool_config.integration_alias = None
     return tool_config
 
 
@@ -101,6 +102,8 @@ def mock_workflow_config(mock_tool_config):
     config = Mock(spec=WorkflowConfig)
     config.project = "test_project"
     config.tools = [mock_tool_config]
+    config.is_global = False
+    config.created_by = None
     return config
 
 
@@ -1202,6 +1205,7 @@ def test_tc_tnc_016_marketplace_workflow_passes_publisher_owner_user_id(
     publisher = Mock()
     publisher.user_id = "publisher-user-id"
     mock_workflow_config.created_by = publisher
+    mock_workflow_config.tools[0].integration_alias = "jira_alias"
 
     mock_assistant = Mock()
     mock_assistant.id = "assistant-123"
