@@ -26,6 +26,7 @@ from typing import Optional
 from llm_sandbox.security import SecurityIssueSeverity
 from pydantic import Field, field_validator
 
+from codemie.configs.logger import logger
 from codemie_tools.base.models import CodeMieToolConfig
 
 
@@ -292,3 +293,14 @@ class CodeExecutorConfig(CodeMieToolConfig):
             skip_environment_setup=str_to_bool(os.getenv("CODE_EXECUTOR_SKIP_ENVIRONMENT_SETUP", "false")),
             kubeconfig_path=os.getenv("CODE_EXECUTOR_KUBECONFIG_PATH", ""),
         )
+
+    @classmethod
+    def warn_if_local_execution(cls) -> None:
+        if cls.from_env().execution_mode == ExecutionMode.LOCAL:
+            logger.warning(
+                "\n" + "-" * 80 + "\n"
+                "SECURITY WARNING: Workspace script execution is running in LOCAL mode\n"
+                "(CODE_EXECUTOR_EXECUTION_MODE=local). Scripts uploaded by authenticated\n"
+                "users will be executed directly on this pod with full OS access.\n"
+                "Set CODE_EXECUTOR_EXECUTION_MODE=sandbox for isolated execution.\n" + "-" * 80
+            )

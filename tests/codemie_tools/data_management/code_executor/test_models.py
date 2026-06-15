@@ -444,3 +444,18 @@ class TestCodeExecutorConfigCustomValues(unittest.TestCase):
         assert config.run_as_user == 2000
         assert config.run_as_group == 2000
         assert config.fs_group == 2000
+
+
+class TestWarnIfLocalExecution(unittest.TestCase):
+    @patch("codemie_tools.data_management.code_executor.models.logger")
+    @patch.dict(os.environ, {"CODE_EXECUTOR_EXECUTION_MODE": "local"})
+    def test_warns_in_local_mode(self, mock_logger):
+        CodeExecutorConfig.warn_if_local_execution()
+        mock_logger.warning.assert_called_once()
+        assert "LOCAL" in mock_logger.warning.call_args[0][0]
+
+    @patch("codemie_tools.data_management.code_executor.models.logger")
+    @patch.dict(os.environ, {"CODE_EXECUTOR_EXECUTION_MODE": "sandbox"})
+    def test_no_warning_in_sandbox_mode(self, mock_logger):
+        CodeExecutorConfig.warn_if_local_execution()
+        mock_logger.warning.assert_not_called()
