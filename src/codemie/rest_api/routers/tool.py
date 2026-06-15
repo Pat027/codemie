@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, Request, status
 
 from codemie_tools.base import toolkit_provider
+from codemie.configs import config
 from codemie.core.exceptions import ExtendedHTTPException
 from codemie.rest_api.models.tool import SchemaField, ToolInvokeRequest, ToolInvokeResponse, ToolSchemaResponse
 from codemie.rest_api.security.authentication import authenticate
@@ -107,6 +108,12 @@ async def get_tool_schema(
     response_model=ToolInvokeResponse,
 )
 def invoke_tool(request: ToolInvokeRequest, tool_name: str, raw_request: Request, user: User = Depends(authenticate)):
+    if tool_name in config.HTTP_BLOCKED_TOOLS:
+        raise ExtendedHTTPException(
+            code=status.HTTP_403_FORBIDDEN,
+            message=f"Direct invocation of '{tool_name}' via this endpoint is disabled.",
+        )
+
     request.request_id = raw_request.state.uuid
     try:
         output = ToolExecutionService.invoke(request, tool_name, user)

@@ -173,6 +173,45 @@ def test_invoke_tool_error(mock_auth_header, mock_authenticate):
         assert response_data["error"] == "Tool execution failed"
 
 
+def test_invoke_tool_code_executor_blocked(mock_auth_header, mock_authenticate):
+    """code_executor is blocked by default via config.HTTP_BLOCKED_TOOLS."""
+    request_data = {
+        "tool_args": {"code": "print('should never run')"},
+        "tool_attributes": {},
+        "project": "test_project",
+        "llm_model": LLMService.BASE_NAME_GPT_41_MINI,
+    }
+
+    with patch("codemie.rest_api.routers.tool.ToolExecutionService") as mock_service:
+        response = client.post("/v1/tools/code_executor/invoke", headers=mock_auth_header, json=request_data)
+
+        assert response.status_code == 403
+        assert "disabled" in str(response.json()).lower()
+        mock_service.invoke.assert_not_called()
+
+
+def test_invoke_tool_custom_blocked_via_config(mock_auth_header, mock_authenticate):
+    """Operators can extend HTTP_BLOCKED_TOOLS to deny additional tool names."""
+    request_data = {
+        "tool_args": {"arg1": "value1"},
+        "tool_attributes": {},
+        "project": "test_project",
+        "llm_model": LLMService.BASE_NAME_GPT_41_MINI,
+    }
+
+    with (
+        patch("codemie.rest_api.routers.tool.config") as mock_config,
+        patch("codemie.rest_api.routers.tool.ToolExecutionService") as mock_service,
+    ):
+        mock_config.HTTP_BLOCKED_TOOLS = ["some_blocked_tool"]
+
+        response = client.post("/v1/tools/some_blocked_tool/invoke", headers=mock_auth_header, json=request_data)
+
+        assert response.status_code == 403
+        assert "disabled" in str(response.json()).lower()
+        mock_service.invoke.assert_not_called()
+
+
 def test_invoke_tool_with_empty_request(mock_auth_header, mock_authenticate):
     response = client.post("/v1/tools/test_tool/invoke", headers=mock_auth_header, json={})
     assert response.status_code == 422

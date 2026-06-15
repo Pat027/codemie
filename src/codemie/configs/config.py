@@ -527,6 +527,11 @@ class Config(BaseSettings):
     DYNAMIC_CODE_INTERPRETER_TOOLS: list[str] = [
         "code_executor",
     ]
+
+    # Tools denied for direct HTTP invocation via POST /v1/tools/{tool_name}/invoke.
+    HTTP_BLOCKED_TOOLS: list[str] = [
+        "code_executor",
+    ]
     DISABLE_PARALLEL_TOOLS_CALLING_MODELS: list[str] = [
         "gpt-4.1",
         "gpt-5-2025-08-07",
