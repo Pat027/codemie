@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import pytest
+from unittest.mock import MagicMock, patch
 
 from codemie.datasource.loader.util import AssistantKBGoogleDocToJsonParser
 
@@ -53,3 +54,22 @@ class TestAssistantKBGoogleDocToJsonParser:
         result = mock_parser.get_titles(mock_elements)
 
         assert result == ["1.1.2. Title"]
+
+    def test_check_document_accessible_success(self, mock_parser):
+        mock_service = MagicMock()
+        mock_execute = MagicMock(return_value={"documentId": "test_id1"})
+        mock_service.documents.return_value.get.return_value.execute = mock_execute
+
+        with patch("codemie.datasource.loader.util.build", return_value=mock_service):
+            mock_parser.check_document_accessible()
+
+        mock_service.documents.return_value.get.assert_called_once_with(documentId="test_id1", fields="documentId")
+        mock_execute.assert_called_once_with()
+
+    def test_check_document_accessible_raises_on_api_error(self, mock_parser):
+        mock_service = MagicMock()
+        mock_service.documents.return_value.get.return_value.execute.side_effect = Exception("403 Access denied")
+
+        with patch("codemie.datasource.loader.util.build", return_value=mock_service):
+            with pytest.raises(Exception, match="403 Access denied"):
+                mock_parser.check_document_accessible()

@@ -338,3 +338,42 @@ class TestGoogleDocDatasourceProcessor:
         processor.is_incremental_reindex = False
         # Should not raise an exception
         processor._on_process_start()
+
+    def test_check_google_doc_succeeds_for_accessible_nonempty_doc(self):
+        with patch(
+            "codemie.datasource.google_doc.google_doc_datasource_processor.GoogleDocLoader"
+        ) as mock_loader_class:
+            mock_loader_instance = MagicMock()
+            mock_loader_class.DOCUMENTS_COUNT_KEY = "documents_count_key"
+            mock_loader_instance.fetch_remote_stats.return_value = {"documents_count_key": 3}
+            mock_loader_class.return_value = mock_loader_instance
+
+            GoogleDocDatasourceProcessor.check_google_doc(product_id="doc123")
+
+            mock_loader_instance.check_accessible.assert_called_once_with()
+            mock_loader_instance.fetch_remote_stats.assert_called_once_with()
+
+    def test_check_google_doc_raises_on_inaccessible_doc(self):
+        """check_google_doc raises ValueError when the document cannot be accessed."""
+        with patch(
+            "codemie.datasource.google_doc.google_doc_datasource_processor.GoogleDocLoader"
+        ) as mock_loader_class:
+            mock_loader_instance = MagicMock()
+            mock_loader_instance.check_accessible.side_effect = Exception("403 Forbidden")
+            mock_loader_class.return_value = mock_loader_instance
+
+            with pytest.raises(ValueError, match="Cannot access google doc"):
+                GoogleDocDatasourceProcessor.check_google_doc(product_id="doc123")
+
+    def test_check_google_doc_raises_on_empty_doc(self):
+        """check_google_doc raises ValueError when the document is accessible but empty."""
+        with patch(
+            "codemie.datasource.google_doc.google_doc_datasource_processor.GoogleDocLoader"
+        ) as mock_loader_class:
+            mock_loader_instance = MagicMock()
+            mock_loader_class.DOCUMENTS_COUNT_KEY = "documents_count_key"
+            mock_loader_instance.fetch_remote_stats.return_value = {"documents_count_key": 0}
+            mock_loader_class.return_value = mock_loader_instance
+
+            with pytest.raises(ValueError, match="Empty result returned"):
+                GoogleDocDatasourceProcessor.check_google_doc(product_id="doc123")

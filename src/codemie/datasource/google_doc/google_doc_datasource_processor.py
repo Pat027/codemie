@@ -245,24 +245,17 @@ class GoogleDocDatasourceProcessor(BaseDatasourceProcessor):
         return chapters
 
     @classmethod
-    def validate_google_doc_and_loader(cls, product_id: str) -> dict[str, int]:
+    def check_google_doc(cls, product_id: str) -> None:
         loader = GoogleDocLoader(product_id=product_id)
         try:
-            stats = loader.fetch_remote_stats()
-            return stats
+            loader.check_accessible()
         except Exception as e:
-            msg = f"Cannot parse google doc by product_id {product_id}."
+            msg = f"Cannot access google doc with product_id {product_id}."
             logger.error(msg + f" Failed with error {e}")
-            raise ValueError(msg)
-
-    @classmethod
-    def check_google_doc(cls, product_id: str):
-        index_stats = cls.validate_google_doc_and_loader(product_id=product_id)
-        docs_count = index_stats.get(GoogleDocLoader.DOCUMENTS_COUNT_KEY, 0)
-
+            raise ValueError(msg) from e
+        stats = loader.fetch_remote_stats()
+        docs_count = stats.get(GoogleDocLoader.DOCUMENTS_COUNT_KEY, 0)
         if not docs_count:
             msg = f"Empty result returned for given google doc with product_id: {product_id}."
             logger.warning(msg)
             raise ValueError(msg)
-
-        return docs_count

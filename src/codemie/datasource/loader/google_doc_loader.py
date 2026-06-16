@@ -48,6 +48,9 @@ class GoogleDocLoader(BaseLoader, BaseDatasourceLoader):
             self.SKIPPED_DOCUMENTS_KEY: total_docs - fetched_docs,
         }
 
+    def check_accessible(self) -> None:
+        self.kb_document_parser.check_document_accessible()
+
     def _normalize_doc(self, doc: Document) -> Document:
         doc.page_content = self.normalize_line_breaks(doc.page_content)
         for k, v in doc.metadata.items():

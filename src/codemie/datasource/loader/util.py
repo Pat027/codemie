@@ -55,6 +55,10 @@ class AssistantKBGoogleDocToJsonParser:
     def get_document(self, service, document_id: str) -> Dict[str, Any]:
         return service.documents().get(documentId=document_id).execute()
 
+    def check_document_accessible(self) -> None:
+        service = build("docs", "v1")
+        service.documents().get(documentId=self.document_id, fields="documentId").execute()
+
     def get_elements(self, document: Dict[str, Any]) -> List[Dict[str, Any]]:
         return document.get("body", {}).get("content", [])
 
