@@ -522,6 +522,29 @@ def create_index_application(
     )
 
 
+_REPO_FIELD_MAP = {
+    'branch': 'branch',
+    'filesFilter': 'files_filter',
+    'link': 'link',
+    'setting_id': 'setting_id',
+    'docsGeneration': 'docs_generation',
+    'embeddingsModel': 'embeddings_model',
+    'projectSpaceVisible': 'project_space_visible',
+}
+
+_INDEX_FIELD_MAP = {
+    'description': 'description',
+    'prompt': 'prompt',
+    'docsGeneration': 'docs_generation',
+    'filesFilter': 'files_filter',
+    'projectSpaceVisible': 'project_space_visible',
+    'embeddingsModel': 'embeddings_model',
+    'branch': 'branch',
+    'link': 'link',
+    'setting_id': 'setting_id',
+}
+
+
 def _handle_index_and_repository_update(
     index_info: IndexInfo,
     request: UpdateIndexRequest,
@@ -533,18 +556,13 @@ def _handle_index_and_repository_update(
     """Handle index information update, metrics, and repository field updates."""
     _validate_project_change(request.new_project_name, app_name, repo_name, user)
 
+    index_patch = {
+        attr: getattr(request, req) for req, attr in _INDEX_FIELD_MAP.items() if req in request.model_fields_set
+    }
     index_info.update_index(
         user=user,
-        description=request.description,
-        prompt=request.prompt,
-        project_space_visible=request.projectSpaceVisible,
-        docs_generation=request.docsGeneration,
-        embeddings_model=request.embeddingsModel,
-        files_filter=request.filesFilter,
-        branch=request.branch,
-        link=request.link,
+        **index_patch,
         reset_error=False,
-        setting_id=request.setting_id,
         project_name=request.new_project_name,
         guardrail_assignments=request.guardrail_assignments,
     )
@@ -559,13 +577,14 @@ def _handle_index_and_repository_update(
         },
     )
 
-    repository.branch = request.branch
-    repository.files_filter = request.filesFilter
-    repository.link = request.link.strip() if request.link else request.link
-    repository.setting_id = request.setting_id
-    repository.docs_generation = request.docsGeneration
-    repository.embeddings_model = request.embeddingsModel
-    repository.project_space_visible = request.projectSpaceVisible
+    for req_field, repo_attr in _REPO_FIELD_MAP.items():
+        if req_field in request.model_fields_set:
+            value = getattr(request, req_field)
+            if value is None:
+                continue
+            if req_field == 'link' and value:
+                value = value.strip()
+            setattr(repository, repo_attr, value)
     repository.update()
 
 

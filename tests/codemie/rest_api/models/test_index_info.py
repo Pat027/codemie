@@ -118,7 +118,7 @@ def test_update_index_fields_default_set(index_info, mock_update_path):
         assert index_info.docs_generation
         assert index_info.branch == "New Branch"
         assert index_info.link == "New Link"
-        assert index_info.files_filter is None
+        assert index_info.files_filter == ""
         assert index_info.embeddings_model == "New model"
         assert not index_info.error
         assert index_info.setting_id == "test-id"

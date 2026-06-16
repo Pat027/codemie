@@ -746,6 +746,11 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
 
         flag_modified(self, 'sharepoint')
 
+    def _apply_if_not_none(self, **fields) -> None:
+        for attr, value in fields.items():
+            if value is not None:
+                setattr(self, attr, value)
+
     def update_index(
         self,
         user: User,
@@ -754,7 +759,7 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
         branch: Optional[str] = None,
         link: Optional[str] = None,
         embeddings_model: Optional[str] = None,
-        summarization_model: str = llm_service.default_llm_model,
+        summarization_model: Optional[str] = None,
         cql: Optional[str] = None,
         jql: Optional[str] = None,
         wiki_query: Optional[str] = None,
@@ -766,26 +771,27 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
         updated_by: Optional[CreatedByUser] = None,
         **kwargs,
     ) -> "IndexInfo":
-        files_filter = kwargs.get("files_filter")
-        prompt = kwargs.get("prompt")
-        docs_generation = kwargs.get("docs_generation", False)
+        docs_generation = kwargs.get("docs_generation")
 
         # Preserve date before update for incremental reindex
         self.last_reindex_date = self.update_date
 
         if description:
             self.description = description
-        self.prompt = prompt
+        if "prompt" in kwargs:
+            self.prompt = kwargs["prompt"]
 
-        if project_space_visible is not None:
-            self.project_space_visible = project_space_visible
-        self.docs_generation = docs_generation
         if embeddings_model:
             self.embeddings_model = embeddings_model
-        self.summarization_model = summarization_model
-        self.branch = branch
-        self.link = link
-        self.files_filter = files_filter
+        if "files_filter" in kwargs:
+            self.files_filter = kwargs["files_filter"]
+        self._apply_if_not_none(
+            project_space_visible=project_space_visible,
+            docs_generation=docs_generation,
+            summarization_model=summarization_model,
+            branch=branch,
+            link=link,
+        )
 
         if reset_error:
             self.error = False
@@ -806,8 +812,7 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
             if self.index_type.startswith("knowledge_base"):
                 self._reindex_to_new_project(project_name)
             self.project_name = project_name
-        if updated_by is not None:
-            self.updated_by = updated_by
+        self._apply_if_not_none(updated_by=updated_by)
 
         self.update()
 

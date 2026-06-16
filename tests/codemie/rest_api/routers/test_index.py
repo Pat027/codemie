@@ -347,16 +347,7 @@ async def test_update_index_application(
     mock_get_creds.return_value = MagicMock(token="test_token")
     expected_index_update_args = {
         "user": authenticated_user(),
-        "description": "",
-        "prompt": None,
-        "project_space_visible": True,
-        "docs_generation": False,
-        "embeddings_model": None,
-        "files_filter": "",
-        "branch": None,
-        "link": None,
         "reset_error": False,
-        "setting_id": None,
         "project_name": None,
         "guardrail_assignments": None,
         **{index_field_name: field_value},
@@ -379,6 +370,153 @@ async def test_update_index_application(
 
     assert response.status_code == expected_created_status_code
     m_index_info.update_index.assert_called_once_with(**expected_index_update_args)
+
+
+@patch('codemie.rest_api.routers.index.SettingsService.get_git_creds')
+@patch('codemie.core.ability.Ability.can')
+@patch('codemie.rest_api.routers.index.IndexInfo.filter_by_project_and_repo')
+@patch('codemie.rest_api.routers.index.GitRepo.get_by_app_id')
+@pytest.mark.parametrize(
+    "absent_repo_field, repo_attr",
+    [
+        ("branch", "branch"),
+        ("link", "link"),
+        ("setting_id", "setting_id"),
+        ("embeddingsModel", "embeddings_model"),
+        ("docsGeneration", "docs_generation"),
+        ("projectSpaceVisible", "project_space_visible"),
+        ("filesFilter", "files_filter"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_update_index_omitted_fields_not_assigned_to_repository(
+    mock_get_git_repo: MagicMock,
+    mock_filter: MagicMock,
+    mock_can: MagicMock,
+    mock_get_creds: MagicMock,
+    absent_repo_field: str,
+    repo_attr: str,
+    auth_headers: dict,
+    mock_app_repo: MagicMock,
+    mock_create_processor: MagicMock,
+    authenticated_user: Callable,
+) -> None:
+    """When a repo field is absent from the PUT payload, it must NOT be written to the repository.
+
+    Uses a MagicMock with a patched __setattr__ on the *instance* (not the class)
+    so we can track which repository attributes the handler explicitly assigns.
+    """
+    mock_get_creds.return_value = MagicMock(token="test_token")
+    mock_can.return_value = True
+
+    m_index_info = MagicMock()
+    mock_filter.return_value = [m_index_info]
+
+    m_git_repo = MagicMock()
+    m_git_repo.name = DEMO
+    mock_get_git_repo.return_value = [m_git_repo]
+
+    # Record which repo attributes are explicitly set by the handler.
+    # We attach the tracking set to the mock instance itself and intercept
+    # setattr via a subclass created per-test (not mutating the shared MagicMock
+    # class) so other tests remain unaffected.
+    assigned_by_handler: set = set()
+    _sentinel = object()
+
+    original_setattr = m_git_repo.__class__.__setattr__
+
+    class _TrackingMock(m_git_repo.__class__):
+        def __setattr__(self, name, value):
+            if self is m_git_repo:
+                assigned_by_handler.add(name)
+            original_setattr(self, name, value)
+
+    m_git_repo.__class__ = _TrackingMock
+    # Reset tracking: the name assignment above was captured; clear it.
+    assigned_by_handler.clear()
+
+    # Send a payload that includes `name` (required to enter the handler) but
+    # deliberately omits the field under test.
+    payload = {"name": DEMO}
+    assert absent_repo_field not in payload, "test setup: field must be absent from payload"
+
+    response = app_client.put(
+        f"/v1/application/{DEMO}/index/{DEMO}",
+        json=payload,
+        headers={**auth_headers, "X-Request-ID": "7ecd6b14-6294-429a-b51a-cab32b344984"},
+    )
+
+    # Restore class so other tests that share the MagicMock class are not affected.
+    m_git_repo.__class__ = MagicMock
+
+    assert response.status_code == status.HTTP_201_CREATED
+    assert repo_attr not in assigned_by_handler, (
+        f"repository.{repo_attr} should NOT be assigned when '{absent_repo_field}' "
+        f"is absent from the request payload, but it was set to "
+        f"{getattr(m_git_repo, repo_attr, '<unset>')!r}"
+    )
+
+
+@patch('codemie.rest_api.routers.index.SettingsService.get_git_creds')
+@patch('codemie.core.ability.Ability.can')
+@patch('codemie.rest_api.routers.index.IndexInfo.filter_by_project_and_repo')
+@patch('codemie.rest_api.routers.index.GitRepo.get_by_app_id')
+@pytest.mark.parametrize(
+    "absent_index_field",
+    [
+        "prompt",
+        "docsGeneration",
+        "filesFilter",
+        "projectSpaceVisible",
+        "embeddingsModel",
+        "description",
+    ],
+)
+@pytest.mark.asyncio
+async def test_update_index_omitted_fields_not_passed_to_update_index(
+    mock_get_git_repo: MagicMock,
+    mock_filter: MagicMock,
+    mock_can: MagicMock,
+    mock_get_creds: MagicMock,
+    absent_index_field: str,
+    auth_headers: dict,
+    mock_app_repo: MagicMock,
+    mock_create_processor: MagicMock,
+    authenticated_user: Callable,
+) -> None:
+    """When an index field is absent from the PUT payload, it must NOT be passed to update_index.
+
+    Ensures the partial-update fix covers IndexInfo as well as GitRepo.
+    """
+    mock_get_creds.return_value = MagicMock(token="test_token")
+    mock_can.return_value = True
+
+    m_index_info = MagicMock()
+    mock_filter.return_value = [m_index_info]
+
+    m_git_repo = MagicMock()
+    m_git_repo.name = DEMO
+    mock_get_git_repo.return_value = [m_git_repo]
+
+    payload = {"name": DEMO}
+    assert absent_index_field not in payload
+
+    response = app_client.put(
+        f"/v1/application/{DEMO}/index/{DEMO}",
+        json=payload,
+        headers={**auth_headers, "X-Request-ID": "7ecd6b14-6294-429a-b51a-cab32b344984"},
+    )
+
+    assert response.status_code == status.HTTP_201_CREATED
+
+    call_kwargs = m_index_info.update_index.call_args[1]
+    from codemie.rest_api.routers.index import _INDEX_FIELD_MAP
+
+    index_kwarg = _INDEX_FIELD_MAP.get(absent_index_field)
+    assert index_kwarg not in call_kwargs, (
+        f"update_index should NOT receive '{index_kwarg}' when '{absent_index_field}' "
+        f"is absent from the request payload"
+    )
 
 
 def test_valid_json():
