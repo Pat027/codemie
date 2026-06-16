@@ -525,6 +525,52 @@ def test_create_mermaid_diagram_raw_png(mocker, auth_headers):
     assert response.content == mock_png_content
 
 
+def test_safe_disposition_strips_crlf():
+    disp = files._safe_disposition("evil\r\nX-Injected: header")
+    assert "\r" not in disp
+    assert "\n" not in disp
+    assert "attachment" in disp
+
+
+def test_safe_disposition_escapes_quotes():
+    disp = files._safe_disposition('trick"name.svg')
+    assert disp == 'attachment; filename="trick\\"name.svg"'
+
+
+def test_safe_disposition_empty_filename():
+    assert files._safe_disposition("") == "attachment"
+
+
+def test_get_attachment_response_forces_download():
+    content = b"<svg><script>alert(1)</script></svg>"
+    resp = files.get_attachment_response(content, "evil.svg")
+    assert isinstance(resp, Response)
+    assert resp.media_type == "application/octet-stream"
+    assert "attachment" in resp.headers.get("content-disposition", "")
+    assert 'filename="evil.svg"' in resp.headers.get("content-disposition", "")
+
+
+def test_get_attachment_response_no_filename():
+    resp = files.get_attachment_response(b"data")
+    assert resp.headers.get("content-disposition") == "attachment"
+
+
+def test_get_sanitized_html_response_accepts_filename_kwarg():
+    html = "<html><body>Hello</body></html>"
+    resp = files.get_sanitized_html_response(html, "page.html")
+    assert 'filename="page.html"' in resp.headers.get("content-disposition", "")
+
+
+def test_get_plain_text_response_accepts_filename_kwarg():
+    resp = files.get_plain_text_response("var x = 1;", "script.js")
+    assert resp.media_type == "text/plain"
+
+
+def test_check_and_sanitize_content_accepts_filename_kwarg():
+    resp = files.check_and_sanitize_content(b"\x89PNG", "img.png")
+    assert resp.media_type == "application/octet-stream"
+
+
 def test_get_sanitized_html_response_forces_download():
     html = """
     <html><body><h1>Hello</h1><script>alert('XSS');</script></body></html>
@@ -593,6 +639,294 @@ def test_check_and_sanitize_content_str_binary():
     data = "\u0000\u0001\u0002"
     resp = files.check_and_sanitize_content(data)
     assert resp.media_type == "application/octet-stream"
+
+
+SVG_XSS_PAYLOAD = (
+    b'<?xml version="1.0" standalone="no"?>'
+    b'<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">'
+    b'<script type="application/ecmascript">'
+    b'alert("XSS in " + window.location.origin + " :: cookies=" + document.cookie);'
+    b'</script><rect width="200" height="200" fill="red"/></svg>'
+)
+
+XHTML_XSS_PAYLOAD = (
+    b'<?xml version="1.0" encoding="UTF-8"?>'
+    b'<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"'
+    b' "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">'
+    b'<html xmlns="http://www.w3.org/1999/xhtml">'
+    b'<head><title>XSS</title></head>'
+    b'<body><script type="text/javascript">'
+    b'alert("XSS in " + window.location.origin + " :: cookies=" + document.cookie);'
+    b'</script></body></html>'
+)
+
+
+def _setup_read_file_mock(mocker, content, mime_type, name="test.svg"):
+    mock_file_object = mocker.Mock()
+    mock_file_object.content = content
+    mock_file_object.mime_type = mime_type
+    mock_file_object.name = name
+
+    mock_fs_repo = mocker.Mock()
+    mock_fs_repo.read_file.return_value = mock_file_object
+
+    mocker.patch(
+        "codemie.rest_api.routers.files.FileRepositoryFactory.get_current_repository",
+        return_value=mock_fs_repo,
+    )
+    mocker.patch(
+        "codemie.repository.base_file_repository.FileObject.from_encoded_url",
+        return_value=mocker.Mock(name=name, owner="user"),
+    )
+    return mock_file_object
+
+
+@pytest.mark.anyio
+async def test_read_file_svg_xss_payload_is_forced_attachment(mocker):
+    """Reproduces the stored XSS: SVG with embedded script must be served as attachment.
+
+    SVG keeps image/svg+xml so <img> tags can still render it (browsers ignore
+    Content-Disposition for sub-resource fetches), but Content-Disposition: attachment
+    and CSP sandbox block top-level document execution.
+    """
+    _setup_read_file_mock(mocker, SVG_XSS_PAYLOAD, "image/svg+xml", "evil.svg")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get("/v1/files/evil.svg")
+
+    assert response.status_code == 200
+    disposition = response.headers.get("content-disposition", "")
+    assert "attachment" in disposition, "XSS REPRODUCED: SVG served without Content-Disposition: attachment"
+    assert response.headers.get("content-type", "").startswith(
+        "image/svg+xml"
+    ), "SVG should keep image/svg+xml so <img> tags render it"
+    csp = response.headers.get("content-security-policy", "")
+    assert (
+        "default-src 'none'" in csp and "sandbox" in csp
+    ), "SVG response missing CSP sandbox — defense-in-depth against script execution"
+
+
+@pytest.mark.anyio
+async def test_read_file_xml_forces_attachment(mocker):
+    _setup_read_file_mock(mocker, b"<root><item>data</item></root>", "text/xml", "data.xml")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get("/v1/files/data.xml")
+
+    assert response.status_code == 200
+    assert "attachment" in response.headers.get("content-disposition", "")
+
+
+@pytest.mark.anyio
+async def test_read_file_xhtml_forces_attachment(mocker):
+    _setup_read_file_mock(mocker, XHTML_XSS_PAYLOAD, "application/xhtml+xml", "page.xhtml")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get("/v1/files/page.xhtml")
+
+    assert response.status_code == 200
+    assert "attachment" in response.headers.get("content-disposition", "")
+
+
+@pytest.mark.anyio
+async def test_read_file_rss_forces_attachment(mocker):
+    _setup_read_file_mock(mocker, b"<rss version='2.0'/>", "application/rss+xml", "feed.rss")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get("/v1/files/feed.rss")
+
+    assert response.status_code == 200
+    assert "attachment" in response.headers.get("content-disposition", "")
+
+
+@pytest.mark.anyio
+async def test_read_file_svg_mixed_case_mime_forces_attachment(mocker):
+    """Legacy blobs stored with non-canonical MIME casing must still be forced to download."""
+    _setup_read_file_mock(mocker, SVG_XSS_PAYLOAD, "Image/SVG+XML", "evil.svg")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get("/v1/files/evil.svg")
+
+    assert response.status_code == 200
+    assert "attachment" in response.headers.get("content-disposition", "")
+
+
+@pytest.mark.anyio
+async def test_read_file_svg_mime_with_params_forces_attachment(mocker):
+    """MIME with charset parameter must still be normalised and forced to download."""
+    _setup_read_file_mock(mocker, SVG_XSS_PAYLOAD, "image/svg+xml; charset=utf-8", "evil.svg")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get("/v1/files/evil.svg")
+
+    assert response.status_code == 200
+    assert "attachment" in response.headers.get("content-disposition", "")
+
+
+@pytest.mark.anyio
+async def test_read_file_svg_preserves_nosniff_header(mocker):
+    """X-Content-Type-Options: nosniff must be present even on attachment responses."""
+    _setup_read_file_mock(mocker, SVG_XSS_PAYLOAD, "image/svg+xml", "evil.svg")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get("/v1/files/evil.svg")
+
+    assert response.status_code == 200
+    assert response.headers.get("x-content-type-options") == "nosniff"
+
+
+@pytest.mark.anyio
+async def test_read_file_svg_filename_in_disposition(mocker):
+    """Attachment Content-Disposition must include the original filename."""
+    _setup_read_file_mock(mocker, SVG_XSS_PAYLOAD, "image/svg+xml", "payload.svg")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get("/v1/files/payload.svg")
+
+    assert response.status_code == 200
+    assert 'filename="payload.svg"' in response.headers.get("content-disposition", "")
+
+
+@pytest.mark.anyio
+async def test_read_file_unknown_mime_is_forced_attachment(mocker):
+    """Unknown MIME types must never render inline — default-deny forces download."""
+    _setup_read_file_mock(mocker, b"some data", "application/x-custom-format", "report.bin")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get("/v1/files/report.bin")
+
+    assert response.status_code == 200
+    assert "attachment" in response.headers.get(
+        "content-disposition", ""
+    ), "Unknown MIME type served inline — default-deny fallback missing"
+
+
+@pytest.mark.anyio
+async def test_read_file_raster_image_serves_inline(mocker):
+    """Raster images (png, jpeg) must still render inline — they are safe."""
+    _setup_read_file_mock(mocker, b"\x89PNG\r\n\x1a\n", "image/png", "photo.png")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get("/v1/files/photo.png")
+
+    assert response.status_code == 200
+    assert "attachment" not in response.headers.get("content-disposition", "")
+    assert response.headers.get("content-type", "").startswith("image/png")
+
+
+@pytest.mark.anyio
+async def test_read_file_pdf_serves_inline(mocker):
+    """PDF must still render inline."""
+    _setup_read_file_mock(mocker, b"%PDF-1.4", "application/pdf", "doc.pdf")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get("/v1/files/doc.pdf")
+
+    assert response.status_code == 200
+    assert "attachment" not in response.headers.get("content-disposition", "")
+
+
+@pytest.mark.anyio
+async def test_write_file_derives_mime_from_extension_not_client(authenticated_user, auth_headers, mocker):
+    """Upload with spoofed MIME — server must derive MIME from filename extension, ignoring client."""
+    mock_file_object = mocker.Mock()
+    mock_file_object.to_encoded_url.return_value = "url"
+
+    mock_fs_repo = mocker.Mock()
+    mock_fs_repo.write_file.return_value = mock_file_object
+
+    mocker.patch(
+        "codemie.rest_api.routers.files.FileRepositoryFactory.get_current_repository",
+        return_value=mock_fs_repo,
+    )
+    mocker.patch("codemie.rest_api.routers.files.MarkdownCacheService")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.post(
+            "/v1/files/",
+            files={"file": ("test.svg", SVG_XSS_PAYLOAD, "image/png")},  # client lies: says PNG
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 200
+    _, kwargs = mock_fs_repo.write_file.call_args
+    assert kwargs["mime_type"] == "image/svg+xml", (
+        f"Expected server-derived 'image/svg+xml' but got '{kwargs['mime_type']}' — "
+        "client-supplied MIME is being trusted"
+    )
+
+
+@pytest.mark.anyio
+async def test_write_files_bulk_derives_mime_from_extension_not_client(authenticated_user, auth_headers, mocker):
+    mock_file_object = mocker.Mock()
+    mock_file_object.to_encoded_url.return_value = "url"
+
+    mock_fs_repo = mocker.Mock()
+    mock_fs_repo.write_file.return_value = mock_file_object
+
+    mocker.patch(
+        "codemie.rest_api.routers.files.FileRepositoryFactory.get_current_repository",
+        return_value=mock_fs_repo,
+    )
+    mocker.patch("codemie.rest_api.routers.files.MarkdownCacheService")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.post(
+            "/v1/files/bulk",
+            files=[("files", ("attack.svg", SVG_XSS_PAYLOAD, "image/png"))],
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 200
+    _, kwargs = mock_fs_repo.write_file.call_args
+    assert kwargs["mime_type"] == "image/svg+xml"
+
+
+@pytest.mark.anyio
+async def test_write_file_none_filename_falls_back_to_octet_stream(authenticated_user, auth_headers, mocker):
+    """filename=None must not crash — falls back to application/octet-stream."""
+    mock_file_object = mocker.Mock()
+    mock_file_object.to_encoded_url.return_value = "url"
+
+    mock_fs_repo = mocker.Mock()
+    mock_fs_repo.write_file.return_value = mock_file_object
+
+    mocker.patch(
+        "codemie.rest_api.routers.files.FileRepositoryFactory.get_current_repository",
+        return_value=mock_fs_repo,
+    )
+
+    mock_cache_svc = mocker.Mock()
+    mocker.patch("codemie.rest_api.routers.files.MarkdownCacheService", return_value=mock_cache_svc)
+
+    mock_upload = mocker.Mock()
+    mock_upload.filename = None
+    mock_upload.size = 5
+    mock_upload.file.read.return_value = b"data"
+    mock_upload.content_type = "application/octet-stream"
+
+    mock_user = mocker.Mock()
+    mock_user.id = "test_user"
+
+    from codemie.rest_api.routers.files import write_file
+
+    write_file(file=mock_upload, user=mock_user)
+
+    _, kwargs = mock_fs_repo.write_file.call_args
+    assert kwargs["mime_type"] == "application/octet-stream"
 
 
 @pytest.mark.anyio

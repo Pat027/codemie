@@ -14,12 +14,14 @@
 
 import contextlib
 import hashlib
+import mimetypes
 
 from fastapi import APIRouter, Response, UploadFile, Depends, Request, File
 from typing import Any, List
 from starlette import status
 
 from codemie.configs import config
+from codemie_tools.base.file_object import normalise_mime
 from codemie.core.exceptions import ExtendedHTTPException
 from codemie.core.constants import MermaidContentType, MermaidResponseType, MermaidMimeType
 from codemie.repository.repository_factory import FileRepositoryFactory
@@ -37,25 +39,59 @@ router = APIRouter(
 )
 
 
-def get_sanitized_html_response(content) -> Response:
+_OCTET_STREAM = "application/octet-stream"
+
+
+def _safe_disposition(filename: str) -> str:
+    if not filename:
+        return "attachment"
+    safe = filename.replace("\r", "").replace("\n", "").replace('"', '\\"')
+    return f'attachment; filename="{safe}"'
+
+
+def get_attachment_response(content, filename: str = "") -> Response:
+    return Response(
+        content=content,
+        media_type=_OCTET_STREAM,
+        headers={"Content-Disposition": _safe_disposition(filename)},
+    )
+
+
+def get_safe_svg_response(content, filename: str = "") -> Response:
+    # Keep image/svg+xml so <img> tags still render the SVG (browsers ignore
+    # Content-Disposition for sub-resource fetches). Content-Disposition: attachment
+    # prevents the file from executing as a top-level document. CSP sandbox is a
+    # second layer that disables scripts even if a browser somehow renders it inline.
+    return Response(
+        content=content,
+        media_type="image/svg+xml",
+        headers={
+            "Content-Disposition": _safe_disposition(filename),
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+        },
+    )
+
+
+def get_sanitized_html_response(content, filename: str = "") -> Response:
+    disposition = _safe_disposition(filename)
     if isinstance(content, bytes):
         content = content.decode("utf-8", errors="backslashreplace")
 
     return Response(
         content=content,
         media_type="text/html",
-        headers={"Content-Disposition": "attachment"},
+        headers={"Content-Disposition": disposition},
     )
 
 
-def get_plain_text_response(content) -> Response:
+def get_plain_text_response(content, filename: str = "") -> Response:
     if isinstance(content, bytes):
         content = content.decode("utf-8", errors="backslashreplace")
 
     return Response(content=content, media_type="text/plain")
 
 
-def check_and_sanitize_content(content):
+def check_and_sanitize_content(content, filename: str = ""):
     """
     Checks binary content that has an octet-stream MIME type to see if it might
     contain executable HTML/JavaScript and handles it safely.
@@ -88,16 +124,24 @@ def check_and_sanitize_content(content):
         if has_script:
             return get_plain_text_response(content)
 
-    return Response(content=content, media_type="application/octet-stream")
+    return Response(content=content, media_type=_OCTET_STREAM)
 
+
+INLINE_SAFE_MIME_PREFIXES = ("image/", "application/pdf")
 
 READ_FILE_MIME_TYPE_HANDLERS = {
     "text/html": get_sanitized_html_response,
+    "image/svg+xml": get_safe_svg_response,
+    "text/xml": get_attachment_response,
+    "application/xml": get_attachment_response,
+    "application/xhtml+xml": get_attachment_response,
+    "application/rss+xml": get_attachment_response,
+    "application/atom+xml": get_attachment_response,
     "application/javascript": get_plain_text_response,
     "text/javascript": get_plain_text_response,
     "application/x-javascript": get_plain_text_response,
     "application/x-typescript": get_plain_text_response,
-    "application/octet-stream": check_and_sanitize_content,
+    _OCTET_STREAM: check_and_sanitize_content,
 }
 
 
@@ -119,11 +163,15 @@ def read_file(file_name: str) -> Any:
     try:
         file_object = FileService.get_file_object(file_name)
 
-        handler = READ_FILE_MIME_TYPE_HANDLERS.get(file_object.mime_type)
+        normalised = normalise_mime(file_object.mime_type)
+        handler = READ_FILE_MIME_TYPE_HANDLERS.get(normalised)
+
         if handler:
-            response = handler(file_object.content)
+            response = handler(file_object.content, file_object.name)
+        elif normalised.startswith(INLINE_SAFE_MIME_PREFIXES):
+            response = Response(content=file_object.content, media_type=normalised)
         else:
-            response = Response(content=file_object.content, media_type=file_object.mime_type)
+            response = get_attachment_response(file_object.content, file_object.name)
 
         response.headers["X-Content-Type-Options"] = "nosniff"
         return response
@@ -162,8 +210,9 @@ def write_file(file: UploadFile, user: User = Depends(authenticate)):
 
     fs_repo = FileRepositoryFactory().get_current_repository()
 
+    server_mime = mimetypes.guess_type(file.filename or "")[0] or _OCTET_STREAM
     MarkdownCacheService().invalidate(owner=user.id, filename=file.filename, repo=fs_repo)
-    result = fs_repo.write_file(name=file.filename, mime_type=file.content_type, owner=user.id, content=data)
+    result = fs_repo.write_file(name=file.filename, mime_type=server_mime, owner=user.id, content=data)
 
     return WriteFileResponse(file_url=result.to_encoded_url())
 
@@ -199,8 +248,9 @@ def write_files_bulk(files: List[UploadFile] = File(...), user: User = Depends(a
             data = file.file.read()
 
             # Write file to repository
+            server_mime = mimetypes.guess_type(file.filename or "")[0] or _OCTET_STREAM
             MarkdownCacheService().invalidate(owner=user.id, filename=file.filename, repo=fs_repo)
-            result = fs_repo.write_file(name=file.filename, mime_type=file.content_type, owner=user.id, content=data)
+            result = fs_repo.write_file(name=file.filename, mime_type=server_mime, owner=user.id, content=data)
 
             # Add to successful files list
             successful_files.append(WriteFileResponse(file_url=result.to_encoded_url()))

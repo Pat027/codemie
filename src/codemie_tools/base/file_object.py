@@ -23,6 +23,11 @@ from codemie_tools.base.string_serializer import StringSerializer
 UTF_8 = "utf-8"
 
 
+def normalise_mime(mime: str) -> str:
+    """Lowercase and strip MIME parameters: 'Image/SVG+XML; charset=utf-8' → 'image/svg+xml'."""
+    return mime.split(";")[0].strip().lower()
+
+
 class MimeType:
     """A class to represent the MIME type of a file"""
 
@@ -37,8 +42,25 @@ class MimeType:
     XLS_TYPE = 'application/vnd.ms-excel'
     DOCX_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
+    ACTIVE_CONTENT_TYPES: frozenset = frozenset(
+        {
+            "text/html",
+            "image/svg+xml",
+            "text/xml",
+            "application/xml",
+            "application/xhtml+xml",
+            "application/rss+xml",
+            "application/atom+xml",
+        }
+    )
+
     def __init__(self, mime_type: str):
         self.mime_type = mime_type
+
+    @property
+    def is_active_content(self) -> bool:
+        """True for MIME types that execute script when rendered as a top-level document."""
+        return normalise_mime(self.mime_type) in self.ACTIVE_CONTENT_TYPES
 
     @property
     def is_image(self) -> bool:

@@ -159,3 +159,45 @@ def test_is_image_file_object(file_object):
     file_object.mime_type = "text/plain"
     result = file_object.is_image()
     assert not result
+
+
+def test_normalise_mime_strips_params():
+    from codemie_tools.base.file_object import normalise_mime
+
+    assert normalise_mime("image/svg+xml; charset=utf-8") == "image/svg+xml"
+
+
+def test_normalise_mime_lowercases():
+    from codemie_tools.base.file_object import normalise_mime
+
+    assert normalise_mime("Image/SVG+XML") == "image/svg+xml"
+
+
+def test_normalise_mime_already_canonical():
+    from codemie_tools.base.file_object import normalise_mime
+
+    assert normalise_mime("image/png") == "image/png"
+
+
+def test_mime_type_is_active_content_svg():
+    assert MimeType("image/svg+xml").is_active_content is True
+
+
+def test_mime_type_is_active_content_xml():
+    assert MimeType("text/xml").is_active_content is True
+
+
+def test_mime_type_is_active_content_xhtml():
+    assert MimeType("application/xhtml+xml").is_active_content is True
+
+
+def test_mime_type_is_active_content_html():
+    assert MimeType("text/html").is_active_content is True
+
+
+def test_mime_type_is_not_active_content_png():
+    assert MimeType("image/png").is_active_content is False
+
+
+def test_mime_type_is_not_active_content_pdf():
+    assert MimeType("application/pdf").is_active_content is False
