@@ -333,7 +333,11 @@ def resync_project_member_allocations_sync(project_name: str, enforce_limit: boo
     coro = resync_project_member_allocations(project_name=project_name, enforce_limit=enforce_limit)
 
     loop = _main_event_loop
-    if loop is not None and loop.is_running():
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+    if loop is not None and loop.is_running() and current_loop is not loop:
         future = asyncio.run_coroutine_threadsafe(coro, loop)
         future.result(timeout=30)
         return
@@ -379,8 +383,18 @@ def ensure_project_member_runtime_ready_sync(
     # is necessary when called from a thread (e.g. asyncio.to_thread worker)
     # because asyncio.run() would create a *new* loop that cannot reuse the
     # pool's existing asyncpg connections.
+    #
+    # Guard: skip this path when the caller is already on the event loop thread
+    # (e.g. a sync function called directly from a lifespan coroutine).
+    # run_coroutine_threadsafe + future.result() would deadlock in that case
+    # because the loop is blocked waiting for the sync caller to return and
+    # can never schedule the new coroutine.
     loop = _main_event_loop
-    if loop is not None and loop.is_running():
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+    if loop is not None and loop.is_running() and current_loop is not loop:
         future = asyncio.run_coroutine_threadsafe(coro, loop)
         future.result()
         return
