@@ -104,15 +104,12 @@ class RequestSummaryManager:
         else:
             existing_runs.append(llm_run)
 
-    def get_summary(self, request_id: str) -> RequestSummary:
+    def get_summary(self, request_id: str) -> RequestSummary | None:
         summary = self.request_summaries.get(request_id, None)
         if summary:
             summary.calculate()
             return summary
-        else:
-            return RequestSummary(
-                request_id=request_id, tokens_usage=TokensUsage(input_tokens=0, output_tokens=0, money_spent=0)
-            )
+        return None
 
     def clear_summary(self, request_id: str):
         if request_id in self.request_summaries:

@@ -98,7 +98,7 @@ class DatasourceMonitoringCallback(DatasourceProcessorCallback):
         )
         if self.request_uuid:
             usage_summary = request_summary_manager.get_summary(self.request_uuid)
-            self.index.tokens_usage = usage_summary.tokens_usage
+            self.index.tokens_usage = usage_summary.tokens_usage if usage_summary else None
             try:
                 self.index.update()
             except IndexDeletedException:
@@ -107,14 +107,14 @@ class DatasourceMonitoringCallback(DatasourceProcessorCallback):
 
             # Send individual tokens usage metrics per model if we have LLM runs
             # This allows per-model breakdown in Kibana/Elasticsearch
-            if usage_summary.llm_runs:
+            if usage_summary and usage_summary.llm_runs:
                 DatasourceMonitoringService.send_datasource_tokens_usage_metrics_by_model(
                     index_info=self.index,
                     llm_runs=usage_summary.llm_runs,
                     user=self.user,
                 )
             # Fallback: Send aggregated metric if no individual runs but we have token usage
-            elif usage_summary.tokens_usage:
+            elif usage_summary and usage_summary.tokens_usage:
                 DatasourceMonitoringService.send_datasource_tokens_usage_metric(
                     index_info=self.index,
                     tokens_usage=usage_summary.tokens_usage,
@@ -140,7 +140,7 @@ class DatasourceMonitoringCallback(DatasourceProcessorCallback):
         )
         if self.request_uuid:
             usage_summary = request_summary_manager.get_summary(self.request_uuid)
-            self.index.tokens_usage = usage_summary.tokens_usage
+            self.index.tokens_usage = usage_summary.tokens_usage if usage_summary else None
             try:
                 self.index.update()
             except IndexDeletedException:
@@ -149,7 +149,7 @@ class DatasourceMonitoringCallback(DatasourceProcessorCallback):
 
             # Send individual tokens usage metrics per model even on error
             error_attrs = {"error": "true", "error_class": exception.__class__.__name__}
-            if usage_summary.llm_runs:
+            if usage_summary and usage_summary.llm_runs:
                 DatasourceMonitoringService.send_datasource_tokens_usage_metrics_by_model(
                     index_info=self.index,
                     llm_runs=usage_summary.llm_runs,
@@ -157,7 +157,7 @@ class DatasourceMonitoringCallback(DatasourceProcessorCallback):
                     additional_attributes=error_attrs,
                 )
             # Fallback: Send aggregated metric if no individual runs but we have token usage
-            elif usage_summary.tokens_usage:
+            elif usage_summary and usage_summary.tokens_usage:
                 DatasourceMonitoringService.send_datasource_tokens_usage_metric(
                     index_info=self.index,
                     tokens_usage=usage_summary.tokens_usage,

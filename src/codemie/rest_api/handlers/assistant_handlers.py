@@ -350,7 +350,8 @@ class AssistantRequestHandler(ABC):
 
         set_llm_context(self.assistant, None, self.user)
 
-        tokens_usage = request_summary_manager.get_summary(self.request_uuid).tokens_usage
+        summary = request_summary_manager.get_summary(self.request_uuid)
+        tokens_usage = summary.tokens_usage if summary else None
         ConversationService.upsert_chat_history(
             request=data.request,
             user=self.user,

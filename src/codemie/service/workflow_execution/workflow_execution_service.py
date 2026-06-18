@@ -279,10 +279,11 @@ class WorkflowExecutionService:
         with self.workflow_execution_lock:
             self._refresh_workflow_execution()
             if self.workflow_execution:
-                self.workflow_execution.tokens_usage = self._calculate_tokens_usage(
-                    self.workflow_execution_id,
-                )
-                self.workflow_execution.update(refresh=REFRESH_WAIT_FOR)
+                if self.workflow_execution.overall_status != WorkflowExecutionStatusEnum.ABORTED:
+                    self.workflow_execution.tokens_usage = self._calculate_tokens_usage(
+                        self.workflow_execution_id,
+                    )
+                    self.workflow_execution.update(refresh=REFRESH_WAIT_FOR)
             else:
                 logger.warning(
                     f"Workflow execution not found for execution_id: {self.workflow_execution_id}. "
@@ -377,7 +378,8 @@ class WorkflowExecutionService:
 
     @staticmethod
     def _calculate_tokens_usage(workflow_execution_id: str):
-        return request_summary_manager.get_summary(workflow_execution_id).tokens_usage
+        summary = request_summary_manager.get_summary(workflow_execution_id)
+        return summary.tokens_usage if summary else None
 
     def _update_assistant_response_in_history(self, assistant_response: str | None):
         """
