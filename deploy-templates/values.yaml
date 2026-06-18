@@ -205,12 +205,6 @@ features:
         # -- Specify name to use a separate namespace for scheduling code_executor pods. Empty means the same namespace as CodeMie
         namespace: ""
 
-security:
-  processAuthSecret:
-    create: false  # no longer needed — HMAC key is pod-startup ephemeral
-    name: ""
-    field: ""
-
 serviceAccount:
   # -- Specifies whether a service account should be created
   create: true

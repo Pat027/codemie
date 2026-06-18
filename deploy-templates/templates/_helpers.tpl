@@ -96,20 +96,6 @@ Return if ingress supports pathType.
 {{- end -}}
 
 {{/*
-Create the name of the secret for inter-process authentication
-*/}}
-{{- define "codemie.processAuthSecretName" -}}
-{{- default (printf "%s-process-auth" (include "codemie.name" .)) .Values.security.processAuthSecret.name }}
-{{- end }}
-
-{{/*
-Create the name of the secret field for inter-process authentication
-*/}}
-{{- define "codemie.processAuthSecretField" -}}
-{{- default "internal_bind_key" .Values.security.processAuthSecret.field }}
-{{- end }}
-
-{{/*
 Merge two or more lists of dicts by the "name" field (last-wins on collision).
 Items without a "name" field are skipped.
 Insertion order from the first list is preserved; new names from later lists are appended.

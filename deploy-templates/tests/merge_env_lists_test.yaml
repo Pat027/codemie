@@ -11,7 +11,7 @@ tests:
     asserts:
       - lengthEqual:
           path: spec.template.spec.containers[0].env
-          count: 2  # only APP_VERSION and INTERNAL_BIND_KEY (hardcoded); mergeEnvLists contributes nothing
+          count: 1  # only APP_VERSION (hardcoded); mergeEnvLists contributes nothing
 
   - it: extraEnv only passes through unchanged when customEnv is empty
     values:
@@ -88,14 +88,14 @@ tests:
       - values/merge_env_lists_mixed.yaml
     asserts:
       - equal:
-          # APP_VERSION=0, INTERNAL_BIND_KEY=1, then merged: ALPHA=2, BETA=3, GAMMA=4
-          path: spec.template.spec.containers[0].env[2].name
+          # APP_VERSION=0, then merged: ALPHA=1, BETA=2, GAMMA=3
+          path: spec.template.spec.containers[0].env[1].name
           value: ALPHA
       - equal:
-          path: spec.template.spec.containers[0].env[3].name
+          path: spec.template.spec.containers[0].env[2].name
           value: BETA
       - equal:
-          path: spec.template.spec.containers[0].env[4].name
+          path: spec.template.spec.containers[0].env[3].name
           value: GAMMA
 
   - it: customEnv valueFrom overrides plain value entry with same name
