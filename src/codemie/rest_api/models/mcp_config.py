@@ -56,9 +56,11 @@ MCP_SERVER_CONFIG_DESCRIPTION = "MCP server configuration"
 
 _ALLOWED_MCP_COMMANDS: frozenset[str] = frozenset(
     {
-        # Package runners (user-configured)
+        # Package runners (user-configured) Linux/MacOS
         "npx",
         "uvx",
+        # Package runners (user-configured) Windows
+        "npx.cmd",
         # Pre-installed MCP server binaries in the mcp-connect-service container
         "mcp-server-filesystem",
         "mcp-server-memory",
