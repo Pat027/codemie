@@ -80,7 +80,9 @@ class BySettingIDSettingsHandler(SettingsHandler):
 
     def handle(self, search_fields: dict, setting_id: Optional[str] = None, **kwargs) -> Optional[SettingsBase]:
         if setting_id and (settings := search_settings_by_id(setting_id)):
-            return settings
+            expected_type = search_fields.get(SearchFields.CREDENTIAL_TYPE)
+            if not expected_type or settings.credential_type == expected_type:
+                return settings
 
         return super().handle(search_fields, setting_id=setting_id, **kwargs)
 
