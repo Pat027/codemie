@@ -212,6 +212,7 @@ class TestReindexValidation:
 
         mock_index = Mock()
         mock_index.project_name = "test-project"
+        mock_index.index_type = "git"
         mock_index_info.return_value = [mock_index]
 
         mock_ability_instance = Mock()
@@ -277,6 +278,7 @@ class TestReindexValidation:
 
         mock_index = Mock()
         mock_index.project_name = "test-project"
+        mock_index.index_type = "git"
         mock_index_info.return_value = [mock_index]
 
         mock_ability_instance = Mock()
@@ -341,6 +343,7 @@ class TestReindexValidation:
 
         mock_index = Mock()
         mock_index.project_name = "test-project"
+        mock_index.index_type = "git"
         mock_index.update_index = Mock()
         mock_index_info.return_value = [mock_index]
 

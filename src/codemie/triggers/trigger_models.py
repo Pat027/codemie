@@ -40,6 +40,10 @@ class CodeReindexTask(ReindexTaskPayload):
     repo_id: str = Field(..., description="The ID of the Git repository.")
 
 
+class SVNReindexTask(ReindexTaskPayload):
+    svn_repo_id: str = Field(..., description="The ID of the SVN repository.")
+
+
 class JiraReindexTask(ReindexTaskPayload):
     jql: str = Field(..., description="The JQL query to filter Jira issues for reindexing.")
 

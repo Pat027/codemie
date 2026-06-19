@@ -38,7 +38,7 @@ from pydantic.alias_generators import to_camel
 
 from codemie.configs import config
 from codemie.core.ability import Owned
-from codemie.core.constants import CodeIndexType, ChatRole, BackgroundTaskStatus
+from codemie.core.constants import CodeIndexType, ChatRole, BackgroundTaskStatus, DatasourceTypes
 
 if TYPE_CHECKING:
     from codemie.rest_api.security.user import User
@@ -56,6 +56,12 @@ from sqlmodel import SQLModel, Field as SQLField, Column, CheckConstraint, Index
 
 PORT_PATTERN = r"(?:\d{1,4}|[1-5]\d{4}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5])"
 LINK_PATTERN = rf"^https?:\/\/[A-Za-z0-9][A-Za-z0-9\-\.]*[A-Za-z0-9](?:\.[A-Za-z]{{2,}}|\:{PORT_PATTERN})(?:\/.*)?$"
+_SVN_PROTO = r"(https?|svn(\+ssh)?)"
+_SVN_USERINFO = r"([A-Za-z0-9._-]+@)?"
+_SVN_HOST = r"[A-Za-z0-9][A-Za-z0-9.\-]*"
+_SVN_DOMAIN = r"(?:\.[A-Za-z]{2,})?"
+_SVN_PORT = rf"(?:\:{PORT_PATTERN})?"
+SVN_LINK_PATTERN = rf"^{_SVN_PROTO}:\/\/{_SVN_USERINFO}{_SVN_HOST}{_SVN_DOMAIN}{_SVN_PORT}(?:\/.*)?$"
 NAME_PATTERN = r"^[a-zA-Z0-9][\w-]*$"
 BRANCH_PATTERN = r"^[a-zA-Z0-9][\w\./-]*$"
 
@@ -99,20 +105,17 @@ class AbstractElasticModel(ConfiguredModel, ABC):
         pass
 
 
-class BaseGitRepo(CommonBaseModel):
+class BaseRepository(CommonBaseModel):
     name: Annotated[str, StringConstraints(pattern=NAME_PATTERN, min_length=4, max_length=50, strict=True)] = SQLField(
         sa_type=String
     )
     description: Annotated[str, StringConstraints(min_length=1, max_length=500, strict=True)] = SQLField(sa_type=String)
-    link: Annotated[str, StringConstraints(pattern=LINK_PATTERN, min_length=1, max_length=1000, strict=True)] = (
-        SQLField(sa_type=String)
-    )
+    link: Annotated[str, StringConstraints(min_length=1, max_length=1000, strict=True)] = SQLField(sa_type=String)
     branch: Annotated[str, StringConstraints(pattern=BRANCH_PATTERN, min_length=1, max_length=1000, strict=True)] = (
         SQLField(sa_type=String)
     )
     files_filter: Optional[str] = SQLField(default="")
     index_type: CodeIndexType
-    last_indexed_commit: Optional[str] = None
     embeddings_model: Optional[str] = None
     summarization_model: Optional[str] = SQLField(default=llm_service.default_llm_model)
     prompt: Optional[str] = None
@@ -126,6 +129,13 @@ class BaseGitRepo(CommonBaseModel):
     @field_validator("link", mode="before")
     def trim_link(cls, link_value: str) -> str:
         return link_value.strip() if link_value else link_value
+
+
+class BaseGitRepo(BaseRepository):
+    link: Annotated[str, StringConstraints(pattern=LINK_PATTERN, min_length=1, max_length=1000, strict=True)] = (
+        SQLField(sa_type=String)
+    )
+    last_indexed_commit: Optional[str] = None
 
 
 class AuthenticationType(Enum):
@@ -197,6 +207,7 @@ class CodeRepoType(str, Enum):
     GITLAB = "gitlab"
     BITBUCKET = "bitbucket"
     AZURE_DEVOPS_REPOS = "azure_devops"
+    SVN = "svn"
     UNKNOWN = "unknown"
 
     @classmethod
@@ -206,7 +217,9 @@ class CodeRepoType(str, Enum):
 
         link = link.lower()
 
-        if any(identifier in link for identifier in config.GITHUB_IDENTIFIERS):
+        if link.startswith("svn://") or link.startswith("svn+ssh://"):
+            return cls.SVN
+        elif any(identifier in link for identifier in config.GITHUB_IDENTIFIERS):
             return cls.GITHUB
         elif any(identifier in link for identifier in config.GITLAB_IDENTIFIERS):
             return cls.GITLAB
@@ -273,6 +286,41 @@ class GitRepo(BaseModelWithSQLSupport, BaseGitRepo, table=True):
 
     def get_repo_local_file_path(self) -> str:
         app_folder = f"{config.REPOS_LOCAL_DIR}/{self.app_id}/{self.name}"
+        if not os.path.exists(app_folder):
+            os.makedirs(app_folder)
+        return app_folder
+
+    @classmethod
+    def get_by_app_id(cls, app_id: str):
+        return cls.get_all_by_fields({"app_id": app_id})
+
+
+class SVNRepo(BaseModelWithSQLSupport, BaseRepository, table=True):
+    __tablename__ = "svn_repositories"
+
+    link: Annotated[str, StringConstraints(pattern=SVN_LINK_PATTERN, min_length=1, max_length=1000, strict=True)] = (
+        SQLField(sa_type=String)
+    )
+    branch: Annotated[str, StringConstraints(pattern=BRANCH_PATTERN, min_length=1, max_length=1000, strict=True)] = (
+        SQLField(sa_type=String, default="trunk")
+    )
+    last_indexed_revision: Optional[int] = SQLField(default=None)
+
+    app_id: str = SQLField(index=True)
+
+    def save(self, refresh=False, validate=True) -> PostResponse:
+        self.id = self.id if self.id else self.get_identifier()
+        return super().save(refresh=refresh, validate=validate)
+
+    def get_identifier(self) -> str:
+        return self.original_storage or self.identifier_from_fields(self.app_id, self.name, self.index_type)
+
+    @staticmethod
+    def identifier_from_fields(app_id: str, name: str, index_type: CodeIndexType):
+        return sanitize_es_index_name(f"{app_id}-{name}-svn-{index_type.value}")
+
+    def get_repo_local_file_path(self) -> str:
+        app_folder = f"{config.REPOS_LOCAL_DIR}/{self.app_id}/svn_{self.name}"
         if not os.path.exists(app_folder):
             os.makedirs(app_folder)
         return app_folder
@@ -431,6 +479,7 @@ class CodeFields(ConfiguredModel):
     app_name: str
     repo_name: str
     index_type: CodeIndexType
+    repo_type: DatasourceTypes = DatasourceTypes.GIT
 
 
 class ToolConfig(ConfiguredModel):

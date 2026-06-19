@@ -115,6 +115,12 @@ class SharePointConfig(BaseModel):
     graph_base_url: str
 
 
+class SVNConfig(BaseModel):
+    loader_batch_size: int
+    checkout_timeout_seconds: int = 300
+    max_file_size_kb: int = 5000
+
+
 class LoadersConfig(BaseModel):
     code_loader: CodeConfig
     jira_loader: JiraConfig
@@ -125,6 +131,7 @@ class LoadersConfig(BaseModel):
     azure_devops_work_item_loader: AzureDevOpsWorkItemConfig
     xray_loader: XrayConfig
     sharepoint_loader: SharePointConfig
+    svn_loader: SVNConfig
 
 
 class StorageConfig(BaseModel):
@@ -169,6 +176,7 @@ AZURE_DEVOPS_WIKI_CONFIG = datasources_config.loaders.azure_devops_wiki_loader
 AZURE_DEVOPS_WORK_ITEM_CONFIG = datasources_config.loaders.azure_devops_work_item_loader
 XRAY_CONFIG = datasources_config.loaders.xray_loader
 SHAREPOINT_CONFIG = datasources_config.loaders.sharepoint_loader
+SVN_CONFIG = datasources_config.loaders.svn_loader
 STORAGE_CONFIG = datasources_config.storage
 
 logger.info(f"CodeDatasourceConfig instantiated: {CODE_CONFIG}")
@@ -180,4 +188,5 @@ logger.info(f"AzureDevOpsWikiDatasourceConfig instantiated: {AZURE_DEVOPS_WIKI_C
 logger.info(f"AzureDevOpsWorkItemDatasourceConfig instantiated: {AZURE_DEVOPS_WORK_ITEM_CONFIG}")
 logger.info(f"XrayDatasourceConfig instantiated: {XRAY_CONFIG}")
 logger.info(f"SharePointDatasourceConfig instantiated: {SHAREPOINT_CONFIG}")
+logger.info(f"SVNDatasourceConfig instantiated: {SVN_CONFIG}")
 logger.info(f"DatasourceStorageConfig instantiated: {STORAGE_CONFIG}")

@@ -70,6 +70,7 @@ class CredentialTypes(str, Enum):
     JIRA = "Jira"
     CONFLUENCE = "Confluence"
     GIT = "Git"
+    SVN = "SVN"
     KUBERNETES = "Kubernetes"
     AWS = "AWS"
     GCP = "GCP"

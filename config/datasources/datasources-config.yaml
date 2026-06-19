@@ -144,6 +144,11 @@ loaders:
     graph_api_version: "v1.0"
     graph_base_url: "https://graph.microsoft.com"
 
+  svn_loader:
+    loader_batch_size: 250
+    checkout_timeout_seconds: 300
+    max_file_size_kb: 5000
+
 storage:
   embeddings_max_docs_count: 20
   indexing_bulk_max_chunk_bytes: 104857600  # 100 MB

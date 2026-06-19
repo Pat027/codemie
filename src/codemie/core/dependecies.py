@@ -28,8 +28,8 @@ from codemie.clients.elasticsearch import ElasticSearchClient
 from codemie.configs import config, logger
 from codemie.configs.llm_config import LLMProvider, LLMModel
 from codemie.configs.logger import current_user_email, logging_user_id
-from codemie.core.constants import DEFAULT_MAX_OUTPUT_TOKENS_4K, DEFAULT_MAX_OUTPUT_TOKENS_8K
-from codemie.core.models import ElasticSearchKwargs, GitRepo, CodeFields, Application
+from codemie.core.constants import DEFAULT_MAX_OUTPUT_TOKENS_4K, DEFAULT_MAX_OUTPUT_TOKENS_8K, DatasourceTypes
+from codemie.core.models import ElasticSearchKwargs, GitRepo, SVNRepo, CodeFields, Application
 from codemie.rest_api.models.settings import DialCredentials, LiteLLMContext
 from codemie.service.llm_service.llm_service import llm_service, LLMService
 
@@ -488,17 +488,26 @@ def get_elasticsearch_retriever(
     return elastic_search.as_retriever(search_kwargs=search_kwargs)
 
 
-def get_indexed_repo(code_field: CodeFields) -> GitRepo:
-    repo_id = GitRepo.identifier_from_fields(
-        app_id=code_field.app_name, name=code_field.repo_name, index_type=code_field.index_type
-    )
-    return GitRepo.get_by_id(repo_id)
+def get_indexed_repo(code_field: CodeFields) -> GitRepo | SVNRepo:
+    if code_field.repo_type == DatasourceTypes.SVN:
+        repo_id = SVNRepo.identifier_from_fields(
+            app_id=code_field.app_name, name=code_field.repo_name, index_type=code_field.index_type
+        )
+        repo = SVNRepo.find_by_id(repo_id)
+    else:
+        repo_id = GitRepo.identifier_from_fields(
+            app_id=code_field.app_name, name=code_field.repo_name, index_type=code_field.index_type
+        )
+        repo = GitRepo.find_by_id(repo_id)
+    if repo:
+        return repo
+    raise KeyError(f"No repository found for {code_field.app_name}/{code_field.repo_name}")
 
 
 def get_git_repo_retriever(code_field: CodeFields, top_k: int = 10) -> VectorStoreRetriever:
     indexed_repo = get_indexed_repo(code_field)
-    git_repo = get_repo_from_fields(code_field)
-    embeddings_model = llm_service.get_embedding_deployment_name(git_repo.embeddings_model)
+    repo = get_repo_from_fields(code_field)
+    embeddings_model = llm_service.get_embedding_deployment_name(repo.embeddings_model)
     return get_elasticsearch_retriever(indexed_repo.get_identifier(), top_k, embeddings_model)
 
 
@@ -513,13 +522,13 @@ def get_stt_openai_client():
 
 def get_repo_from_fields(code_fields: CodeFields):
     application = Application.get_by_id(code_fields.app_name)
-    git_repos = GitRepo.get_by_app_id(app_id=application.name)
+    if code_fields.repo_type == DatasourceTypes.SVN:
+        repos = SVNRepo.get_by_app_id(app_id=application.name)
+    else:
+        repos = GitRepo.get_by_app_id(app_id=application.name)
     try:
-        repository = next(
-            repo
-            for repo in git_repos
-            if repo.name == code_fields.repo_name and repo.index_type == code_fields.index_type
+        return next(
+            repo for repo in repos if repo.name == code_fields.repo_name and repo.index_type == code_fields.index_type
         )
-        return repository
     except StopIteration:
         logger.error(f"Repository [{code_fields.repo_name}] not found")

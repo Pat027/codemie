@@ -14,6 +14,19 @@ files = [
 ]
 
 [[package]]
+name = "aiofiles"
+version = "25.1.0"
+description = "File support for asyncio."
+optional = true
+python-versions = ">=3.9"
+groups = ["main"]
+markers = "extra == \"enterprise\""
+files = [
+    {file = "aiofiles-25.1.0-py3-none-any.whl", hash = "sha256:abe311e527c862958650f9438e859c1fa7568a141b22abcd015e120e86a85695"},
+    {file = "aiofiles-25.1.0.tar.gz", hash = "sha256:a8d728f0a29de45dc521f18f07297428d56992a742f0cd2701ba86e44d23d5b2"},
+]
+
+[[package]]
 name = "aiohappyeyeballs"
 version = "2.6.1"
 description = "Happy Eyeballs for asyncio"
@@ -9795,6 +9808,22 @@ typing-extensions = {version = ">=4.10.0", markers = "python_version < \"3.13\""
 full = ["httpx (>=0.27.0,<0.29.0)", "httpx2 (>=2.0.0)", "itsdangerous", "jinja2", "python-multipart (>=0.0.18)", "pyyaml"]
 
 [[package]]
+name = "subvertpy"
+version = "0.11.1"
+description = "Alternative Python bindings for Subversion"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "subvertpy-0.11.1-cp310-cp310-manylinux_2_34_x86_64.whl", hash = "sha256:e868ca4bd8ee0632488936c499b7b5213279fd3925471ae1efc555387af7487b"},
+    {file = "subvertpy-0.11.1-cp311-cp311-manylinux_2_34_x86_64.whl", hash = "sha256:e245f42f143e93b8294dddd9b6861f9a0a19452c96a20a43b4a21d9591903f0d"},
+    {file = "subvertpy-0.11.1-cp312-cp312-manylinux_2_34_x86_64.whl", hash = "sha256:95b79f01ed81cecdf35dd26db5c92297ce4eeaa69cc4095f729ed8d8d6aa8f22"},
+    {file = "subvertpy-0.11.1-cp313-cp313-manylinux_2_34_x86_64.whl", hash = "sha256:726e1804d6990f90a238c8a130e6dafcf34f464e37042e1de042990d8f3970f9"},
+    {file = "subvertpy-0.11.1-cp314-cp314-manylinux_2_34_x86_64.whl", hash = "sha256:a1ef6b28c8d692294003a4488e8eb6bdc1393245f68df775800f712bd4fb5672"},
+    {file = "subvertpy-0.11.1.tar.gz", hash = "sha256:0623087f6d1a702e26076de4b37bab7ad7afee53395570539464b289e2bc2971"},
+]
+
+[[package]]
 name = "sympy"
 version = "1.14.0"
 description = "Computer algebra system (CAS) in Python"
@@ -11298,6 +11327,7 @@ cffi = {version = ">=1.11", markers = "platform_python_implementation == \"PyPy\
 [package.extras]
 cffi = ["cffi (>=1.11)"]
 
+
 [extras]
 enterprise = ["codemie-enterprise"]
 pdf-svg = ["cairosvg"]
@@ -11305,4 +11335,4 @@ pdf-svg = ["cairosvg"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.14"
-content-hash = "b9fdbfcf2a0cf2e098e615cb37b35f0fa85b093f8524be96a8db7ef700f488df"
+content-hash = "f988568dda2a60d2c4dbdb15e71015ec11ef6f66071449d20f3e623fc18c9794"

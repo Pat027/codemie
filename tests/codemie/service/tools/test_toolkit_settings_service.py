@@ -338,6 +338,7 @@ class TestGetFileSystemToolkit:
 
         mock_code_index = MagicMock()
         mock_code_index.index_type = "code"
+        mock_code_index.repo_type = "git"
         mock_find_code_index.return_value = mock_code_index
 
         mock_llm = MagicMock()

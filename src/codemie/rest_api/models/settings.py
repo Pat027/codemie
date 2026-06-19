@@ -106,6 +106,26 @@ class Credentials(BaseModel):
         return values
 
 
+class SVNAuthType(str, Enum):
+    """SVN authentication types."""
+
+    BASIC = "basic"
+    SSH_KEY = "ssh_key"
+
+
+class SVNCredentials(BaseModel):
+    url: str = ""
+    auth_type: SVNAuthType = SVNAuthType.BASIC
+
+    # Basic auth fields
+    username: Optional[str] = None
+    password: Optional[str] = None
+
+    # SSH key auth fields (for svn+ssh:// URLs)
+    ssh_key: Optional[str] = None
+    ssh_passphrase: Optional[str] = None
+
+
 class AWSCredentials(AWSConfig):
     pass
 

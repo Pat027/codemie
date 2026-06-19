@@ -29,7 +29,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from codemie.configs import logger, config
 from codemie.core.constants import CodeIndexType
-from codemie.core.models import GitRepo
+from codemie.core.models import GitRepo, SVNRepo
 from codemie.rest_api.models.index import IndexInfo
 from codemie_tools.base.models import CredentialTypes
 from codemie.rest_api.models.settings import Settings
@@ -44,6 +44,7 @@ from codemie.triggers.actors.datasource import (
     reindex_confluence,
     reindex_google,
     reindex_jira,
+    reindex_svn,
     resume_stale_datasource,
 )
 from codemie.triggers.actors.workflow import invoke_workflow
@@ -57,6 +58,7 @@ from codemie.triggers.trigger_models import (
     ConfluenceReindexTask,
     GoogleReindexTask,
     JiraReindexTask,
+    SVNReindexTask,
 )
 
 # Constants
@@ -517,7 +519,28 @@ class Cron:
         # Build payload based on index type
         index_type_str = index_type.value if isinstance(index_type, CodeIndexType) else index_type
 
-        if index_type_str in (CodeIndexType.CODE, CodeIndexType.SUMMARY, CodeIndexType.CHUNK_SUMMARY):
+        if index_info.repo_type == "svn":
+            svn_repos = SVNRepo.get_by_app_id(app_id=project_name)
+            svn_repo = next((r for r in svn_repos if r.name == resource_name), None)
+            if not svn_repo:
+                logger.error("SVN repo '%s' not found in project '%s'", resource_name, project_name)
+                return None
+            payload = SVNReindexTask(
+                project_name=project_name,
+                resource_id=job_id,
+                resource_name=resource_name,
+                user=user,
+                index_info=index_info,
+                svn_repo_id=svn_repo.id,
+            )
+            return self.scheduler.add_job(
+                reindex_svn,
+                trigger=cron_trigger,
+                id=job_id,
+                replace_existing=True,
+                kwargs={"payload": payload},
+            )
+        elif index_type_str in (CodeIndexType.CODE, CodeIndexType.SUMMARY, CodeIndexType.CHUNK_SUMMARY):
             # Get repo_id from the Git repository
             repo_id = GitRepo.identifier_from_fields(
                 app_id=project_name, name=resource_name, index_type=CodeIndexType(index_type_str)

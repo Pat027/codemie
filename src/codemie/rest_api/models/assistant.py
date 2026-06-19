@@ -32,7 +32,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as SQLField, Session, select, Column, and_, Index, text
 
 from codemie.core.ability import Owned, Ability, Action
-from codemie.core.constants import CodeIndexType, ProviderIndexType, DEMO_PROJECT
+from codemie.core.constants import DEMO_PROJECT
 from codemie.core.models import AssistantChatRequest, ChatMessage, CreatedByUser, ToolConfig
 from codemie.rest_api.a2a.types import AgentCard
 from codemie.rest_api.models.base import (
@@ -42,7 +42,7 @@ from codemie.rest_api.models.base import (
     PydanticListType,
 )
 from codemie.rest_api.models.guardrail import GuardrailAssignmentItem, GuardrailEntity
-from codemie.rest_api.models.index import IndexInfo
+from codemie.rest_api.models.index import IndexInfo, IndexTypeByContextTypeMapping
 from codemie.rest_api.models.settings import SettingsBase
 from codemie.rest_api.models.standard import PostResponse
 from codemie.core.models import BaseResponse
@@ -107,13 +107,7 @@ class Context(BaseModel):
     @classmethod
     def index_info_type(cls, index: IndexInfo):
         """Detect IndexInfo type to be used as assistant context"""
-        if index.index_type in list(CodeIndexType):
-            return ContextType.CODE
-
-        if index.index_type == ProviderIndexType.PROVIDER:
-            return ContextType.PROVIDER
-
-        return ContextType.KNOWLEDGE_BASE
+        return cls.index_info_type_from_index_type(index.index_type)
 
     @classmethod
     def index_info_type_from_index_type(cls, index_type: str) -> ContextType:
@@ -125,11 +119,9 @@ class Context(BaseModel):
         Returns:
             The corresponding ContextType enum value
         """
-        if index_type in [e.value for e in CodeIndexType]:
-            return ContextType.CODE
-
-        if index_type == ProviderIndexType.PROVIDER.value:
-            return ContextType.PROVIDER
+        for mapping in IndexTypeByContextTypeMapping:
+            if any(index_type.startswith(prefix) for prefix in mapping.value):
+                return ContextType[mapping.name]
 
         return ContextType.KNOWLEDGE_BASE
 

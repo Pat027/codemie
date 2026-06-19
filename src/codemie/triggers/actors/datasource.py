@@ -20,7 +20,7 @@ from uuid import uuid4
 from codemie.configs import logger
 from codemie.datasource.datasource_concurrency_manager import datasource_concurrency_manager
 from codemie.core.constants import CodeIndexType
-from codemie.core.models import GitRepo
+from codemie.core.models import GitRepo, SVNRepo
 from codemie.rest_api.models.index import IndexInfo
 from codemie.rest_api.security.user import User
 from codemie.datasource.azure_devops_wiki.azure_devops_wiki_datasource_processor import (
@@ -30,6 +30,7 @@ from codemie.datasource.azure_devops_work_item.azure_devops_work_item_datasource
     AzureDevOpsWorkItemDatasourceProcessor,
 )
 from codemie.datasource.code.code_datasource_processor import CodeDatasourceProcessor
+from codemie.datasource.svn.svn_datasource_processor import SVNDatasourceProcessor
 from codemie.datasource.confluence_datasource_processor import (
     ConfluenceDatasourceProcessor,
     IndexKnowledgeBaseConfluenceConfig,
@@ -50,6 +51,7 @@ from codemie.triggers.trigger_models import (
     ConfluenceReindexTask,
     GoogleReindexTask,
     JiraReindexTask,
+    SVNReindexTask,
 )
 
 REINDEX_START_MSG = "Starting reindexing for %s datasource (Trigger Invoked, job_id: %s, project: %s, resource: %s)."
@@ -96,6 +98,54 @@ def reindex_code(payload: CodeReindexTask):
 
     processor = CodeDatasourceProcessor.create_processor(
         git_repo=app_repo,
+        user=payload.user,
+        index=payload.index_info,
+        request_uuid=str(uuid4()),
+    )
+
+    datasource_concurrency_manager.run(processor.reprocess, processor.index)
+
+    logger.info(
+        REINDEX_SUCCESS_MSG,
+        payload.index_info.index_type,
+        payload.resource_id,
+        payload.project_name,
+        payload.resource_name,
+    )
+
+
+def reindex_svn(payload: SVNReindexTask):
+    """
+    Initiates the reindexing process for an SVN datasource.
+
+    Args:
+        payload (SVNReindexTask): The task payload containing all necessary information for reindexing an SVN repo.
+    """
+    IndexInfo.stamp_reindex_triggered_at(payload.index_info.id)
+
+    logger.info(
+        REINDEX_START_MSG,
+        payload.index_info.index_type,
+        payload.resource_id,
+        payload.project_name,
+        payload.resource_name,
+    )
+
+    svn_repo = SVNRepo.get_by_fields({"id": payload.svn_repo_id, "setting_id": payload.index_info.setting_id})
+    if not svn_repo:
+        error_msg = f"SVN repository '{payload.resource_name}' not found in project '{payload.project_name}'."
+        logger.error(
+            REINDEX_FAILED_MSG,
+            payload.index_info.index_type,
+            payload.resource_id,
+            payload.project_name,
+            payload.resource_name,
+            error_msg,
+        )
+        return
+
+    processor = SVNDatasourceProcessor.create_processor(
+        svn_repo=svn_repo,
         user=payload.user,
         index=payload.index_info,
         request_uuid=str(uuid4()),
@@ -603,7 +653,7 @@ def _resume_sharepoint(index_info: IndexInfo, user: User, request_uuid: str) -> 
 
 
 def _resume_code(index_info: IndexInfo, user: User, request_uuid: str) -> None:
-    """Handle resume for code datasources."""
+    """Handle resume for Git code datasources."""
     repo_id = GitRepo.identifier_from_fields(
         app_id=index_info.project_name,
         name=index_info.repo_name,
@@ -613,12 +663,28 @@ def _resume_code(index_info: IndexInfo, user: User, request_uuid: str) -> None:
     if not app_repo:
         logger.error(
             f"resume_stale_datasource: GitRepo not found for "
-            f"project='{index_info.project_name}', repo='{index_info.repo_name}', "
-            f"setting_id={index_info.setting_id}"
+            f"project='{index_info.project_name}', repo='{index_info.repo_name}'"
         )
         return
     CodeDatasourceProcessor.create_processor(
         git_repo=app_repo,
+        user=user,
+        index=index_info,
+        request_uuid=request_uuid,
+    ).resume()
+
+
+def _resume_svn(index_info: IndexInfo, user: User, request_uuid: str) -> None:
+    """Handle resume for SVN code datasources."""
+    svn_repo = SVNRepo.get_by_fields({"app_id": index_info.project_name, "name": index_info.repo_name})
+    if not svn_repo:
+        logger.error(
+            f"resume_stale_datasource: SVNRepo not found for "
+            f"project='{index_info.project_name}', repo='{index_info.repo_name}'"
+        )
+        return
+    SVNDatasourceProcessor.create_processor(
+        svn_repo=svn_repo,
         user=user,
         index=index_info,
         request_uuid=request_uuid,
@@ -706,6 +772,7 @@ _RESUME_DISPATCH: dict = {
     "code": _resume_code,
     "summary": _resume_code,
     "chunk-summary": _resume_code,
+    "svn": _resume_svn,
     "knowledge_base_jira": _resume_jira,
     "knowledge_base_confluence": _resume_confluence,
     "llm_routing_google": _resume_google_doc,

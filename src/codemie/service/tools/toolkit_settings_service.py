@@ -208,7 +208,10 @@ class ToolkitSettingService:
                 if context.context_type == ContextType.CODE:
                     code_index = ToolkitSettingService._find_code_index(assistant.project, context.name)
                     code_fields = CodeFields(
-                        app_name=assistant.project, repo_name=context.name, index_type=code_index.index_type
+                        app_name=assistant.project,
+                        repo_name=context.name,
+                        index_type=code_index.index_type,
+                        repo_type=code_index.repo_type,
                     )
                     configs["code_fields"] = code_fields.model_dump()
 

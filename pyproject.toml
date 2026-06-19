@@ -157,6 +157,7 @@ langsmith = "0.8.0"
 opentelemetry-exporter-prometheus = "^0.63b1"
 vsdx = "^0.6.1"
 starlette = "~1.3.1"  # Security (EPMCDME-12870): pin >=1.3.1 to fix CVE-2026-48818 and CVE-2026-54283
+subvertpy = ">=0.11"
 
 [tool.poetry.extras]
 enterprise = ["codemie-enterprise"]
@@ -256,7 +257,8 @@ ignore-packages = [
     "llm-sandbox", # UNKNOWN, it is MIT License
     "codemie-sdk-python", # UNKNOWN
     "codemie-enterprise", # UNKNOWN
-    "email-validator" # The Unlicense (Unlicense)
+    "email-validator", # The Unlicense (Unlicense)
+    "subvertpy" # GPLv2+; SVN client library required for SVN datasource support
 ]
 allow-only = """
     3-Clause BSD License;\

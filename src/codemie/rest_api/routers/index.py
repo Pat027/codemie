@@ -17,6 +17,8 @@ import json
 import io
 import time
 from typing import List, Optional
+from typing_extensions import Annotated
+from pydantic import StringConstraints
 
 from elasticsearch.exceptions import NotFoundError
 from fastapi import APIRouter, BackgroundTasks, status, Depends
@@ -26,13 +28,25 @@ from starlette.responses import StreamingResponse
 from codemie.configs import logger
 from codemie.core.ability import Ability, Action
 from codemie.core.exceptions import ExtendedHTTPException
-from codemie.core.models import Application, BaseResponse, GitRepo, BaseGitRepo
+from codemie.core.models import (
+    Application,
+    BaseResponse,
+    GitRepo,
+    BaseGitRepo,
+    SVNRepo,
+    BaseRepository,
+    SVN_LINK_PATTERN,
+    BRANCH_PATTERN,
+)
 from codemie.rest_api.models.guardrail import GuardrailAssignmentItem, GuardrailEntity
 from codemie.rest_api.models.index import IndexKnowledgeBaseFileTypes
 from codemie.datasource.code.code_datasource_processor import (
     index_code_datasource_in_background,
     update_code_datasource_in_background,
+    run_in_background,
 )
+from codemie.datasource.svn.svn_datasource_processor import SVNDatasourceProcessor
+from codemie.datasource.svn.svn_index_service import SVNIndexService
 from codemie.datasource.file.file_datasource_processor import FileDatasourceProcessor, FILE_PATH_DATA_NT
 from codemie.datasource.confluence_datasource_processor import (
     IndexKnowledgeBaseConfluenceConfig,
@@ -139,8 +153,8 @@ def _parse_jwt_exp(token: str) -> int:
 
 # Error message constants
 CHECK_PERMISSIONS_MESSAGE = "Please check your user permissions or contact an administrator for assistance."
-CHECK_USER_PERMISSIONS_HELP = "Please check your user permissions."
 ACCESS_DENIED_MESSAGE = "Access denied"
+SVN_REPOSITORY_NOT_FOUND_MESSAGE = "Repository not found"
 INDEX_NOT_FOUND_MESSAGE = "Index not found"
 INDEX_NOT_FOUND_HELP = (
     "Please verify the index name and project name. If you believe this index should exist, "
@@ -234,12 +248,7 @@ def get_index_info(request: Request, index_id: str, user: User = Depends(authent
     _validate_remote_entities_and_raise(index)
 
     if not Ability(user).can(Action.READ, index):
-        raise ExtendedHTTPException(
-            code=status.HTTP_403_FORBIDDEN,
-            message="Access is denied",
-            details=f"You don't have permission to get the index with ID '{index_id}'.",
-            help=CHECK_USER_PERMISSIONS_HELP,
-        )
+        raise_forbidden("read")
     index.user_abilities = Ability(user).list(index)
     index.processed_files.sort(key=lambda x: x.lower())
 
@@ -289,12 +298,7 @@ def get_index_info_export(index_id: str, user: User = Depends(authenticate)):
     index = IndexInfo.get_by_id(index_id)
 
     if not Ability(user).can(Action.READ, index):
-        raise ExtendedHTTPException(
-            code=status.HTTP_403_FORBIDDEN,
-            message="Access is denied",
-            details=f"You don't have permission to get the index with ID '{index_id}'.",
-            help=CHECK_USER_PERMISSIONS_HELP,
-        )
+        raise_forbidden("read")
 
     # Create the content to be returned
     content = IndexStatusService.get_index_status_markdown(index)
@@ -369,12 +373,7 @@ def get_index_elasticsearch_stats(index_id: str, user: User = Depends(authentica
     index = _get_index_by_id_or_raise(index_id)
 
     if not Ability(user).can(Action.READ, index):
-        raise ExtendedHTTPException(
-            code=status.HTTP_403_FORBIDDEN,
-            message=ACCESS_DENIED_MESSAGE,
-            details=f"You don't have permission to get Elasticsearch statistics for index with ID '{index_id}'.",
-            help=CHECK_USER_PERMISSIONS_HELP,
-        )
+        raise_forbidden("read")
 
     if index.index_type.startswith("platform"):
         raise ExtendedHTTPException(
@@ -409,12 +408,7 @@ def delete_index(request: Request, index_id: str, user: User = Depends(authentic
     index = IndexInfo.get_by_id(index_id)
 
     if not Ability(user).can(Action.DELETE, index):
-        raise ExtendedHTTPException(
-            code=status.HTTP_403_FORBIDDEN,
-            message=ACCESS_DENIED_MESSAGE,
-            details=f"You don't have permission to delete the index with ID '{index_id}'.",
-            help=CHECK_PERMISSIONS_MESSAGE,
-        )
+        raise_forbidden("delete")
 
     try:
         if index.index_type == PROVIDER_INDEX_TYPE:
@@ -452,6 +446,17 @@ class CreateIndexRequest(CronExpressionValidatorMixin, BaseGitRepo):
     Solves circular import issue within the BaseGitRepo file.
     """
 
+    guardrail_assignments: Optional[List[GuardrailAssignmentItem]] = None
+    cron_expression: Optional[str] = None
+
+
+class CreateSVNIndexRequest(CronExpressionValidatorMixin, BaseRepository):
+    """Request model for creating a new SVN code index."""
+
+    link: Annotated[str, StringConstraints(pattern=SVN_LINK_PATTERN, min_length=1, max_length=1000, strict=True)]
+    branch: Annotated[str, StringConstraints(pattern=BRANCH_PATTERN, min_length=1, max_length=1000, strict=True)] = (
+        "trunk"
+    )
     guardrail_assignments: Optional[List[GuardrailAssignmentItem]] = None
     cron_expression: Optional[str] = None
 
@@ -545,6 +550,173 @@ _INDEX_FIELD_MAP = {
 }
 
 
+@router.post(
+    "/application/{app_name}/index/svn",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(application_access_check)],
+    response_model=BaseResponse,
+)
+def create_svn_index_application(
+    app_name: str,
+    create_svn_repo_request: CreateSVNIndexRequest,
+    request: Request,
+    tasks: BackgroundTasks,
+    user: User = Depends(authenticate),
+):
+    request_uuid = request.state.uuid
+    request_summary_manager.create_request_summary(
+        request_id=request_uuid,
+        project_name=app_name,
+        user=user.as_user_model(),
+    )
+    _index_unique_check(app_name, create_svn_repo_request.name)
+    ensure_application_exists(app_name)
+
+    SVNIndexService.validate_credentials(
+        user_id=user.id,
+        project_name=app_name,
+        repo_link=create_svn_repo_request.link,
+        setting_id=create_svn_repo_request.setting_id,
+    )
+
+    svn_repo = SVNRepo(
+        **create_svn_repo_request.model_dump(exclude={"guardrail_assignments", "cron_expression"}),
+        app_id=app_name,
+    )
+
+    def process():
+        processor = SVNDatasourceProcessor.create_processor(
+            svn_repo=svn_repo,
+            user=user,
+            request_uuid=request_uuid,
+            guardrail_assignments=create_svn_repo_request.guardrail_assignments,
+        )
+        processor.process()
+        processor._create_or_update_scheduler(create_svn_repo_request.cron_expression)
+
+    run_in_background(process, svn_repo.name, tasks)
+
+    return BaseResponse(
+        message=f"Indexing of datasource {create_svn_repo_request.name} has been started in the background"
+    )
+
+
+def _update_svn_index_and_repo_fields(
+    index_info: IndexInfo,
+    request: UpdateIndexRequest,
+    user: User,
+    svn_repo: SVNRepo,
+) -> None:
+    index_info.update_index(
+        user=user,
+        description=request.description,
+        prompt=request.prompt,
+        project_space_visible=request.projectSpaceVisible,
+        docs_generation=request.docsGeneration,
+        embeddings_model=request.embeddingsModel,
+        files_filter=request.filesFilter,
+        branch=request.branch,
+        link=request.link,
+        reset_error=False,
+        setting_id=request.setting_id,
+        project_name=request.new_project_name,
+        guardrail_assignments=request.guardrail_assignments,
+    )
+    repo_updates = {
+        "branch": request.branch,
+        "link": request.link.strip() if request.link else None,
+        "files_filter": request.filesFilter,
+        "setting_id": request.setting_id,
+        "docs_generation": request.docsGeneration,
+        "embeddings_model": request.embeddingsModel,
+        "project_space_visible": request.projectSpaceVisible,
+    }
+    for attr, value in repo_updates.items():
+        if value is not None:
+            setattr(svn_repo, attr, value)
+    svn_repo.update()
+
+
+@router.put(
+    "/application/{app_name}/index/svn/{repo_name}",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(application_access_check)],
+    response_model=BaseResponse,
+)
+def update_svn_index_application(
+    app_name: str,
+    repo_name: str,
+    tasks: BackgroundTasks,
+    request: UpdateIndexRequest,
+    raw_request: Request,
+    resume_indexing: bool = False,
+    skip_reindex: bool = False,
+    user: User = Depends(authenticate),
+):
+    request_uuid = raw_request.state.uuid
+    request_summary_manager.create_request_summary(
+        request_id=request_uuid,
+        project_name=app_name,
+        user=user.as_user_model(),
+    )
+    cron_expression_provided = 'cron_expression' in request.model_fields_set
+
+    index_info = IndexInfo.filter_by_project_and_repo(project_name=app_name, repo_name=repo_name)[0]
+
+    if not Ability(user).can(Action.WRITE, index_info):
+        raise_forbidden("update")
+
+    svn_repos = SVNRepo.get_by_app_id(app_id=app_name)
+    svn_repo = next((r for r in svn_repos if r.name == repo_name), None)
+    if not svn_repo:
+        raise ExtendedHTTPException(
+            code=status.HTTP_404_NOT_FOUND,
+            message=SVN_REPOSITORY_NOT_FOUND_MESSAGE,
+            details=f"The SVN repository '{repo_name}' could not be found in project '{app_name}'.",
+            help="Please verify the repository name and ensure it exists within the project.",
+        )
+
+    if request.name:
+        _validate_project_change(request.new_project_name, app_name, repo_name, user)
+        _update_svn_index_and_repo_fields(index_info, request, user, svn_repo)
+
+    SVNIndexService.validate_credentials(
+        user_id=user.id,
+        project_name=index_info.project_name,
+        repo_link=svn_repo.link,
+        setting_id=svn_repo.setting_id,
+    )
+
+    if skip_reindex:
+        if cron_expression_provided:
+            _update_datasource_scheduler(user.id, index_info, request.cron_expression)
+        return BaseResponse(message=f"{repo_name} updated successfully!")
+
+    def process():
+        index = IndexInfo.filter_by_project_and_repo(project_name=app_name, repo_name=repo_name)[0]
+        processor = SVNDatasourceProcessor.create_processor(
+            svn_repo=svn_repo,
+            user=user,
+            index=index,
+            request_uuid=request_uuid,
+            guardrail_assignments=request.guardrail_assignments,
+        )
+        if resume_indexing:
+            processor.resume()
+        else:
+            processor.reprocess()
+        processor._create_or_update_scheduler(request.cron_expression if cron_expression_provided else None)
+
+    run_in_background(process, svn_repo.name, tasks)
+
+    if resume_indexing:
+        return BaseResponse(message=f"Indexing of datasource {repo_name} has been resumed in the background")
+
+    return BaseResponse(
+        message=f"Reindexing of datasource {request.name or repo_name} has been started in the background"
+    )
+
+
 def _handle_index_and_repository_update(
     index_info: IndexInfo,
     request: UpdateIndexRequest,
@@ -621,7 +793,7 @@ def _get_repository_with_project_change(
     if not repository:
         raise ExtendedHTTPException(
             code=status.HTTP_404_NOT_FOUND,
-            message="Repository not found",
+            message=SVN_REPOSITORY_NOT_FOUND_MESSAGE,
             details=f"The repository with name '{repo_name}' could not be found "
             "in the list of application repositories.",
             help="Please verify the repository name and ensure it exists within the application."
@@ -629,6 +801,61 @@ def _get_repository_with_project_change(
         )
 
     return repository
+
+
+def _handle_svn_reindex(
+    app_name: str,
+    repo_name: str,
+    index_info: IndexInfo,
+    request: UpdateIndexRequest,
+    request_uuid: str,
+    tasks: BackgroundTasks,
+    user: User,
+    full_reindex: bool,
+    skip_reindex: bool,
+    resume_indexing: bool,
+    cron_expression_provided: bool,
+) -> BaseResponse:
+    svn_repos = SVNRepo.get_by_app_id(app_id=app_name)
+    svn_repo = next((r for r in svn_repos if r.name == repo_name), None)
+    if not svn_repo:
+        raise ExtendedHTTPException(
+            code=status.HTTP_404_NOT_FOUND,
+            message=SVN_REPOSITORY_NOT_FOUND_MESSAGE,
+            details=f"The SVN repository '{repo_name}' could not be found in project '{app_name}'.",
+            help="Please verify the repository name and ensure it exists within the project.",
+        )
+
+    if skip_reindex:
+        SVNIndexService.validate_credentials(
+            user_id=user.id,
+            project_name=index_info.project_name,
+            repo_link=svn_repo.link,
+            setting_id=svn_repo.setting_id,
+        )
+        if cron_expression_provided:
+            _update_datasource_scheduler(user.id, index_info, request.cron_expression)
+        return BaseResponse(message=f"{repo_name} updated successfully!")
+
+    SVNIndexService.reindex(
+        svn_repo=svn_repo,
+        index_info=index_info,
+        user=user,
+        app_name=app_name,
+        repo_name=repo_name,
+        request_uuid=request_uuid,
+        background_tasks=tasks,
+        resume_indexing=resume_indexing,
+        guardrail_assignments=request.guardrail_assignments,
+        cron_expression=request.cron_expression if cron_expression_provided else None,
+    )
+
+    if resume_indexing:
+        return BaseResponse(message=f"Indexing of datasource {repo_name} has been resumed in the background")
+    reindex_type = "Full" if full_reindex else "Incremental"
+    return BaseResponse(
+        message=f"{reindex_type} reindexing of datasource {request.name} has been started in the background"
+    )
 
 
 @router.put(
@@ -664,12 +891,7 @@ def update_index_application(
     index_info = IndexInfo.filter_by_project_and_repo(project_name=app_name, repo_name=repo_name)[0]
 
     if not Ability(user).can(Action.WRITE, index_info):
-        raise ExtendedHTTPException(
-            code=status.HTTP_403_FORBIDDEN,
-            message=ACCESS_DENIED_MESSAGE,
-            details="You don't have permission to update the index.",
-            help=CHECK_PERMISSIONS_MESSAGE,
-        )
+        raise_forbidden("update")
 
     try:
         application = Application.get_by_id(app_name)
@@ -680,6 +902,21 @@ def update_index_application(
             details=f"The application with name '{app_name}' could not be found in the system.",
             help=APPLICATION_NOT_FOUND_HELP,
         ) from e
+
+    if index_info.repo_type == "svn":
+        return _handle_svn_reindex(
+            app_name=app_name,
+            repo_name=repo_name,
+            index_info=index_info,
+            request=request,
+            request_uuid=request_uuid,
+            tasks=tasks,
+            user=user,
+            full_reindex=full_reindex,
+            skip_reindex=skip_reindex,
+            resume_indexing=resume_indexing,
+            cron_expression_provided=cron_expression_provided,
+        )
 
     repository = _get_repository_with_project_change(application, repo_name, index_info, request)
 
@@ -1877,12 +2114,7 @@ def update_provider_datasource_index(
         )
 
     if not Ability(user).can(Action.WRITE, index_info):
-        raise ExtendedHTTPException(
-            code=status.HTTP_403_FORBIDDEN,
-            message=ACCESS_DENIED_MESSAGE,
-            details="You don't have permission to update the index.",
-            help=CHECK_PERMISSIONS_MESSAGE,
-        )
+        raise_forbidden("update")
 
     try:
         provider = Provider.get_by_id(index_info.provider_fields.provider_id)

@@ -891,6 +891,7 @@ class TestToolkitService:
         context = Context(context_type=ContextType.CODE, name="test-repo")
         mock_code_index = Mock(spec=CodeIndexInfo)
         mock_code_index.index_type = "code"
+        mock_code_index.repo_type = "git"
 
         # Mock _find_code_index
         with patch.object(ToolkitService, '_find_code_index', return_value=mock_code_index):

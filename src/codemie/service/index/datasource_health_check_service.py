@@ -21,6 +21,7 @@ from codemie.datasource.exceptions import (
 )
 from codemie.datasource.confluence_datasource_processor import ConfluenceDatasourceProcessor
 from codemie.datasource.jira.jira_datasource_processor import JiraDatasourceProcessor
+from codemie.datasource.loader.svn_loader import SVNBatchLoader
 from codemie.datasource.xray.xray_datasource_processor import XrayDatasourceProcessor
 from codemie.datasource.azure_devops_wiki.azure_devops_wiki_datasource_processor import (
     AzureDevOpsWikiDatasourceProcessor,
@@ -47,6 +48,8 @@ class IndexHealthCheckService:
                     return cls.health_check_azure_devops_wiki(request, user_id)
                 case DatasourceTypes.AZURE_DEVOPS_WORK_ITEM:
                     return cls.health_check_azure_devops_work_item(request, user_id)
+                case DatasourceTypes.SVN:
+                    return cls.health_check_svn(request, user_id)
                 case _:
                     return DatasourceHealthCheckResponse(implemented=False)
         except MissingIntegrationException as e:
@@ -161,6 +164,30 @@ class IndexHealthCheckService:
 
         documents_count = processor._check_docs_health()
         return DatasourceHealthCheckResponse(documents_count=documents_count)
+
+    @classmethod
+    def health_check_svn(cls, request: DatasourceHealthCheckRequest, user_id: str):
+        if not request.svn_repo_url:
+            return DatasourceHealthCheckResponse(
+                error=ErrorMessage(
+                    message="SVN repository URL is required",
+                    details="Provide svn_repo_url in the request to test the SVN connection.",
+                    help="Include the SVN repository URL (e.g. https://svn.example.com/repo) in the request.",
+                    field_error="svn_repo_url",
+                )
+            )
+        svn_creds = SettingsService.get_svn_creds(
+            user_id=user_id,
+            project_name=request.project_name,
+            repo_link=request.svn_repo_url,
+            setting_id=request.setting_id,
+        )
+        stats = SVNBatchLoader.test_connection(
+            url=request.svn_repo_url,
+            branch=request.svn_branch or "trunk",
+            creds=svn_creds,
+        )
+        return DatasourceHealthCheckResponse(documents_count=stats.get(SVNBatchLoader.HEAD_REVISION_KEY, 0))
 
     @classmethod
     def get_invalid_field(cls, index_type: str):

@@ -1505,7 +1505,10 @@ class ToolkitService:
             )
 
         return CodeFields(
-            app_name=assistant.project, repo_name=context.name, index_type=CodeIndexType(code_index.index_type)
+            app_name=assistant.project,
+            repo_name=context.name,
+            index_type=CodeIndexType(code_index.index_type),
+            repo_type=code_index.repo_type,
         )
 
     @classmethod

@@ -70,6 +70,7 @@ def test_get_search_tool_code_index():
     datasource.project_name = "test-project"
     datasource.repo_name = "test-repo"
     datasource.index_type = "code"
+    datasource.repo_type = "git"
 
     request = Mock(spec=DatasourceSearchInvokeRequest)
     request.llm_model = "gpt-4"
@@ -109,6 +110,7 @@ def test_get_search_tool_code_index_default_params():
     datasource.project_name = "test-project"
     datasource.repo_name = "test-repo"
     datasource.index_type = "code"
+    datasource.repo_type = "git"
 
     request = Mock(spec=DatasourceSearchInvokeRequest)
     request.llm_model = "gpt-4"

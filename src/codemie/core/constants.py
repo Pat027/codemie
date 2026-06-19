@@ -88,6 +88,7 @@ class CodeIndexType(str, Enum):
 
 class DatasourceTypes(str, Enum):
     GIT = "git"
+    SVN = "svn"
     CONFLUENCE = "confluence"
     JIRA = "jira"
     FILE = "file"

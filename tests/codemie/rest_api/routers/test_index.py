@@ -204,7 +204,7 @@ async def test_index_deletion_no_permissions(mock_get_index_info, mock_can, auth
 
     assert e.value.code == 403
     assert e.value.message == "Access denied"
-    assert e.value.details == "You don't have permission to delete the index with ID '1'."
+    assert e.value.details == "You do not have the necessary permissions to delete this entity."
 
 
 @pytest.mark.asyncio
@@ -277,6 +277,8 @@ async def test_index_application_link_with_spaces(
     mock_get_creds.return_value = MagicMock(token="test_token")
     expected_response = f"{expected_response} of datasource demo has been started in the background"
     expected_created_status_code = status.HTTP_201_CREATED
+    for idx in existing_indexes:
+        idx.index_type = "git"
     mock_filter.return_value = existing_indexes
     m_git_repo = MagicMock()
     m_git_repo.name = DEMO
@@ -354,6 +356,7 @@ async def test_update_index_application(
     }
     expected_created_status_code = status.HTTP_201_CREATED
     m_index_info = MagicMock()
+    m_index_info.index_type = "git"
     mock_filter.return_value = [m_index_info]
     m_git_repo = MagicMock()
     m_git_repo.name = DEMO

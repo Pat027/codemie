@@ -62,6 +62,7 @@ from codemie.rest_api.models.settings import (
     AzureDevOpsCredentials,
     SharePointCredentials,
     SonarCredentials,
+    SVNCredentials,
     AbilitySetting,
     LiteLLMCredentials,
     ALIAS_TERM,
@@ -117,6 +118,7 @@ class SettingsService(BaseSettingsService):
     IDE_PREFIX = INTERNAL_PREFIX + "IDE_"
     IDE_PROJECT_NAME = IDE_PREFIX + "virtual"
     AUTH_VALUE = "auth_value"
+    AUTH_TYPE = "auth_type"
     IS_CLOUD = "is_cloud"
     ENABLED = "enabled"
     ENFORCE_MEMBER_SPEND_LIMITS_ALIAS = "project_member_budget_tracking_enabled"
@@ -146,6 +148,8 @@ class SettingsService(BaseSettingsService):
         "private_key",  # GitHub App private key
         "access_token",  # SharePoint OAuth delegated token
         "refresh_token",  # SharePoint OAuth refresh token
+        "ssh_key",  # SVN SSH private key
+        "ssh_passphrase",  # SVN SSH key passphrase
     ]
 
     # Define field mappings for each credential type
@@ -183,7 +187,7 @@ class SettingsService(BaseSettingsService):
         TENANT_ID: "tenant_id",
         CLIENT_ID: "client_id",
         CLIENT_SECRET: "client_secret",
-        "auth_type": "auth_type",
+        AUTH_TYPE: "auth_type",
         "access_token": "access_token",
         "refresh_token": "refresh_token",
         "expires_at": "expires_at",
@@ -196,10 +200,18 @@ class SettingsService(BaseSettingsService):
         URL: "url",
         TOKEN: "token",
         NAME: "token_name",
-        "auth_type": "auth_type",
+        AUTH_TYPE: "auth_type",
         "app_id": "app_id",
         "private_key": "private_key",
         "installation_id": "installation_id",
+    }
+    SVN_FIELDS = {
+        URL: "url",
+        AUTH_TYPE: "auth_type",
+        USERNAME: "username",
+        PASSWORD: "password",
+        "ssh_key": "ssh_key",
+        "ssh_passphrase": "ssh_passphrase",
     }
     CONFLUENCE_FIELDS = {URL: "url", TOKEN: "token", USERNAME: "username", IS_CLOUD: "cloud"}
 
@@ -220,6 +232,7 @@ class SettingsService(BaseSettingsService):
         KeycloakConfig: CredentialTypes.KEYCLOAK,
         ServiceNowConfig: CredentialTypes.SERVICENOW,
         Credentials: CredentialTypes.GIT,
+        SVNCredentials: CredentialTypes.SVN,
         TelegramConfig: CredentialTypes.TELEGRAM,
         EmailToolConfig: CredentialTypes.EMAIL,
         OpenApiConfig: CredentialTypes.OPEN_API,
@@ -519,7 +532,7 @@ class SettingsService(BaseSettingsService):
         for cred_pair in cred_values:
             if (
                 cred_pair.key == cls.URL
-                and cred_type in (CredentialTypes.GIT,)
+                and cred_type in (CredentialTypes.GIT, CredentialTypes.SVN)
                 and not cred_pair.value.endswith(".git")
             ):
                 base_url = get_url_domain(cred_pair.value)
@@ -1115,6 +1128,25 @@ class SettingsService(BaseSettingsService):
         )
         if not config:
             config = Credentials(url="", token="", token_name="", auth_type="pat")
+        return config
+
+    @classmethod
+    def get_svn_creds(
+        cls,
+        user_id: str,
+        project_name: str,
+        repo_link: Optional[str],
+        setting_id: Optional[str] = None,
+    ) -> SVNCredentials:
+        config = cls.get_config(
+            config_class=SVNCredentials,
+            user_id=user_id,
+            project_name=project_name,
+            integration_id=setting_id,
+            repo_link=repo_link,
+        )
+        if not config:
+            config = SVNCredentials(url="")
         return config
 
     @classmethod

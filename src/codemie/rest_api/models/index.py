@@ -85,7 +85,7 @@ class LifecycleState(str, Enum):
 
 
 class IndexTypeByContextTypeMapping(Enum):
-    CODE = ("code", "summary", "chunk-summary")
+    CODE = ("code", "summary", "chunk-summary", "svn")
     KNOWLEDGE_BASE = (
         "knowledge_base_bedrock",
         "knowledge_base_confluence",
@@ -291,6 +291,7 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
     is_queued: bool = SQLField(default=False)
     last_reindex_triggered_at: Optional[datetime] = SQLField(default=None, nullable=True)
     setting_id: Optional[str] = None
+    vcs_type: str = SQLField(default="git")
     tokens_usage: Optional[TokensUsage] = SQLField(default=None, sa_column=Column(PydanticType(TokensUsage)))
     processing_info: Optional[Dict] = SQLField(default_factory=dict, sa_column=Column(JSONB))
     provider_fields: Optional[IndexInfoProviderFields] = SQLField(
@@ -398,6 +399,10 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
     @last_reindex_date.setter
     def last_reindex_date(self, value: Optional[datetime]):
         self._last_reindex_date = value
+
+    @property
+    def repo_type(self) -> Literal["git", "svn"]:
+        return self.vcs_type
 
     @classmethod
     def create_from_repo(cls, repo, user):
@@ -632,6 +637,7 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
         sharepoint = kwargs.get("sharepoint")
         google_doc_link = kwargs.get("google_doc_link", "")
         uploaded_files = kwargs.get("uploaded_files", [])
+        vcs_type = kwargs.get("vcs_type", "git")
         obj = cls(
             project_name=project_name,
             repo_name=repo_name,
@@ -656,6 +662,7 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
             sharepoint=sharepoint,
             google_doc_link=google_doc_link,
             uploaded_files=uploaded_files,
+            vcs_type=vcs_type,
         )
         obj.save(refresh=True)
         return obj
@@ -1246,7 +1253,9 @@ class DatasourceHealthCheckRequest(BaseModel):
     wiki_query: Optional[str] = None
     wiki_name: Optional[str] = None
     wiql_query: Optional[str] = None
-    setting_id: str
+    setting_id: Optional[str] = None
+    svn_repo_url: Optional[str] = None
+    svn_branch: Optional[str] = "trunk"
 
 
 class ErrorMessage(BaseModel):

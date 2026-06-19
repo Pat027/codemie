@@ -264,7 +264,10 @@ class ToolExecutionService:
         user_input = request.code_search_params.user_input or request.query
         return CodeToolkit.search_code_tool(
             code_fields=CodeFields(
-                app_name=datasource.project_name, repo_name=datasource.repo_name, index_type=datasource.index_type
+                app_name=datasource.project_name,
+                repo_name=datasource.repo_name,
+                index_type=datasource.index_type,
+                repo_type=datasource.repo_type,
             ),
             user_input=user_input,
             top_k=request.code_search_params.top_k,
