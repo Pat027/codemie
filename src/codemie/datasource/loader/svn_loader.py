@@ -83,8 +83,14 @@ def _svn_ssh_context(creds: SVNCredentials):
             os.remove(tmp_key_path)
 
 
+def _ssl_server_trust_prompt(realm, failures, cert_info, may_save):
+    return failures, False
+
+
 def _build_remote_access(url: str, creds: SVNCredentials) -> svn_ra.RemoteAccess:
     """Create an authenticated subvertpy RemoteAccess connection."""
+    providers = [svn_ra.get_ssl_server_trust_prompt_provider(_ssl_server_trust_prompt)]
+
     if creds.auth_type == SVNAuthType.BASIC and creds.username:
         username = creds.username
         password = creds.password or ""
@@ -92,10 +98,9 @@ def _build_remote_access(url: str, creds: SVNCredentials) -> svn_ra.RemoteAccess
         def simple_prompt(realm, uname, may_save):
             return username, password, False
 
-        auth = svn_ra.Auth([svn_ra.get_simple_prompt_provider(simple_prompt, 0)])
-    else:
-        auth = svn_ra.Auth([])
+        providers.append(svn_ra.get_simple_prompt_provider(simple_prompt, 0))
 
+    auth = svn_ra.Auth(providers)
     return svn_ra.RemoteAccess(url, auth=auth)
 
 
