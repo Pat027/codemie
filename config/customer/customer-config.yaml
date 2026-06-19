@@ -183,6 +183,12 @@ components:
       name: "MCP Custom Servers Disabled"
       description: "When enabled, restricts users to catalog-referenced MCP servers only. Custom inline MCP server configuration is not permitted."
 
+  - id: "features:sharepointCodeMieOAuth"
+    settings:
+      enabled: true
+      name: "SharePoint CodeMie OAuth"
+      description: "Show Sign in with Microsoft (CodeMie Project) authentication option for SharePoint datasource"
+
 preconfigured_assistants:
   - id: "codemie-onboarding"
     settings:
