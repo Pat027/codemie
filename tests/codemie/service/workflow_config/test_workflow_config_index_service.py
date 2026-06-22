@@ -40,7 +40,7 @@ def test_workflow_config_index_service_filter_by_user(mock_session_class, mock_a
     WorkflowConfigIndexService.run(user=mock_admin_user, filter_by_user=True, page=1, per_page=20)
 
     actual_query = str(mock_session.exec.call_args[0][0])
-    expected_conditions = "WHERE workflows.created_by[:created_by_1] = :param_1 AND workflows.mode = :mode_1 ORDER BY workflows.update_date DESC NULLS LAST\n LIMIT :param_2 OFFSET :param_3"
+    expected_conditions = "WHERE workflows.is_global = false AND workflows.created_by[:created_by_1] = :param_1 AND workflows.mode = :mode_1 ORDER BY workflows.update_date DESC NULLS LAST\n LIMIT :param_2 OFFSET :param_3"
 
     assert actual_query.endswith(expected_conditions)
 
@@ -56,7 +56,7 @@ def test_workflow_config_index_service_all_for_admin(mock_session_class, mock_ad
 
     # For admin, no additional where clauses should be added
     actual_query = str(mock_session.exec.call_args[0][0])
-    expected_conditions = "FROM workflows \nWHERE workflows.mode = :mode_1 ORDER BY workflows.update_date DESC NULLS LAST\n LIMIT :param_1 OFFSET :param_2"
+    expected_conditions = "WHERE workflows.is_global = false AND workflows.mode = :mode_1 ORDER BY workflows.update_date DESC NULLS LAST\n LIMIT :param_1 OFFSET :param_2"
 
     assert actual_query.endswith(expected_conditions)
 
@@ -124,9 +124,10 @@ def test_get_users_for_admin(mock_session_class, mock_admin_user):
     mock_session.exec.assert_called_once()
     actual_query = str(mock_session.exec.call_args[0][0])
 
-    # Admin should see all users, so only mode filter should be applied
+    # Admin should see all non-global workflows, so is_global = false must be applied
     assert "SELECT DISTINCT workflows.created_by" in actual_query
     assert "workflows.mode = :mode_1" in actual_query
+    assert "is_global = false" in actual_query
 
 
 @patch('codemie.service.workflow_config.workflow_config_index_service.Session')

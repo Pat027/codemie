@@ -12,9 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import yaml
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, cast
+
+from sqlalchemy import ColumnElement
 
 from langgraph.pregel._retry import RetryPolicy
 from pydantic import BaseModel, Field, ValidationError, computed_field
@@ -311,6 +315,14 @@ class WorkflowConfig(BaseModelWithSQLSupport, WorkflowConfigBase, table=True):
                 cls.bedrock["bedrock_aws_settings_id"].astext == bedrock_aws_settings_id  # type: ignore
             )
             return session.exec(statement).all()
+
+    @classmethod
+    def is_not_global_filter(cls) -> ColumnElement[bool]:
+        return cast(ColumnElement[bool], cls.is_global == False)  # noqa: E712
+
+    @classmethod
+    def is_global_filter(cls) -> ColumnElement[bool]:
+        return cast(ColumnElement[bool], cls.is_global == True)  # noqa: E712
 
 
 class WorkflowConfigTemplate(WorkflowConfigBase):

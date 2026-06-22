@@ -17,8 +17,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from enum import StrEnum
 from math import ceil
-from typing import Any, Dict, List, Optional
+from typing import Any, TypeVar
 
+from sqlalchemy import Select
 from sqlalchemy.orm import defer
 from sqlmodel import Session, and_, func, or_, select
 
@@ -29,6 +30,8 @@ from codemie.rest_api.models.assistant import CreatedByUser
 from codemie.rest_api.security.user import User
 from codemie.service.filter.filter_services import WorkflowFilter
 
+_T = TypeVar("_T", bound=tuple[Any, ...])
+
 
 class WorkflowScope(StrEnum):
     MARKETPLACE = "marketplace"
@@ -36,7 +39,7 @@ class WorkflowScope(StrEnum):
 
 class QueryModifier(ABC):
     @abstractmethod
-    def modify_query(self, query):
+    def modify_query(self, query: Select[_T]) -> Select[_T]:
         pass
 
 
@@ -45,13 +48,20 @@ class VisibleToUserModifierPostgres(QueryModifier):
         self.user = user
         self.filter_by_user = filter_by_user
 
-    def modify_query(self, query):
+    def modify_query(self, query: Select[_T]) -> Select[_T]:
         if self.filter_by_user:
-            query = query.where(WorkflowConfig.created_by['user_id'] == self.user.id)
-        elif not self.user.is_admin:
             query = query.where(
                 and_(
-                    WorkflowConfig.is_global == False,  # noqa: E712
+                    WorkflowConfig.is_not_global_filter(),
+                    WorkflowConfig.created_by['user_id'] == self.user.id,
+                )
+            )
+        elif self.user.is_admin:
+            query = query.where(WorkflowConfig.is_not_global_filter())
+        else:
+            query = query.where(
+                and_(
+                    WorkflowConfig.is_not_global_filter(),
                     or_(
                         and_(WorkflowConfig.project.in_(self.user.project_names), WorkflowConfig.shared),
                         WorkflowConfig.project.in_(self.user.admin_project_names),
@@ -65,7 +75,7 @@ class VisibleToUserModifierPostgres(QueryModifier):
 class ExcludeAutonomousWorkflowsModifier(QueryModifier):
     """Filter to exclude autonomous workflows and keep only sequential ones"""
 
-    def modify_query(self, query):
+    def modify_query(self, query: Select[_T]) -> Select[_T]:
         query = query.where(WorkflowConfig.mode == WorkflowMode.SEQUENTIAL)
         return query
 
@@ -73,8 +83,8 @@ class ExcludeAutonomousWorkflowsModifier(QueryModifier):
 class MarketplaceScopeModifier(QueryModifier):
     """Filter to only include globally published (marketplace) workflows"""
 
-    def modify_query(self, query):
-        query = query.where(WorkflowConfig.is_global == True)  # noqa: E712
+    def modify_query(self, query: Select[_T]) -> Select[_T]:
+        query = query.where(WorkflowConfig.is_global_filter())
         return query
 
 
@@ -90,7 +100,7 @@ class WorkflowConfigIndexService:
         filter_by_user: bool,
         page: int,
         per_page: int,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: dict[str, Any] | None = None,
         minimal_response: bool = False,
         scope: WorkflowScope | None = None,
     ) -> WorkflowListResponse:
@@ -155,8 +165,8 @@ class WorkflowConfigIndexService:
     @classmethod
     def find_workflows_by_filters(
         cls,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List[WorkflowConfigBase]:
+        filters: dict[str, Any] | None = None,
+    ) -> list[WorkflowConfigBase]:
         items, total = cls._query_postgres(
             page=0,
             per_page=100,
@@ -185,11 +195,13 @@ class WorkflowConfigIndexService:
             query = query.where(WorkflowConfig.mode == WorkflowMode.SEQUENTIAL)
 
             if scope == WorkflowScope.MARKETPLACE:
-                query = query.where(WorkflowConfig.is_global == True)  # noqa: E712
-            elif not user.is_admin:
+                query = query.where(WorkflowConfig.is_global_filter())
+            elif user.is_admin:
+                query = query.where(WorkflowConfig.is_not_global_filter())
+            else:
                 query = query.where(
                     and_(
-                        WorkflowConfig.is_global == False,  # noqa: E712
+                        WorkflowConfig.is_not_global_filter(),
                         or_(
                             and_(WorkflowConfig.project.in_(user.project_names), WorkflowConfig.shared),
                             WorkflowConfig.project.in_(user.admin_project_names),
@@ -211,8 +223,8 @@ class WorkflowConfigIndexService:
         cls,
         page: int,
         per_page: int,
-        filters: Optional[Dict[str, Any]] = None,
-        query_modifiers: Optional[List[QueryModifier]] = None,
+        filters: dict[str, Any] | None = None,
+        query_modifiers: list[QueryModifier] | None = None,
         minimal_response: bool = False,
     ):
         # PostgreSQL implementation
