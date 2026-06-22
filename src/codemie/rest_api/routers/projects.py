@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime, timezone
-from typing import Literal, Optional
+from datetime import UTC, date, datetime, time, timedelta, timezone
+from typing import Literal, NoReturn, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path, Query, Request, UploadFile
@@ -180,6 +180,24 @@ class PaginatedProjectListResponse(BaseModel):
     """Paginated project list response (Story 16)"""
 
     data: list[ProjectListItem]
+    pagination: PaginationInfo
+
+
+class SpendTrackingRow(BaseModel):
+    """A single project_spend_tracking row returned by the spends endpoint."""
+
+    spend_date: datetime
+    daily_spend: float
+    cumulative_spend: float
+    budget_period_spend: float
+    budget_id: Optional[str] = None
+
+
+class PaginatedSpendsResponse(BaseModel):
+    """Paginated response for GET /projects/{projectName}/spends."""
+
+    total_spend: float
+    rows: list[SpendTrackingRow]
     pagination: PaginationInfo
 
 
@@ -368,6 +386,12 @@ def _list_projects_sync(
             sort_by=sort_by,
             sort_order=sort_order,
         )
+
+
+def _get_project_by_name_sync(project_name: str):
+    """Synchronous project lookup — runs in threadpool from async handlers."""
+    with get_session() as session:
+        return application_repository.get_by_name(session, project_name)
 
 
 def _get_project_detail_sync(
@@ -860,6 +884,78 @@ def _populate_project_spending_widget(
         )
 
 
+@router.get("/projects/{projectName}/spends", response_model=PaginatedSpendsResponse)
+async def get_project_spends(
+    project_name: str = Path(alias="projectName"),
+    period_from: date = Query(..., description="Inclusive start date (YYYY-MM-DD)"),
+    period_to: date = Query(..., description="Inclusive end date (YYYY-MM-DD)"),
+    page: int = Query(0, ge=0, description="Page number (0-indexed)"),
+    per_page: int = Query(20, ge=10, le=100, description="Items per page (10-100)"),
+    budget_category: Optional[BudgetCategory] = Query(
+        None, description="Filter by budget category (cli, platform, premium_models)"
+    ),
+    spend_subject_type: Optional[Literal["key", "budget", "project_budget", "member_budget"]] = Query(
+        None, description="Filter by spend subject type"
+    ),
+    user: User = Depends(authenticate),
+) -> PaginatedSpendsResponse:
+    """Return paginated spend rows and period total for a project.
+
+    Accessible to global admins, global maintainers, and project admins.
+    Returns 404 (not 403) to avoid revealing project existence to unauthorized callers.
+    When spend_subject_type is omitted, project_budget rows are excluded to prevent
+    double-counting against member_budget rows.
+    """
+    _ensure_user_management_enabled()
+
+    if period_from > period_to:
+        raise ExtendedHTTPException(code=400, message="period_from must not be after period_to")
+
+    project = await asyncio.to_thread(_get_project_by_name_sync, project_name)
+
+    if not project or project.deleted_at is not None:
+        _raise_project_not_found(user_id=user.id, action="GET spends")
+
+    is_personal = project.project_type == Application.ProjectType.PERSONAL
+    can_access = (
+        user.is_admin_or_maintainer
+        or user.is_application_admin(project_name)
+        or (is_personal and user.has_access_to_application(project_name))
+    )
+    if not can_access:
+        _raise_project_not_found(user_id=user.id, action="GET spends")
+
+    period_from_dt = datetime.combine(period_from, time.min, tzinfo=timezone.utc)
+    period_to_dt = datetime.combine(period_to + timedelta(days=1), time.min, tzinfo=timezone.utc)
+
+    async with get_async_session() as session:
+        total_spend, total_count, rows = await _spend_repo.get_spend_for_period(
+            session,
+            project_name,
+            period_from_dt,
+            period_to_dt,
+            page,
+            per_page,
+            budget_category=budget_category,
+            spend_subject_type=spend_subject_type,
+        )
+
+    return PaginatedSpendsResponse(
+        total_spend=total_spend,
+        rows=[
+            SpendTrackingRow(
+                spend_date=row.spend_date,
+                daily_spend=float(row.daily_spend),
+                cumulative_spend=float(row.cumulative_spend),
+                budget_period_spend=float(row.budget_period_spend),
+                budget_id=row.budget_id,
+            )
+            for row in rows
+        ],
+        pagination=PaginationInfo(total=total_count, page=page, per_page=per_page),
+    )
+
+
 @router.patch("/projects/{projectName}", response_model=ProjectCreateResponse)
 def update_project(
     payload: ProjectUpdateRequest,
@@ -908,11 +1004,11 @@ def _authorize_project_access(
 
     # Treat deleted projects as non-existent
     if not project or project.deleted_at is not None:
-        _raise_project_not_found(user_id=user.id, project_name=project_name, action=action)
+        _raise_project_not_found(user_id=user.id, action=action)
 
     # Use Ability — returns 404 (not 403) to avoid revealing project existence
     if not Ability(user).can(Action.WRITE, project):
-        _raise_project_not_found(user_id=user.id, project_name=project_name, action=action)
+        _raise_project_not_found(user_id=user.id, action=action)
 
     return project
 
@@ -1169,7 +1265,7 @@ def bulk_remove_users_from_project(
     )
 
 
-def _raise_project_not_found(user_id: str, project_name: str, action: str) -> None:
+def _raise_project_not_found(user_id: str, action: str) -> NoReturn:
     """Log a security-safe warning and raise 404.
 
     Project name is intentionally omitted from the log to prevent PII leakage.

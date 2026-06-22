@@ -14,11 +14,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy.dialects import sqlite as sqlite_dialect
 
 from codemie.repository.project_spend_tracking_repository import ProjectSpendTrackingRepository
 
@@ -247,3 +249,190 @@ async def test_insert_member_budget_entries_executes_upsert_and_commit():
 
     session.execute.assert_awaited_once()
     session.commit.assert_awaited_once()
+
+
+class TestGetSpendForPeriod:
+    @pytest.mark.asyncio
+    async def test_returns_total_spend_row_count_and_rows(self):
+        repository = ProjectSpendTrackingRepository()
+        row = SimpleNamespace(
+            project_name="proj-a",
+            spend_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            daily_spend=Decimal("5.5"),
+            cumulative_spend=Decimal("10.0"),
+            budget_period_spend=Decimal("5.5"),
+            budget_id="budget-1",
+        )
+        agg_result = MagicMock()
+        agg_result.one.return_value = SimpleNamespace(total_spend=Decimal("5.5"), total_count=1)
+        data_result = MagicMock()
+        data_result.scalars.return_value.all.return_value = [row]
+        session = AsyncMock()
+        session.execute.side_effect = [agg_result, data_result]
+
+        total_spend, total_count, rows = await repository.get_spend_for_period(
+            session=session,
+            project_name="proj-a",
+            period_from_dt=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            period_to_dt=datetime(2026, 2, 1, tzinfo=timezone.utc),
+            page=0,
+            per_page=20,
+        )
+
+        assert total_spend == 5.5
+        assert isinstance(total_spend, float)
+        assert total_count == 1
+        assert rows == [row]
+        assert session.execute.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_returns_zero_total_when_no_rows(self):
+        repository = ProjectSpendTrackingRepository()
+        agg_result = MagicMock()
+        agg_result.one.return_value = SimpleNamespace(total_spend=Decimal("0"), total_count=0)
+        session = AsyncMock()
+        session.execute.side_effect = [agg_result]
+
+        total_spend, total_count, rows = await repository.get_spend_for_period(
+            session=session,
+            project_name="proj-empty",
+            period_from_dt=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            period_to_dt=datetime(2026, 2, 1, tzinfo=timezone.utc),
+            page=0,
+            per_page=20,
+        )
+
+        assert total_spend == 0.0
+        assert total_count == 0
+        assert rows == []
+
+    @pytest.mark.asyncio
+    async def test_issues_two_queries_for_any_page(self):
+        """Two execute calls are always issued: one aggregation, one paginated data fetch."""
+        repository = ProjectSpendTrackingRepository()
+        agg_result = MagicMock()
+        agg_result.one.return_value = SimpleNamespace(total_spend=Decimal("100.0"), total_count=25)
+        data_result = MagicMock()
+        data_result.scalars.return_value.all.return_value = []
+        session = AsyncMock()
+        session.execute.side_effect = [agg_result, data_result]
+
+        total_spend, total_count, rows = await repository.get_spend_for_period(
+            session=session,
+            project_name="proj-a",
+            period_from_dt=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            period_to_dt=datetime(2026, 2, 1, tzinfo=timezone.utc),
+            page=1,
+            per_page=20,
+        )
+
+        assert total_spend == 100.0
+        assert total_count == 25
+        assert session.execute.await_count == 2
+
+
+def _compile_sql(stmt) -> str:
+    """Return literal-bound SQL string for assertion."""
+    return str(stmt.compile(dialect=sqlite_dialect.dialect(), compile_kwargs={"literal_binds": True}))
+
+
+def _make_repo_mocks(total_spend=Decimal("0"), total_count=0, rows=None):
+    """Return (repository, session) with pre-wired execute responses."""
+    repo = ProjectSpendTrackingRepository()
+    agg_result = MagicMock()
+    agg_result.one.return_value = SimpleNamespace(total_spend=total_spend, total_count=total_count)
+    data_result = MagicMock()
+    data_result.scalars.return_value.all.return_value = rows or []
+    session = AsyncMock()
+    session.execute.side_effect = [agg_result, data_result]
+    return repo, session
+
+
+_FROM = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_TO = datetime(2026, 2, 1, tzinfo=timezone.utc)
+
+
+class TestGetSpendForPeriodFilters:
+    @pytest.mark.asyncio
+    async def test_get_spend_for_period_no_filter_excludes_project_budget(self):
+        repo, session = _make_repo_mocks(total_count=1)
+
+        await repo.get_spend_for_period(
+            session=session,
+            project_name="proj-a",
+            period_from_dt=_FROM,
+            period_to_dt=_TO,
+            page=0,
+            per_page=20,
+        )
+
+        assert session.execute.await_count == 2
+        agg_sql = _compile_sql(session.execute.await_args_list[0].args[0])
+        data_sql = _compile_sql(session.execute.await_args_list[1].args[0])
+        assert "NOT IN" in agg_sql.upper()
+        assert "project_budget" in agg_sql
+        assert "NOT IN" in data_sql.upper()
+        assert "project_budget" in data_sql
+
+    @pytest.mark.asyncio
+    async def test_get_spend_for_period_spend_subject_type_filter_applies_exact_match(self):
+        repo, session = _make_repo_mocks(total_count=1)
+
+        await repo.get_spend_for_period(
+            session=session,
+            project_name="proj-a",
+            period_from_dt=_FROM,
+            period_to_dt=_TO,
+            page=0,
+            per_page=20,
+            spend_subject_type="member_budget",
+        )
+
+        agg_sql = _compile_sql(session.execute.await_args_list[0].args[0])
+        data_sql = _compile_sql(session.execute.await_args_list[1].args[0])
+        assert "member_budget" in agg_sql
+        assert "NOT IN" not in agg_sql.upper()
+        assert "member_budget" in data_sql
+        assert "NOT IN" not in data_sql.upper()
+
+    @pytest.mark.asyncio
+    async def test_get_spend_for_period_budget_category_filter_applies_to_both_statements(self):
+        repo, session = _make_repo_mocks(total_count=1)
+
+        await repo.get_spend_for_period(
+            session=session,
+            project_name="proj-a",
+            period_from_dt=_FROM,
+            period_to_dt=_TO,
+            page=0,
+            per_page=20,
+            budget_category="cli",
+        )
+
+        agg_sql = _compile_sql(session.execute.await_args_list[0].args[0])
+        data_sql = _compile_sql(session.execute.await_args_list[1].args[0])
+        assert "budget_category = 'cli'" in agg_sql
+        assert "budget_category = 'cli'" in data_sql
+
+    @pytest.mark.asyncio
+    async def test_get_spend_for_period_both_filters_applied_together(self):
+        repo, session = _make_repo_mocks(total_count=1)
+
+        await repo.get_spend_for_period(
+            session=session,
+            project_name="proj-a",
+            period_from_dt=_FROM,
+            period_to_dt=_TO,
+            page=0,
+            per_page=20,
+            budget_category="platform",
+            spend_subject_type="budget",
+        )
+
+        agg_sql = _compile_sql(session.execute.await_args_list[0].args[0])
+        data_sql = _compile_sql(session.execute.await_args_list[1].args[0])
+        assert "budget_category = 'platform'" in agg_sql
+        assert "spend_subject_type = 'budget'" in agg_sql
+        assert "NOT IN" not in agg_sql.upper()
+        assert "budget_category = 'platform'" in data_sql
+        assert "spend_subject_type = 'budget'" in data_sql

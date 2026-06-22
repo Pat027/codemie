@@ -25,6 +25,9 @@ from codemie.configs import config, logger
 from codemie.service.spend_tracking.spend_models import ProjectSpendTracking
 
 
+_EXCLUDED_SUBJECT_TYPES_DEFAULT: frozenset[str] = frozenset({"project_budget"})
+
+
 class ProjectSpendTrackingRepository:
     """Async repository for project_spend_tracking table."""
 
@@ -749,6 +752,71 @@ class ProjectSpendTrackingRepository:
 
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_spend_for_period(
+        self,
+        session: AsyncSession,
+        project_name: str,
+        period_from_dt: datetime,
+        period_to_dt: datetime,
+        page: int,
+        per_page: int,
+        budget_category: str | None = None,
+        spend_subject_type: str | None = None,
+    ) -> tuple[float, int, list[ProjectSpendTracking]]:
+        """Return total spend, row count, and a page of rows for a project date range.
+
+        When spend_subject_type is None, project_budget rows are excluded from both
+        queries to avoid double-counting (project_budget aggregates member_budget rows).
+
+        Args:
+            session: Async database session
+            project_name: Project to query
+            period_from_dt: UTC-aware start datetime (inclusive)
+            period_to_dt: UTC-aware end datetime (exclusive)
+            page: 0-indexed page number
+            per_page: Rows per page
+            budget_category: Optional exact-match filter on budget_category column
+            spend_subject_type: Optional exact-match filter; when None, excludes project_budget
+
+        Returns:
+            Tuple of (total_spend, total_count, rows)
+        """
+        base_filters = [
+            ProjectSpendTracking.project_name == project_name,
+            ProjectSpendTracking.spend_date >= period_from_dt,
+            ProjectSpendTracking.spend_date < period_to_dt,
+        ]
+        if budget_category is not None:
+            base_filters.append(ProjectSpendTracking.budget_category == budget_category)
+        if spend_subject_type is None:
+            base_filters.append(ProjectSpendTracking.spend_subject_type.not_in(_EXCLUDED_SUBJECT_TYPES_DEFAULT))
+        else:
+            base_filters.append(ProjectSpendTracking.spend_subject_type == spend_subject_type)
+
+        agg_stmt = select(
+            func.coalesce(func.sum(ProjectSpendTracking.daily_spend), 0).label("total_spend"),
+            func.count().label("total_count"),
+        ).where(*base_filters)
+        agg_result = await session.execute(agg_stmt)
+        agg_row = agg_result.one()
+        total_spend = float(agg_row.total_spend)
+        total_count = agg_row.total_count
+
+        if page * per_page >= total_count:
+            return total_spend, total_count, []
+
+        data_stmt = (
+            select(ProjectSpendTracking)
+            .where(*base_filters)
+            .order_by(ProjectSpendTracking.spend_date.asc())
+            .offset(page * per_page)
+            .limit(per_page)
+        )
+        data_result = await session.execute(data_stmt)
+        rows = list(data_result.scalars().all())
+
+        return total_spend, total_count, rows
 
     async def get_latest_key_spending_for_project(
         self,

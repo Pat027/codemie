@@ -16,6 +16,7 @@
 
 from contextlib import asynccontextmanager
 from datetime import datetime, UTC
+from datetime import date as date_type
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -39,12 +40,15 @@ from codemie.rest_api.routers.projects import (
     create_project,
     delete_project,
     get_project_detail,
+    get_project_spends,
     list_projects,
     remove_user_from_project,
     update_project,
     update_user_project_assignment,
+    PaginatedSpendsResponse,
 )
 from codemie.configs import config
+from codemie.core.models import Application
 from codemie.rest_api.security.user import User
 from codemie.service.budget.budget_enums import BudgetCategory
 
@@ -1603,7 +1607,7 @@ class TestRaiseProjectNotFound:
     def test_extracts_http_method_from_action(self, mock_logger):
         action = "POST /v1/projects/test-project/assignment"
         with pytest.raises(ExtendedHTTPException) as exc_info:
-            _raise_project_not_found(user_id="user-123", project_name="test-project", action=action)
+            _raise_project_not_found(user_id="user-123", action=action)
         assert exc_info.value.code == 404
         assert exc_info.value.message == "Project not found"
         log_message = mock_logger.warning.call_args[0][0]
@@ -1616,14 +1620,14 @@ class TestRaiseProjectNotFound:
     @patch("codemie.rest_api.routers.projects.logger")
     def test_action_without_path(self, mock_logger):
         with pytest.raises(ExtendedHTTPException):
-            _raise_project_not_found(user_id="user-456", project_name="hidden", action="DELETE")
+            _raise_project_not_found(user_id="user-456", action="DELETE")
         log_message = mock_logger.warning.call_args[0][0]
         assert "method=DELETE" in log_message
 
     @patch("codemie.rest_api.routers.projects.logger")
     def test_empty_action_defaults_to_unknown(self, mock_logger):
         with pytest.raises(ExtendedHTTPException):
-            _raise_project_not_found(user_id="user-789", project_name="proj", action="")
+            _raise_project_not_found(user_id="user-789", action="")
         log_message = mock_logger.warning.call_args[0][0]
         assert "method=UNKNOWN" in log_message
 
@@ -2179,3 +2183,497 @@ class TestPersonalProjectSpending:
 
         assert result.spending is None
         assert result.spending_widget is None
+
+
+class TestGetProjectSpends:
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.get_async_session")
+    @patch("codemie.rest_api.routers.projects.get_session")
+    @patch("codemie.rest_api.routers.projects.application_repository")
+    @patch("codemie.rest_api.routers.projects._spend_repo")
+    @pytest.mark.anyio
+    async def test_returns_paginated_spends_for_project_admin(
+        self,
+        mock_spend_repo,
+        mock_app_repo,
+        mock_get_session,
+        mock_get_async_session,
+        mock_config,
+    ):
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        project_admin = User(
+            id="user-1",
+            username="user1",
+            email="user1@example.com",
+            is_admin=False,
+            admin_project_names=["proj-a"],
+            project_names=["proj-a"],
+        )
+        mock_project = MagicMock()
+        mock_project.deleted_at = None
+        mock_get_session.return_value.__enter__.return_value = MagicMock()
+        mock_app_repo.get_by_name.return_value = mock_project
+        mock_get_async_session.return_value = _mock_session_ctx(AsyncMock())
+        spend_row = SimpleNamespace(
+            spend_date=datetime(2026, 1, 1, tzinfo=UTC),
+            daily_spend=5.5,
+            cumulative_spend=10.0,
+            budget_period_spend=5.5,
+            budget_id="budget-1",
+        )
+        mock_spend_repo.get_spend_for_period = AsyncMock(return_value=(5.5, 1, [spend_row]))
+
+        result = await get_project_spends(
+            project_name="proj-a",
+            period_from=date_type(2026, 1, 1),
+            period_to=date_type(2026, 1, 31),
+            page=0,
+            per_page=20,
+            user=project_admin,
+        )
+
+        assert isinstance(result, PaginatedSpendsResponse)
+        assert result.total_spend == 5.5
+        assert len(result.rows) == 1
+        assert result.rows[0].daily_spend == 5.5
+        assert result.rows[0].budget_id == "budget-1"
+        assert result.pagination.total == 1
+        assert result.pagination.page == 0
+        assert result.pagination.per_page == 20
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.get_async_session")
+    @patch("codemie.rest_api.routers.projects.get_session")
+    @patch("codemie.rest_api.routers.projects.application_repository")
+    @patch("codemie.rest_api.routers.projects._spend_repo")
+    @patch("codemie.rest_api.security.user.config")
+    @pytest.mark.anyio
+    async def test_returns_paginated_spends_for_global_admin(
+        self,
+        mock_user_config,
+        mock_spend_repo,
+        mock_app_repo,
+        mock_get_session,
+        mock_get_async_session,
+        mock_config,
+    ):
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        mock_user_config.ENV = "production"
+        mock_user_config.ENABLE_USER_MANAGEMENT = True
+        admin = User(id="admin-1", username="admin", email="admin@example.com", is_admin=True)
+        mock_project = MagicMock()
+        mock_project.deleted_at = None
+        mock_get_session.return_value.__enter__.return_value = MagicMock()
+        mock_app_repo.get_by_name.return_value = mock_project
+        mock_get_async_session.return_value = _mock_session_ctx(AsyncMock())
+        mock_spend_repo.get_spend_for_period = AsyncMock(return_value=(0.0, 0, []))
+
+        result = await get_project_spends(
+            project_name="proj-a",
+            period_from=date_type(2026, 1, 1),
+            period_to=date_type(2026, 1, 31),
+            page=0,
+            per_page=20,
+            user=admin,
+        )
+
+        assert isinstance(result, PaginatedSpendsResponse)
+        assert result.total_spend == 0.0
+        assert result.rows == []
+        assert result.pagination.total == 0
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.get_async_session")
+    @patch("codemie.rest_api.routers.projects.get_session")
+    @patch("codemie.rest_api.routers.projects.application_repository")
+    @patch("codemie.rest_api.routers.projects._spend_repo")
+    @pytest.mark.anyio
+    async def test_returns_paginated_spends_for_global_maintainer(
+        self,
+        mock_spend_repo,
+        mock_app_repo,
+        mock_get_session,
+        mock_get_async_session,
+        mock_config,
+    ):
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        maintainer = User(
+            id="maintainer-1",
+            username="maintainer",
+            email="maintainer@example.com",
+            is_admin=True,
+            is_maintainer=True,
+        )
+        mock_project = MagicMock()
+        mock_project.deleted_at = None
+        mock_get_session.return_value.__enter__.return_value = MagicMock()
+        mock_app_repo.get_by_name.return_value = mock_project
+        mock_get_async_session.return_value = _mock_session_ctx(AsyncMock())
+        mock_spend_repo.get_spend_for_period = AsyncMock(return_value=(7.5, 1, []))
+
+        result = await get_project_spends(
+            project_name="proj-a",
+            period_from=date_type(2026, 1, 1),
+            period_to=date_type(2026, 1, 31),
+            page=0,
+            per_page=20,
+            user=maintainer,
+        )
+
+        assert isinstance(result, PaginatedSpendsResponse)
+        assert result.total_spend == 7.5
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.get_session")
+    @patch("codemie.rest_api.routers.projects.application_repository")
+    @pytest.mark.anyio
+    async def test_returns_404_when_project_not_found(
+        self,
+        mock_app_repo,
+        mock_get_session,
+        mock_config,
+    ):
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        admin = User(id="admin-1", username="admin", email="admin@example.com", is_admin=True)
+        mock_get_session.return_value.__enter__.return_value = MagicMock()
+        mock_app_repo.get_by_name.return_value = None
+
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            await get_project_spends(
+                project_name="nonexistent",
+                period_from=date_type(2026, 1, 1),
+                period_to=date_type(2026, 1, 31),
+                page=0,
+                per_page=20,
+                user=admin,
+            )
+
+        assert exc_info.value.code == 404
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.get_session")
+    @patch("codemie.rest_api.routers.projects.application_repository")
+    @pytest.mark.anyio
+    async def test_returns_404_when_project_is_soft_deleted(
+        self,
+        mock_app_repo,
+        mock_get_session,
+        mock_config,
+    ):
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        admin = User(id="admin-1", username="admin", email="admin@example.com", is_admin=True)
+        mock_project = MagicMock()
+        mock_project.deleted_at = datetime(2026, 1, 1, tzinfo=UTC)
+        mock_get_session.return_value.__enter__.return_value = MagicMock()
+        mock_app_repo.get_by_name.return_value = mock_project
+
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            await get_project_spends(
+                project_name="deleted-proj",
+                period_from=date_type(2026, 1, 1),
+                period_to=date_type(2026, 1, 31),
+                page=0,
+                per_page=20,
+                user=admin,
+            )
+
+        assert exc_info.value.code == 404
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.get_session")
+    @patch("codemie.rest_api.routers.projects.application_repository")
+    @patch("codemie.rest_api.security.user.config")
+    @pytest.mark.anyio
+    async def test_returns_404_when_user_is_not_project_admin(
+        self,
+        mock_user_config,
+        mock_app_repo,
+        mock_get_session,
+        mock_config,
+    ):
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        mock_user_config.ENV = "production"
+        mock_user_config.ENABLE_USER_MANAGEMENT = True
+        non_admin = User(id="user-2", username="user2", email="user2@example.com", is_admin=False)
+        mock_project = MagicMock()
+        mock_project.deleted_at = None
+        mock_get_session.return_value.__enter__.return_value = MagicMock()
+        mock_app_repo.get_by_name.return_value = mock_project
+
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            await get_project_spends(
+                project_name="proj-a",
+                period_from=date_type(2026, 1, 1),
+                period_to=date_type(2026, 1, 31),
+                page=0,
+                per_page=20,
+                user=non_admin,
+            )
+
+        assert exc_info.value.code == 404
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @pytest.mark.anyio
+    async def test_returns_400_when_period_from_after_period_to(self, mock_config):
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        admin = User(id="admin-1", username="admin", email="admin@example.com", is_admin=True)
+
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            await get_project_spends(
+                project_name="proj-a",
+                period_from=date_type(2026, 2, 1),
+                period_to=date_type(2026, 1, 1),
+                page=0,
+                per_page=20,
+                user=admin,
+            )
+
+        assert exc_info.value.code == 400
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.get_async_session")
+    @patch("codemie.rest_api.routers.projects.get_session")
+    @patch("codemie.rest_api.routers.projects.application_repository")
+    @patch("codemie.rest_api.routers.projects._spend_repo")
+    @pytest.mark.anyio
+    async def test_returns_spends_for_personal_project_owner(
+        self,
+        mock_spend_repo,
+        mock_app_repo,
+        mock_get_session,
+        mock_get_async_session,
+        mock_config,
+    ):
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        personal_project_owner = User(
+            id="user-1",
+            username="user1",
+            email="user1@example.com",
+            is_admin=False,
+            admin_project_names=[],
+            project_names=["my-personal-proj"],
+        )
+        mock_project = MagicMock()
+        mock_project.deleted_at = None
+        mock_project.project_type = Application.ProjectType.PERSONAL
+        mock_get_session.return_value.__enter__.return_value = MagicMock()
+        mock_app_repo.get_by_name.return_value = mock_project
+        mock_get_async_session.return_value = _mock_session_ctx(AsyncMock())
+        mock_spend_repo.get_spend_for_period = AsyncMock(return_value=(12.5, 2, []))
+
+        result = await get_project_spends(
+            project_name="my-personal-proj",
+            period_from=date_type(2026, 1, 1),
+            period_to=date_type(2026, 1, 31),
+            page=0,
+            per_page=20,
+            user=personal_project_owner,
+        )
+
+        assert isinstance(result, PaginatedSpendsResponse)
+        assert result.total_spend == 12.5
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.get_session")
+    @patch("codemie.rest_api.routers.projects.application_repository")
+    @patch("codemie.rest_api.security.user.config")
+    @pytest.mark.anyio
+    async def test_returns_404_for_non_member_of_personal_project(
+        self,
+        mock_user_config,
+        mock_app_repo,
+        mock_get_session,
+        mock_config,
+    ):
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        mock_user_config.ENV = "production"
+        mock_user_config.ENABLE_USER_MANAGEMENT = True
+        non_member = User(
+            id="user-2",
+            username="user2",
+            email="user2@example.com",
+            is_admin=False,
+            admin_project_names=[],
+            project_names=[],
+        )
+        mock_project = MagicMock()
+        mock_project.deleted_at = None
+        mock_project.project_type = Application.ProjectType.PERSONAL
+        mock_get_session.return_value.__enter__.return_value = MagicMock()
+        mock_app_repo.get_by_name.return_value = mock_project
+
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            await get_project_spends(
+                project_name="someone-elses-personal-proj",
+                period_from=date_type(2026, 1, 1),
+                period_to=date_type(2026, 1, 31),
+                page=0,
+                per_page=20,
+                user=non_member,
+            )
+
+        assert exc_info.value.code == 404
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.get_async_session")
+    @patch("codemie.rest_api.routers.projects.get_session")
+    @patch("codemie.rest_api.routers.projects.application_repository")
+    @patch("codemie.rest_api.routers.projects._spend_repo")
+    @patch("codemie.rest_api.security.user.config")
+    @pytest.mark.anyio
+    async def test_budget_category_filter_forwarded_to_repo(
+        self,
+        mock_user_config,
+        mock_spend_repo,
+        mock_app_repo,
+        mock_get_session,
+        mock_get_async_session,
+        mock_config,
+    ):
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        mock_user_config.ENV = "production"
+        mock_user_config.ENABLE_USER_MANAGEMENT = True
+        admin = User(id="admin-1", username="admin", email="admin@example.com", is_admin=True)
+        mock_project = MagicMock()
+        mock_project.deleted_at = None
+        mock_get_session.return_value.__enter__.return_value = MagicMock()
+        mock_app_repo.get_by_name.return_value = mock_project
+        mock_get_async_session.return_value = _mock_session_ctx(AsyncMock())
+        mock_spend_repo.get_spend_for_period = AsyncMock(return_value=(0.0, 0, []))
+
+        await get_project_spends(
+            project_name="proj-a",
+            period_from=date_type(2026, 1, 1),
+            period_to=date_type(2026, 1, 31),
+            page=0,
+            per_page=20,
+            budget_category=BudgetCategory.CLI,
+            spend_subject_type=None,
+            user=admin,
+        )
+
+        assert mock_spend_repo.get_spend_for_period.call_args.kwargs["budget_category"] == BudgetCategory.CLI
+        assert mock_spend_repo.get_spend_for_period.call_args.kwargs["spend_subject_type"] is None
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.get_async_session")
+    @patch("codemie.rest_api.routers.projects.get_session")
+    @patch("codemie.rest_api.routers.projects.application_repository")
+    @patch("codemie.rest_api.routers.projects._spend_repo")
+    @patch("codemie.rest_api.security.user.config")
+    @pytest.mark.anyio
+    async def test_spend_subject_type_filter_forwarded_to_repo(
+        self,
+        mock_user_config,
+        mock_spend_repo,
+        mock_app_repo,
+        mock_get_session,
+        mock_get_async_session,
+        mock_config,
+    ):
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        mock_user_config.ENV = "production"
+        mock_user_config.ENABLE_USER_MANAGEMENT = True
+        admin = User(id="admin-1", username="admin", email="admin@example.com", is_admin=True)
+        mock_project = MagicMock()
+        mock_project.deleted_at = None
+        mock_get_session.return_value.__enter__.return_value = MagicMock()
+        mock_app_repo.get_by_name.return_value = mock_project
+        mock_get_async_session.return_value = _mock_session_ctx(AsyncMock())
+        mock_spend_repo.get_spend_for_period = AsyncMock(return_value=(0.0, 0, []))
+
+        await get_project_spends(
+            project_name="proj-a",
+            period_from=date_type(2026, 1, 1),
+            period_to=date_type(2026, 1, 31),
+            page=0,
+            per_page=20,
+            budget_category=None,
+            spend_subject_type="member_budget",
+            user=admin,
+        )
+
+        assert mock_spend_repo.get_spend_for_period.call_args.kwargs["spend_subject_type"] == "member_budget"
+        assert mock_spend_repo.get_spend_for_period.call_args.kwargs["budget_category"] is None
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.get_async_session")
+    @patch("codemie.rest_api.routers.projects.get_session")
+    @patch("codemie.rest_api.routers.projects.application_repository")
+    @patch("codemie.rest_api.routers.projects._spend_repo")
+    @patch("codemie.rest_api.security.user.config")
+    @pytest.mark.anyio
+    async def test_both_filters_forwarded_to_repo(
+        self,
+        mock_user_config,
+        mock_spend_repo,
+        mock_app_repo,
+        mock_get_session,
+        mock_get_async_session,
+        mock_config,
+    ):
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        mock_user_config.ENV = "production"
+        mock_user_config.ENABLE_USER_MANAGEMENT = True
+        admin = User(id="admin-1", username="admin", email="admin@example.com", is_admin=True)
+        mock_project = MagicMock()
+        mock_project.deleted_at = None
+        mock_get_session.return_value.__enter__.return_value = MagicMock()
+        mock_app_repo.get_by_name.return_value = mock_project
+        mock_get_async_session.return_value = _mock_session_ctx(AsyncMock())
+        mock_spend_repo.get_spend_for_period = AsyncMock(return_value=(0.0, 0, []))
+
+        await get_project_spends(
+            project_name="proj-a",
+            period_from=date_type(2026, 1, 1),
+            period_to=date_type(2026, 1, 31),
+            page=0,
+            per_page=20,
+            budget_category=BudgetCategory.PLATFORM,
+            spend_subject_type="budget",
+            user=admin,
+        )
+
+        assert mock_spend_repo.get_spend_for_period.call_args.kwargs["budget_category"] == BudgetCategory.PLATFORM
+        assert mock_spend_repo.get_spend_for_period.call_args.kwargs["spend_subject_type"] == "budget"
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.get_async_session")
+    @patch("codemie.rest_api.routers.projects.get_session")
+    @patch("codemie.rest_api.routers.projects.application_repository")
+    @patch("codemie.rest_api.routers.projects._spend_repo")
+    @patch("codemie.rest_api.security.user.config")
+    @pytest.mark.anyio
+    async def test_no_filters_passes_none_to_repo(
+        self,
+        mock_user_config,
+        mock_spend_repo,
+        mock_app_repo,
+        mock_get_session,
+        mock_get_async_session,
+        mock_config,
+    ):
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        mock_user_config.ENV = "production"
+        mock_user_config.ENABLE_USER_MANAGEMENT = True
+        admin = User(id="admin-1", username="admin", email="admin@example.com", is_admin=True)
+        mock_project = MagicMock()
+        mock_project.deleted_at = None
+        mock_get_session.return_value.__enter__.return_value = MagicMock()
+        mock_app_repo.get_by_name.return_value = mock_project
+        mock_get_async_session.return_value = _mock_session_ctx(AsyncMock())
+        mock_spend_repo.get_spend_for_period = AsyncMock(return_value=(0.0, 0, []))
+
+        await get_project_spends(
+            project_name="proj-a",
+            period_from=date_type(2026, 1, 1),
+            period_to=date_type(2026, 1, 31),
+            page=0,
+            per_page=20,
+            budget_category=None,
+            spend_subject_type=None,
+            user=admin,
+        )
+
+        assert mock_spend_repo.get_spend_for_period.call_args.kwargs["budget_category"] is None
+        assert mock_spend_repo.get_spend_for_period.call_args.kwargs["spend_subject_type"] is None
