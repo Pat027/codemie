@@ -23,7 +23,7 @@ from codemie.core.ability import Ability, Action
 from codemie.rest_api.models.assistant import MCPServerDetails
 from codemie.service.mcp.access_control import MCPAccessControlService
 from codemie.core.constants import MermaidMimeType
-from codemie.core.exceptions import ExtendedHTTPException
+from codemie.core.exceptions import ExtendedHTTPException, ValidationException
 from codemie.core.models import BaseResponse, BaseResponseWithData, CreatedByUser
 from codemie.core.workflow_models import (
     CreateWorkflowRequest,
@@ -284,7 +284,7 @@ def create_workflow(
     response_model=BaseResponseWithData,
     response_model_by_alias=True,
 )
-def update_workflow(
+async def update_workflow(
     workflow_id: str,
     request: UpdateWorkflowRequest,
     background_tasks: BackgroundTasks,
@@ -304,13 +304,13 @@ def update_workflow(
         raise_access_denied("update")
 
     updated_config = WorkflowConfig(**request.model_dump())
+    updated_config.parse_execution_config()
 
     try:
         MCPAccessControlService.validate_on_save(_collect_workflow_mcp_servers(updated_config))
         _strip_workflow_mcp_servers(updated_config)
         logger.debug(f"Update workflow. Request: {request}")
 
-        # Prevent updating workflows to autonomous mode
         if updated_config.mode == WorkflowMode.AUTONOMOUS:
             raise ExtendedHTTPException(
                 code=status.HTTP_403_FORBIDDEN,
@@ -318,7 +318,7 @@ def update_workflow(
                 details="Updating workflows to autonomous mode is not allowed. Only sequential workflows can be used.",
                 help="Please set the workflow mode to 'SEQUENTIAL' instead.",
             )
-        WorkflowExecutor.validate_workflow(workflow_config=updated_config, user=user, error_format=error_format)
+        await workflow_service.validate_for_update(workflow, updated_config, user, error_format)
         updated_workflow = workflow_service.update_workflow(workflow, updated_config, user)
 
         GuardrailService.sync_guardrail_assignments_for_entity(
@@ -331,13 +331,14 @@ def update_workflow(
 
         background_tasks.add_task(run_in_thread_pool, update_workflow_schema, updated_workflow, user)
 
-        # Enrich with guardrail assignments
         updated_workflow.guardrail_assignments = GuardrailService.get_entity_guardrail_assignments(
             user,
             GuardrailEntity.WORKFLOW,
             str(updated_workflow.id),
         )
         return {"message": "Workflow updated successfully", "data": updated_workflow}
+    except ValidationException:
+        raise
     except Exception as e:
         formatted_exception = str(e).strip()
         details = (

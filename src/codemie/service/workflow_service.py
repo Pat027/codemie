@@ -32,6 +32,7 @@ from codemie.core.utils import safe_divide
 from codemie.core.workflow_models import (
     WorkflowConfig,
     WorkflowConfigTemplate,
+    WorkflowErrorFormat,
     WorkflowExecution,
     WorkflowExecutionResponse,
     WorkflowExecutionStatusEnum,
@@ -43,8 +44,11 @@ from codemie.rest_api.security.user import User
 from codemie.rest_api.utils.default_applications import ensure_application_exists
 from codemie.service.agent_workspace_service import AgentWorkspaceService
 from codemie.service.monitoring.workflow_monitoring_service import WorkflowMonitoringService
+from codemie.service.workflow_config.workflow_marketplace_service import WorkflowMarketplaceService
 
 MAX_ITEMS_PER_PAGE = 10_000
+
+_marketplace_service = WorkflowMarketplaceService()
 
 
 class WorkflowService:
@@ -144,6 +148,20 @@ class WorkflowService:
                 mode=workflow_config.mode,
             )
             raise e
+
+    async def validate_for_update(
+        self,
+        workflow: WorkflowConfig,
+        updated_config: WorkflowConfig,
+        user: User,
+        error_format: WorkflowErrorFormat,
+    ) -> None:
+        # Lazy import: workflows.workflow imports WorkflowService, causing a circular dependency at module level.
+        from codemie.workflows.workflow import WorkflowExecutor
+
+        if workflow.is_global:
+            await _marketplace_service.validate(updated_config, user)
+        WorkflowExecutor.validate_workflow(workflow_config=updated_config, user=user, error_format=error_format)
 
     def update_workflow(self, stored_config: WorkflowConfig, updated_workflow_config: WorkflowConfig, user: User):
         try:

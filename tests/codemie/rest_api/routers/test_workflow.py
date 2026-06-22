@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import status
@@ -310,10 +310,15 @@ async def test_update_workflow(
     mock_get_wf.return_value = workflow_config
     mock_ability.return_value = True
 
+    from unittest.mock import AsyncMock
+
     with (
         patch("codemie.service.workflow_service.WorkflowService.get_workflow", return_value=workflow_config),
         patch("codemie.service.workflow_service.WorkflowService.update_workflow", return_value=workflow_config_data),
-        patch("codemie.workflows.workflow.WorkflowExecutor.validate_workflow") as workflow_executor,
+        patch(
+            "codemie.service.workflow_service.WorkflowService.validate_for_update",
+            new_callable=AsyncMock,
+        ) as mock_validate,
         patch("codemie.service.workflow_service.WorkflowService.save_workflow_schema"),
         patch("codemie.workflows.workflow.WorkflowExecutor.validate_workflow_and_draw"),
         patch("codemie.rest_api.routers.workflow.project_access_check"),
@@ -328,9 +333,7 @@ async def test_update_workflow(
         result = response.json().get("message", "")
         assert result
         assert result == "Workflow updated successfully"
-        workflow_executor.assert_called_once_with(
-            workflow_config=WorkflowConfig(**update_workflow_request.model_dump()), user=user, error_format='string'
-        )
+        mock_validate.assert_called_once()
         assert response.json()["data"] == workflow_config_data.model_dump()
 
 
@@ -373,16 +376,23 @@ async def test_update_workflow_not_found(mock_get_wf, workflow_config, update_wo
 
 
 @pytest.mark.asyncio
-@pytest.mark.asyncio
 @patch("codemie.core.ability.Ability.can")
 @patch("codemie.service.workflow_service.WorkflowService.get_workflow")
 async def test_update_workflow_exception(mock_get_wf, mock_ability, update_workflow_request, request_header):
+    from unittest.mock import AsyncMock
+
     mock_get_wf.return_value = workflow_config
     mock_ability.return_value = True
 
-    with patch(
-        "codemie.service.workflow_service.WorkflowService.update_workflow",
-        side_effect=Exception("Update failed"),
+    with (
+        patch(
+            "codemie.service.workflow_service.WorkflowService.update_workflow",
+            side_effect=Exception("Update failed"),
+        ),
+        patch(
+            "codemie.service.workflow_service.WorkflowService.validate_for_update",
+            new_callable=AsyncMock,
+        ),
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
@@ -392,6 +402,87 @@ async def test_update_workflow_exception(mock_get_wf, mock_ability, update_workf
                 headers=request_header,
             )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.asyncio
+@patch("codemie.core.ability.Ability.can")
+@patch("codemie.service.workflow_service.WorkflowService.get_workflow")
+async def test_update_published_workflow_with_external_assistant_blocked(
+    mock_get_wf: MagicMock,
+    mock_ability: MagicMock,
+    update_workflow_request: UpdateWorkflowRequest,
+    request_header: dict[str, str],
+) -> None:
+    from unittest.mock import AsyncMock
+    from codemie.core.exceptions import ValidationException
+
+    published_workflow = WorkflowConfig(
+        id="workflow_123",
+        name="Published Workflow",
+        description="A published workflow",
+        yaml_config=test_yaml_config,
+        project="demo",
+        is_global=True,
+    )
+    mock_get_wf.return_value = published_workflow
+    mock_ability.return_value = True
+
+    with patch(
+        "codemie.service.workflow_service.WorkflowService.validate_for_update",
+        new_callable=AsyncMock,
+        side_effect=ValidationException("Marketplace workflows cannot use external (non-virtual) assistants or skills"),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            response = await ac.put(
+                f"/v1/workflows/{published_workflow.id}",
+                json=update_workflow_request.model_dump(),
+                headers=request_header,
+            )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert (
+        response.json()["error"]["message"]
+        == "Marketplace workflows cannot use external (non-virtual) assistants or skills"
+    )
+
+
+@pytest.mark.asyncio
+@patch("codemie.core.ability.Ability.can")
+@patch("codemie.service.workflow_service.WorkflowService.get_workflow")
+@patch("codemie.service.guardrail.guardrail_service.GuardrailService.get_entity_guardrail_assignments")
+async def test_update_non_published_workflow_skips_marketplace_validation(
+    mock_get_guardrail_assignments: MagicMock,
+    mock_get_wf: MagicMock,
+    mock_ability: MagicMock,
+    update_workflow_request: UpdateWorkflowRequest,
+    request_header: dict[str, str],
+) -> None:
+    from unittest.mock import AsyncMock
+
+    mock_get_guardrail_assignments.return_value = []
+    mock_get_wf.return_value = workflow_config_data  # is_global=False
+    mock_ability.return_value = True
+
+    mock_validate: AsyncMock = AsyncMock()
+
+    with (
+        patch("codemie.service.workflow_service.WorkflowService.validate_for_update", mock_validate),
+        patch("codemie.service.workflow_service.WorkflowService.update_workflow", return_value=workflow_config_data),
+        patch("codemie.service.workflow_service.WorkflowService.save_workflow_schema"),
+        patch("codemie.workflows.workflow.WorkflowExecutor.validate_workflow_and_draw"),
+        patch("codemie.rest_api.routers.workflow.project_access_check"),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            response = await ac.put(
+                f"/v1/workflows/{workflow_config_data.id}",
+                json=update_workflow_request.model_dump(),
+                headers=request_header,
+            )
+
+    assert response.status_code == status.HTTP_200_OK
+    mock_validate.assert_called_once()
 
 
 @pytest.mark.asyncio

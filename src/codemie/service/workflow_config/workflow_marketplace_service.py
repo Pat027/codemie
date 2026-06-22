@@ -63,7 +63,7 @@ class WorkflowMarketplaceService:
         except NotFoundException as exc:
             raise ValidationException(str(exc)) from exc
         if assistants or skills:
-            raise ValidationException("Workflow contains external assistants or skills")
+            raise ValidationException("Marketplace workflows cannot use external (non-virtual) assistants or skills")
 
         inline_credentials = _credentials_collector.collect_for_workflow(workflow)
 
