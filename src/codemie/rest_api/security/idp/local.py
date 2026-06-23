@@ -21,6 +21,8 @@ from codemie.core.exceptions import ExtendedHTTPException
 from codemie.rest_api.security.idp.base import BaseIdp
 from codemie.rest_api.security.user import User, USER_ID_HEADER, AUTHORIZATION_HEADER
 
+_LOCAL_MOCK_JWT_SECRET = "codemie-local-dev-only-not-for-production"
+
 
 class LocalIdp(BaseIdp):
     """Simple header-based authentication"""
@@ -55,7 +57,7 @@ class LocalIdp(BaseIdp):
             "username": user_id,
             "type": "local-mock",
         }
-        return jwt.encode(payload, key="", algorithm="HS256")
+        return jwt.encode(payload, key=_LOCAL_MOCK_JWT_SECRET, algorithm="HS256")
 
     async def authenticate(self, request: Request) -> User:
         """Authenticate using user-id header
