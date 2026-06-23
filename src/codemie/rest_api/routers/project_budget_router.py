@@ -30,9 +30,19 @@ from codemie.repository.project_budget_repository import (
 from codemie.rest_api.security.authentication import authenticate, maintainer_access_only
 from codemie.rest_api.security.user import User
 from codemie.service.budget.budget_enums import AllocationMode, BudgetCategory
-from codemie.service.budget.budget_models import Budget, ProjectBudgetAssignment, ProjectMemberBudgetAssignment
-from codemie.service.budget.project_budget_service import project_budget_service
+from codemie.service.budget.budget_models import (
+    Budget,
+    ProjectBudgetAssignment,
+    ProjectBudgetGroup,
+    ProjectMemberBudgetAssignment,
+)
+from codemie.service.budget.project_budget_service import (
+    ProjectBudgetGroupFullResult,
+    project_budget_service,
+)
 from codemie.service.settings.settings import SettingsService
+
+_DURATION_PATTERN = r"^\d+[smhd]$"
 
 router = APIRouter(
     tags=["Project Budgets"],
@@ -58,7 +68,7 @@ class ProjectBudgetCreateRequest(BaseModel):
     soft_budget: float = Field(ge=0)
     max_budget: float = Field(gt=0)
     budget_duration: str = Field(
-        pattern=r"^\d+[smhd]$",
+        pattern=_DURATION_PATTERN,
         description="e.g. '30d', '8h', '3600s'",
     )
     allocation_mode: str = Field(default=AllocationMode.EQUAL.value)
@@ -70,7 +80,7 @@ class ProjectBudgetUpdateRequest(BaseModel):
     description: Optional[str] = Field(default=None, max_length=500)
     soft_budget: Optional[float] = Field(default=None, ge=0)
     max_budget: Optional[float] = Field(default=None, gt=0)
-    budget_duration: Optional[str] = Field(default=None, pattern=r"^\d+[smhd]$")
+    budget_duration: Optional[str] = Field(default=None, pattern=_DURATION_PATTERN)
     models: Optional[list[str]] = Field(default=None, description="Model allow-list for this budget")
 
 
@@ -460,3 +470,250 @@ async def clear_member_override(
         budget, assignment, allocations = await project_budget_service.get_project_budget(session, budget_id)
         response = _build_project_budget_response(budget, assignment, allocations)
     return response
+
+
+# ==================== Group router ====================
+
+
+group_router = APIRouter(
+    tags=["Project Budget Groups"],
+    prefix="/v1/admin/project-budget-groups",
+    dependencies=[],
+)
+
+
+# ---- Group request / response schemas ----
+
+
+class CategoryBudgetSpec(BaseModel):
+    pct: float = Field(gt=0, le=100, description="Percentage of total_amount allocated to this category")
+    soft_budget: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Soft limit as an absolute amount. Defaults to 80%% of the category max when omitted.",
+    )
+
+
+class ProjectBudgetGroupCreateRequest(BaseModel):
+    project_name: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=100)
+    total_amount: float = Field(gt=0, description="Total budget amount distributed across categories")
+    budget_duration: str = Field(pattern=_DURATION_PATTERN, description="e.g. '30d', '8h'")
+    description: Optional[str] = Field(default=None, max_length=500)
+    categories: dict[str, CategoryBudgetSpec] = Field(
+        description="Category distribution keyed by BudgetCategory value (platform/cli/premium_models)"
+    )
+
+
+class CategoryBudgetSpecUpdate(BaseModel):
+    pct: float = Field(ge=0, le=100, description="Set to 0 to remove this category from the group")
+    soft_budget: Optional[float] = Field(default=None, ge=0, description="Soft limit as an absolute amount.")
+
+
+class ProjectBudgetGroupUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    total_amount: Optional[float] = Field(default=None, gt=0)
+    budget_duration: Optional[str] = Field(default=None, pattern=_DURATION_PATTERN)
+    description: Optional[str] = Field(default=None, max_length=500)
+    categories: Optional[dict[str, CategoryBudgetSpecUpdate]] = Field(default=None)
+
+
+class CategoryBudgetDetailResponse(BaseModel):
+    budget_id: str
+    category: str
+    max_budget: float
+    soft_budget: float
+    budget_duration: str
+    member_count: int
+    allocated_member_budget_total: float
+    provider_sync_status: Optional[str]
+    budget_reset_at: Optional[str]
+    created_at: Optional[datetime]
+
+    model_config = {'from_attributes': True}
+
+
+class ProjectBudgetGroupResponse(BaseModel):
+    group_id: str
+    project_name: str
+    name: str = ""
+    budget_duration: str
+    total_amount: float
+    description: Optional[str] = None
+    created_by: str
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
+    deleted_at: Optional[datetime]
+    categories: list[CategoryBudgetDetailResponse]
+
+    model_config = {'from_attributes': True}
+
+
+class PaginatedProjectBudgetGroupListResponse(BaseModel):
+    items: list[ProjectBudgetGroupResponse]
+    total: int
+
+
+# ---- Group helpers ----
+
+
+def _build_project_budget_group_response(result: ProjectBudgetGroupFullResult) -> ProjectBudgetGroupResponse:
+    categories = []
+    for cat in result.categories:
+        provider_meta = cat.budget.provider_metadata or {}
+        categories.append(
+            CategoryBudgetDetailResponse(
+                budget_id=cat.budget.budget_id,
+                category=cat.budget.budget_category,
+                max_budget=cat.budget.max_budget,
+                soft_budget=cat.budget.soft_budget,
+                budget_duration=cat.budget.budget_duration,
+                member_count=len(cat.allocations),
+                allocated_member_budget_total=sum(a.allocated_max_budget for a in cat.allocations),
+                provider_sync_status=provider_meta.get('sync_status'),
+                budget_reset_at=cat.budget.budget_reset_at,
+                created_at=cat.budget.created_at,
+            )
+        )
+    return ProjectBudgetGroupResponse(
+        group_id=result.group.id,
+        project_name=result.group.project_name,
+        name=result.group.name,
+        budget_duration=result.group.budget_duration,
+        total_amount=result.total_amount,
+        description=result.group.description,
+        created_by=result.group.created_by,
+        created_at=result.group.created_at,
+        updated_at=result.group.updated_at,
+        deleted_at=result.group.deleted_at,
+        categories=categories,
+    )
+
+
+def _build_project_budget_group_response_from_group(group: ProjectBudgetGroup) -> ProjectBudgetGroupResponse:
+    return ProjectBudgetGroupResponse(
+        group_id=group.id,
+        project_name=group.project_name,
+        name=group.name,
+        budget_duration=group.budget_duration,
+        total_amount=0.0,
+        description=group.description,
+        created_by=group.created_by,
+        created_at=group.created_at,
+        updated_at=group.updated_at,
+        deleted_at=group.deleted_at,
+        categories=[],
+    )
+
+
+# ---- Group endpoints ----
+
+
+@group_router.post('', response_model=ProjectBudgetGroupResponse, status_code=201)
+async def create_project_budget_group(
+    payload: ProjectBudgetGroupCreateRequest,
+    user: User = Depends(authenticate),
+    _: None = Depends(maintainer_access_only),
+):
+    """Create a unified budget group for a project, distributing a total amount across categories."""
+    _require_budgeting_enabled()
+    async with get_async_session() as session:
+        result = await project_budget_service.create_project_budget_group(session, payload, actor_id=user.id)
+        new_group_id = result.group.id
+        await session.commit()
+        result = await project_budget_service.get_project_budget_group(session, new_group_id)
+    return _build_project_budget_group_response(result)
+
+
+@group_router.get('', response_model=PaginatedProjectBudgetGroupListResponse)
+async def list_project_budget_groups(
+    project_name: str = Query(..., min_length=1),
+    user: User = Depends(authenticate),
+):
+    """List all budget groups for a project (includes audit history)."""
+    _require_budgeting_enabled()
+    _ensure_project_budget_read_access(user, project_name)
+    async with get_async_session() as session:
+        results = await project_budget_service.list_project_budget_groups(session, project_name)
+        items = [_build_project_budget_group_response(result) for result in results]
+    return PaginatedProjectBudgetGroupListResponse(items=items, total=len(items))
+
+
+@group_router.get('/{group_id}', response_model=ProjectBudgetGroupResponse)
+async def get_project_budget_group(
+    group_id: str,
+    user: User = Depends(authenticate),
+):
+    """Get a budget group with all its category breakdowns."""
+    _require_budgeting_enabled()
+    async with get_async_session() as session:
+        result = await project_budget_service.get_project_budget_group(session, group_id)
+        try:
+            _ensure_project_budget_read_access(user, result.group.project_name)
+        except ExtendedHTTPException as e:
+            if e.code == 403:
+                # Prevent group ID enumeration: return 404 instead of 403
+                raise ExtendedHTTPException(code=404, message=f"Project budget group not found: {group_id}")
+            raise
+    return _build_project_budget_group_response(result)
+
+
+@group_router.put('/{group_id}', response_model=ProjectBudgetGroupResponse)
+async def update_project_budget_group(
+    group_id: str,
+    payload: ProjectBudgetGroupUpdateRequest,
+    user: User = Depends(authenticate),
+    _: None = Depends(maintainer_access_only),
+):
+    """Update a budget group in-place (total amount, duration, or category distribution)."""
+    _require_budgeting_enabled()
+    async with get_async_session() as session:
+        await project_budget_service.update_project_budget_group(
+            session, group_id=group_id, data=payload, actor_id=user.id
+        )
+        await session.commit()
+        result = await project_budget_service.get_project_budget_group(session, group_id)
+    return _build_project_budget_group_response(result)
+
+
+@group_router.delete('/{group_id}', status_code=204)
+async def delete_project_budget_group(
+    group_id: str,
+    user: User = Depends(authenticate),
+    _: None = Depends(maintainer_access_only),
+):
+    """Soft-delete a budget group and all its category budgets."""
+    _require_budgeting_enabled()
+    async with get_async_session() as session:
+        await project_budget_service.delete_project_budget_group(session, group_id=group_id, actor_id=user.id)
+        await session.commit()
+
+
+@group_router.post('/{group_id}/reset', response_model=ProjectBudgetGroupResponse)
+async def reset_project_budget_group(
+    group_id: str,
+    user: User = Depends(authenticate),
+    _: None = Depends(maintainer_access_only),
+):
+    """Reset spend counters for all category budgets in a group."""
+    _require_budgeting_enabled()
+    async with get_async_session() as session:
+        result = await project_budget_service.reset_project_budget_group(session, group_id=group_id, actor_id=user.id)
+        await session.commit()
+    return _build_project_budget_group_response(result)
+
+
+@group_router.post('/{group_id}/rebalance', response_model=ProjectBudgetGroupResponse)
+async def rebalance_project_budget_group(
+    group_id: str,
+    user: User = Depends(authenticate),
+    _: None = Depends(maintainer_access_only),
+):
+    """Rebalance member allocations for all category budgets in a group."""
+    _require_budgeting_enabled()
+    async with get_async_session() as session:
+        result = await project_budget_service.rebalance_project_budget_group(
+            session, group_id=group_id, actor_id=user.id
+        )
+        await session.commit()
+    return _build_project_budget_group_response(result)

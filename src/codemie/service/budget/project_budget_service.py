@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any
@@ -30,12 +31,14 @@ from codemie.core.exceptions import ExtendedHTTPException, ValidationException
 from codemie.repository.budget_repository import budget_repository
 from codemie.repository.project_budget_repository import (
     project_budget_assignment_repository,
+    project_budget_group_repository,
     project_member_budget_assignment_repository,
 )
 from codemie.service.budget.budget_enums import AllocationMode, BudgetCategory, BudgetType, SyncStatus
 from codemie.service.budget.budget_models import (
     Budget,
     ProjectBudgetAssignment,
+    ProjectBudgetGroup,
     ProjectMemberBudgetAssignment,
     build_override_project_budget_id,
     build_shared_project_budget_id,
@@ -44,10 +47,39 @@ from codemie.service.budget.provider import BudgetEnforcementProvider, BudgetPro
 from codemie.service.budget.provider_registry import get_active_provider
 
 if TYPE_CHECKING:
-    from codemie.rest_api.routers.project_budget_router import ProjectBudgetCreateRequest, ProjectBudgetUpdateRequest
+    from codemie.rest_api.routers.project_budget_router import (
+        ProjectBudgetCreateRequest,
+        ProjectBudgetGroupCreateRequest,
+        ProjectBudgetGroupUpdateRequest,
+        ProjectBudgetUpdateRequest,
+    )
 
 _DURATION_RE = re.compile(r"^\d+[smhd]$")
 _CENT = Decimal("0.01")
+PLATFORM_MIN_PCT = 1.0
+PCT_SUM_TOLERANCE = 0.5
+DEFAULT_SOFT_LIMIT_PCT = 80.0
+
+
+@dataclass
+class ProjectBudgetGroupCategoryResult:
+    """One category's budget + assignment + member allocations within a group."""
+
+    budget: Budget
+    assignment: ProjectBudgetAssignment
+    allocations: list[ProjectMemberBudgetAssignment] = field(default_factory=list)
+
+
+@dataclass
+class ProjectBudgetGroupFullResult:
+    """Full result returned by group-level service operations."""
+
+    group: ProjectBudgetGroup
+    categories: list[ProjectBudgetGroupCategoryResult] = field(default_factory=list)
+
+    @property
+    def total_amount(self) -> float:
+        return sum(c.budget.max_budget for c in self.categories)
 
 
 class ProjectBudgetService:
@@ -1444,6 +1476,472 @@ class ProjectBudgetService:
             f"budget_category={budget.budget_category!r} allocation_count={len(allocations)} "
             f"child_budget_count={len(child_budgets)} actor_id={actor_id!r}"
         )
+
+    # ==================== Group-level helpers ====================
+
+    @staticmethod
+    def _validate_group_categories(categories: dict, total_amount: float) -> None:
+        valid = {c.value for c in BudgetCategory}
+        for key in categories:
+            if key not in valid:
+                raise ExtendedHTTPException(
+                    code=400,
+                    message=f"Invalid budget category: {key!r}. Must be one of {sorted(valid)}",
+                )
+        platform_key = BudgetCategory.PLATFORM.value
+        if platform_key not in categories or categories[platform_key].pct < PLATFORM_MIN_PCT:
+            raise ExtendedHTTPException(code=400, message=f"'platform' category must have pct >= {PLATFORM_MIN_PCT}")
+        total_pct = sum(s.pct for s in categories.values())
+        if abs(total_pct - 100.0) > PCT_SUM_TOLERANCE:
+            raise ExtendedHTTPException(
+                code=400,
+                message=f"Category percentages must sum to 100, got {total_pct:.4f}",
+            )
+        if total_amount <= 0:
+            raise ExtendedHTTPException(code=400, message="total_amount must be > 0")
+
+    async def _load_group_full_result(
+        self,
+        session: AsyncSession,
+        group: ProjectBudgetGroup,
+    ) -> ProjectBudgetGroupFullResult:
+        assignments = await project_budget_assignment_repository.get_active_by_group_id(session, group.id)
+        categories: list[ProjectBudgetGroupCategoryResult] = []
+        for assignment in assignments:
+            budget = await budget_repository.get_by_id(session, assignment.budget_id)
+            if budget is None or budget.deleted_at is not None:
+                continue
+            allocations = await project_member_budget_assignment_repository.get_active_by_budget_id(
+                session, assignment.budget_id
+            )
+            categories.append(
+                ProjectBudgetGroupCategoryResult(budget=budget, assignment=assignment, allocations=allocations)
+            )
+        return ProjectBudgetGroupFullResult(group=group, categories=categories)
+
+    # ==================== Group-level CRUD ====================
+
+    async def create_project_budget_group(
+        self,
+        session: AsyncSession,
+        data: "ProjectBudgetGroupCreateRequest",
+        actor_id: str,
+    ) -> ProjectBudgetGroupFullResult:
+        """Create a budget group with per-category budgets for a project.
+
+        Atomically inserts the group, one Budget + one ProjectBudgetAssignment per
+        included category, member allocations, and triggers provider sync for each.
+        """
+        if not _DURATION_RE.match(data.budget_duration):
+            raise ExtendedHTTPException(
+                code=400,
+                message=f"budget_duration must match r'^\\d+[smhd]$', got {data.budget_duration!r}",
+            )
+        self._validate_group_categories(data.categories, data.total_amount)
+        await self._ensure_project_exists(session, data.project_name)
+
+        existing = await project_budget_group_repository.get_active_by_project(session, data.project_name)
+        if existing is not None:
+            raise ExtendedHTTPException(
+                code=409,
+                message=(
+                    f"An active budget group for project '{data.project_name}' already exists (group_id={existing.id})"
+                ),
+            )
+
+        group = ProjectBudgetGroup(
+            project_name=data.project_name,
+            name=data.name,
+            budget_duration=data.budget_duration,
+            description=data.description,
+            created_by=actor_id,
+        )
+        group = await project_budget_group_repository.insert(session, group)
+
+        provider = get_active_provider()
+        member_user_ids = await self._get_active_member_user_ids(session, data.project_name)
+
+        results: list[ProjectBudgetGroupCategoryResult] = []
+        for cat_key, cat_spec in data.categories.items():
+            amount = float(Decimal(str(data.total_amount)) * Decimal(str(cat_spec.pct)) / Decimal("100"))
+            if cat_spec.soft_budget is not None:
+                soft_amount = cat_spec.soft_budget
+            else:
+                soft_amount = float(Decimal(str(amount)) * Decimal(str(DEFAULT_SOFT_LIMIT_PCT)) / Decimal("100"))
+            budget_id = f"{data.project_name}-{cat_key}-{uuid.uuid4().hex[:8]}"
+
+            budget = Budget(
+                budget_id=budget_id,
+                budget_type=BudgetType.PROJECT.value,
+                project_name=data.project_name,
+                name=f"{data.project_name}/{cat_key}",
+                soft_budget=soft_amount,
+                max_budget=amount,
+                budget_duration=data.budget_duration,
+                budget_category=cat_key,
+                created_by=actor_id,
+            )
+            budget = await budget_repository.insert(session, budget)
+
+            assignment = ProjectBudgetAssignment(
+                project_name=data.project_name,
+                budget_category=cat_key,
+                budget_id=budget_id,
+                group_id=group.id,
+                allocation_mode=AllocationMode.EQUAL.value,
+                assigned_by=actor_id,
+            )
+            assignment = await project_budget_assignment_repository.insert(session, assignment)
+            self._invalidate_resolution_cache_for_project(data.project_name, cat_key)
+
+            allocation_rows = self._allocate_equal(
+                user_ids=member_user_ids,
+                max_budget=amount,
+                soft_budget=soft_amount,
+                budget_id=budget_id,
+                project_name=data.project_name,
+                budget_category=cat_key,
+                allocation_mode=AllocationMode.EQUAL.value,
+                assigned_by=actor_id,
+            )
+            if allocation_rows:
+                shared_budget = await self._ensure_shared_child_budget(
+                    session,
+                    main_budget=budget,
+                    project_name=data.project_name,
+                    actor_id=actor_id,
+                    per_member_soft_budget=allocation_rows[0].allocated_soft_budget,
+                    per_member_max_budget=allocation_rows[0].allocated_max_budget,
+                )
+                for row in allocation_rows:
+                    row.shared_budget_id = shared_budget.budget_id
+                    row.effective_budget_id = shared_budget.budget_id
+            allocations = await project_member_budget_assignment_repository.insert_many(session, allocation_rows)
+
+            budget = await self._sync_created_project_budget(
+                session=session,
+                provider=provider,
+                created_budget=budget,
+                budget_id=budget_id,
+                project_name=data.project_name,
+                budget_category=BudgetCategory(cat_key),
+                soft_budget=soft_amount,
+                max_budget=amount,
+                budget_duration=data.budget_duration,
+                models=None,
+                allocations=allocations,
+            )
+            results.append(
+                ProjectBudgetGroupCategoryResult(budget=budget, assignment=assignment, allocations=allocations)
+            )
+
+        logger.info(
+            f"budget_event=project_budget_group_create_completed component=project_budget_service "
+            f"project_name={data.project_name!r} group_id={group.id!r} "
+            f"category_count={len(results)} actor_id={actor_id!r}"
+        )
+        return ProjectBudgetGroupFullResult(group=group, categories=results)
+
+    async def get_project_budget_group(
+        self,
+        session: AsyncSession,
+        group_id: str,
+    ) -> ProjectBudgetGroupFullResult:
+        group = await project_budget_group_repository.get_by_id(session, group_id)
+        if group is None or group.deleted_at is not None:
+            raise ExtendedHTTPException(code=404, message=f"Project budget group not found: {group_id}")
+        return await self._load_group_full_result(session, group)
+
+    async def list_project_budget_groups(
+        self,
+        session: AsyncSession,
+        project_name: str,
+    ) -> list[ProjectBudgetGroupFullResult]:
+        groups = await project_budget_group_repository.list_by_project(session, project_name)
+        return [await self._load_group_full_result(session, g) for g in groups]
+
+    async def update_project_budget_group(
+        self,
+        session: AsyncSession,
+        group_id: str,
+        data: "ProjectBudgetGroupUpdateRequest",
+        actor_id: str,
+    ) -> ProjectBudgetGroupFullResult:
+        """Update a group in-place: total amount, duration, or category distribution.
+
+        Categories not included in the payload are left unchanged.
+        A category with pct=0 is soft-deleted from the group.
+        """
+        group = await project_budget_group_repository.get_by_id(session, group_id)
+        if group is None or group.deleted_at is not None:
+            raise ExtendedHTTPException(code=404, message=f"Project budget group not found: {group_id}")
+
+        await self._update_group_scalar_fields(session, group_id, data)
+
+        if data.categories is None and data.total_amount is None:
+            return await self._load_group_full_result(session, group)
+
+        current_result = await self._load_group_full_result(session, group)
+        current_by_cat: dict[str, ProjectBudgetGroupCategoryResult] = {
+            r.assignment.budget_category: r for r in current_result.categories
+        }
+        eff_total = data.total_amount if data.total_amount is not None else current_result.total_amount
+        eff_duration = data.budget_duration if data.budget_duration is not None else group.budget_duration
+
+        if data.categories is not None:
+            self._validate_group_categories(data.categories, eff_total)
+            await self._update_group_categories(
+                session, group, data.categories, current_by_cat, eff_total, eff_duration, actor_id
+            )
+
+        await session.refresh(group)
+        logger.info(
+            f"budget_event=project_budget_group_update_completed component=project_budget_service "
+            f"project_name={group.project_name!r} group_id={group_id!r} actor_id={actor_id!r}"
+        )
+        return await self._load_group_full_result(session, group)
+
+    async def _update_group_scalar_fields(
+        self,
+        session: AsyncSession,
+        group_id: str,
+        data: "ProjectBudgetGroupUpdateRequest",
+    ) -> None:
+        """Apply name, description, and budget_duration field updates to a group."""
+        updates = {}
+
+        if data.budget_duration is not None:
+            if not _DURATION_RE.match(data.budget_duration):
+                raise ExtendedHTTPException(
+                    code=400,
+                    message=f"budget_duration must match r'^\\d+[smhd]$', got {data.budget_duration!r}",
+                )
+            updates["budget_duration"] = data.budget_duration
+
+        if data.name is not None:
+            updates["name"] = data.name
+
+        if data.description is not None:
+            updates["description"] = data.description
+
+        if updates:
+            await project_budget_group_repository.update(session, group_id, updates)
+
+    async def _update_group_categories(
+        self,
+        session: AsyncSession,
+        group: "ProjectBudgetGroup",
+        categories: dict,
+        current_by_cat: dict,
+        eff_total: float,
+        eff_duration: str,
+        actor_id: str,
+    ) -> None:
+        """Process per-category updates: delete (pct=0), update existing, or create new."""
+        provider = get_active_provider()
+        member_user_ids = await self._get_active_member_user_ids(session, group.project_name)
+
+        for cat_key, cat_spec in categories.items():
+            amount = float(Decimal(str(eff_total)) * Decimal(str(cat_spec.pct)) / Decimal("100"))
+            soft_amount = self._resolve_soft_amount(cat_spec, amount)
+
+            if cat_spec.pct <= 0:
+                if cat_key in current_by_cat:
+                    await self.delete_project_budget(session, current_by_cat[cat_key].budget.budget_id, actor_id)
+                continue
+
+            if cat_key in current_by_cat:
+                await self._update_existing_group_category(
+                    session, current_by_cat[cat_key], amount, soft_amount, eff_duration, actor_id
+                )
+            else:
+                await self._create_new_group_category(
+                    session, group, cat_key, amount, soft_amount, eff_duration, member_user_ids, provider, actor_id
+                )
+
+    @staticmethod
+    def _resolve_soft_amount(cat_spec: Any, amount: float) -> float:
+        """Return the soft budget amount from a category spec."""
+        if cat_spec.soft_budget is not None:
+            return cat_spec.soft_budget
+        return float(Decimal(str(amount)) * Decimal(str(DEFAULT_SOFT_LIMIT_PCT)) / Decimal("100"))
+
+    async def _update_existing_group_category(
+        self,
+        session: AsyncSession,
+        existing_cat: "ProjectBudgetGroupCategoryResult",
+        amount: float,
+        soft_amount: float,
+        eff_duration: str,
+        actor_id: str,
+    ) -> None:
+        """Update hard/soft limits on an existing group category budget."""
+        await self.update_project_budget(
+            session,
+            budget_id=existing_cat.budget.budget_id,
+            data=_SimpleUpdateRequest(
+                max_budget=amount,
+                soft_budget=soft_amount,
+                budget_duration=(eff_duration if eff_duration != existing_cat.budget.budget_duration else None),
+            ),
+            actor_id=actor_id,
+        )
+
+    async def _create_new_group_category(
+        self,
+        session: AsyncSession,
+        group: "ProjectBudgetGroup",
+        cat_key: str,
+        amount: float,
+        soft_amount: float,
+        eff_duration: str,
+        member_user_ids: list[str],
+        provider: Any,
+        actor_id: str,
+    ) -> None:
+        """Create a brand-new budget + assignment for a category added to an existing group."""
+        budget_id = f"{group.project_name}-{cat_key}-{uuid.uuid4().hex[:8]}"
+        budget = Budget(
+            budget_id=budget_id,
+            budget_type=BudgetType.PROJECT.value,
+            project_name=group.project_name,
+            name=f"{group.project_name}/{cat_key}",
+            soft_budget=soft_amount,
+            max_budget=amount,
+            budget_duration=eff_duration,
+            budget_category=cat_key,
+            created_by=actor_id,
+        )
+        budget = await budget_repository.insert(session, budget)
+        assignment = ProjectBudgetAssignment(
+            project_name=group.project_name,
+            budget_category=cat_key,
+            budget_id=budget_id,
+            group_id=group.id,
+            allocation_mode=AllocationMode.EQUAL.value,
+            assigned_by=actor_id,
+        )
+        await project_budget_assignment_repository.insert(session, assignment)
+        self._invalidate_resolution_cache_for_project(group.project_name, cat_key)
+        allocation_rows = self._allocate_equal(
+            user_ids=member_user_ids,
+            max_budget=amount,
+            soft_budget=soft_amount,
+            budget_id=budget_id,
+            project_name=group.project_name,
+            budget_category=cat_key,
+            allocation_mode=AllocationMode.EQUAL.value,
+            assigned_by=actor_id,
+        )
+        if allocation_rows:
+            shared_budget = await self._ensure_shared_child_budget(
+                session,
+                main_budget=budget,
+                project_name=group.project_name,
+                actor_id=actor_id,
+                per_member_soft_budget=allocation_rows[0].allocated_soft_budget,
+                per_member_max_budget=allocation_rows[0].allocated_max_budget,
+            )
+            for row in allocation_rows:
+                row.shared_budget_id = shared_budget.budget_id
+                row.effective_budget_id = shared_budget.budget_id
+        allocations = await project_member_budget_assignment_repository.insert_many(session, allocation_rows)
+        await self._sync_created_project_budget(
+            session=session,
+            provider=provider,
+            created_budget=budget,
+            budget_id=budget_id,
+            project_name=group.project_name,
+            budget_category=BudgetCategory(cat_key),
+            soft_budget=soft_amount,
+            max_budget=amount,
+            budget_duration=eff_duration,
+            models=None,
+            allocations=allocations,
+        )
+
+    async def delete_project_budget_group(
+        self,
+        session: AsyncSession,
+        group_id: str,
+        actor_id: str,
+    ) -> None:
+        """Soft-delete a group and all its active category budgets."""
+        group = await project_budget_group_repository.get_by_id(session, group_id)
+        if group is None or group.deleted_at is not None:
+            raise ExtendedHTTPException(code=404, message=f"Project budget group not found: {group_id}")
+
+        assignments = await project_budget_assignment_repository.get_active_by_group_id(session, group_id)
+        for assignment in assignments:
+            await self.delete_project_budget(session, budget_id=assignment.budget_id, actor_id=actor_id)
+
+        await project_budget_group_repository.soft_delete(session, group_id)
+        logger.info(
+            f"budget_event=project_budget_group_delete_completed component=project_budget_service "
+            f"project_name={group.project_name!r} group_id={group_id!r} "
+            f"category_count={len(assignments)} actor_id={actor_id!r}"
+        )
+
+    async def reset_project_budget_group(
+        self,
+        session: AsyncSession,
+        group_id: str,
+        actor_id: str,
+    ) -> ProjectBudgetGroupFullResult:
+        """Reset all category budgets in a group."""
+        group = await project_budget_group_repository.get_by_id(session, group_id)
+        if group is None or group.deleted_at is not None:
+            raise ExtendedHTTPException(code=404, message=f"Project budget group not found: {group_id}")
+
+        assignments = await project_budget_assignment_repository.get_active_by_group_id(session, group_id)
+        for assignment in assignments:
+            await self.reset_project_budget(session, budget_id=assignment.budget_id, actor_id=actor_id)
+
+        logger.info(
+            f"budget_event=project_budget_group_reset_completed component=project_budget_service "
+            f"project_name={group.project_name!r} group_id={group_id!r} "
+            f"category_count={len(assignments)} actor_id={actor_id!r}"
+        )
+        return await self._load_group_full_result(session, group)
+
+    async def rebalance_project_budget_group(
+        self,
+        session: AsyncSession,
+        group_id: str,
+        actor_id: str,
+    ) -> ProjectBudgetGroupFullResult:
+        """Rebalance member allocations for all category budgets in a group."""
+        group = await project_budget_group_repository.get_by_id(session, group_id)
+        if group is None or group.deleted_at is not None:
+            raise ExtendedHTTPException(code=404, message=f"Project budget group not found: {group_id}")
+
+        assignments = await project_budget_assignment_repository.get_active_by_group_id(session, group_id)
+        for assignment in assignments:
+            await self.rebalance_project_budget(session, budget_id=assignment.budget_id, actor_id=actor_id)
+
+        logger.info(
+            f"budget_event=project_budget_group_rebalance_completed component=project_budget_service "
+            f"project_name={group.project_name!r} group_id={group_id!r} "
+            f"category_count={len(assignments)} actor_id={actor_id!r}"
+        )
+        return await self._load_group_full_result(session, group)
+
+
+class _SimpleUpdateRequest:
+    """Minimal shim so group-level update can call update_project_budget."""
+
+    def __init__(
+        self,
+        max_budget: float | None = None,
+        soft_budget: float | None = None,
+        budget_duration: str | None = None,
+    ) -> None:
+        self.name = None
+        self.description = None
+        self.max_budget = max_budget
+        self.soft_budget = soft_budget
+        self.budget_duration = budget_duration
+        self.models = None
 
 
 project_budget_service = ProjectBudgetService()

@@ -21,7 +21,11 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from codemie.service.budget.budget_models import ProjectBudgetAssignment, ProjectMemberBudgetAssignment
+from codemie.service.budget.budget_models import (
+    ProjectBudgetAssignment,
+    ProjectBudgetGroup,
+    ProjectMemberBudgetAssignment,
+)
 from codemie.service.spend_tracking.spend_models import ProjectSpendTracking
 
 
@@ -431,6 +435,19 @@ class ProjectBudgetAssignmentRepository:
             for row in result.mappings().all()
         }
 
+    async def get_active_by_group_id(
+        self,
+        session: AsyncSession,
+        group_id: str,
+    ) -> list[ProjectBudgetAssignment]:
+        """Return all active assignments belonging to a group."""
+        stmt = select(ProjectBudgetAssignment).where(
+            ProjectBudgetAssignment.group_id == group_id,
+            ProjectBudgetAssignment.deleted_at.is_(None),
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
     async def soft_delete(
         self,
         session: AsyncSession,
@@ -835,5 +852,64 @@ class ProjectMemberBudgetAssignmentRepository:
         return len(rows)
 
 
+class ProjectBudgetGroupRepository:
+    """Async repository for project_budget_groups."""
+
+    async def insert(self, session: AsyncSession, group: ProjectBudgetGroup) -> ProjectBudgetGroup:
+        session.add(group)
+        await session.flush()
+        await session.refresh(group)
+        return group
+
+    async def get_by_id(self, session: AsyncSession, group_id: str) -> ProjectBudgetGroup | None:
+        stmt = select(ProjectBudgetGroup).where(ProjectBudgetGroup.id == group_id)
+        result = await session.execute(stmt)
+        return result.scalars().first()
+
+    async def get_active_by_project(self, session: AsyncSession, project_name: str) -> ProjectBudgetGroup | None:
+        """Return the single active (deleted_at IS NULL) group for a project, or None."""
+        stmt = select(ProjectBudgetGroup).where(
+            ProjectBudgetGroup.project_name == project_name,
+            ProjectBudgetGroup.deleted_at.is_(None),
+        )
+        result = await session.execute(stmt)
+        return result.scalars().first()
+
+    async def list_by_project(self, session: AsyncSession, project_name: str) -> list[ProjectBudgetGroup]:
+        """Return all groups for a project ordered newest first (includes soft-deleted)."""
+        from sqlalchemy import desc
+
+        stmt = (
+            select(ProjectBudgetGroup)
+            .where(ProjectBudgetGroup.project_name == project_name)
+            .order_by(desc(ProjectBudgetGroup.created_at))
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def update(self, session: AsyncSession, group_id: str, fields: dict) -> ProjectBudgetGroup | None:
+        """Partial update: apply provided values in fields dict. Returns None if not found."""
+        group = await self.get_by_id(session, group_id)
+        if group is None:
+            return None
+        for key, value in fields.items():
+            setattr(group, key, value)
+        session.add(group)
+        await session.flush()
+        await session.refresh(group)
+        return group
+
+    async def soft_delete(self, session: AsyncSession, group_id: str) -> None:
+        """Soft-delete a group by setting deleted_at to now."""
+        from datetime import datetime, timezone
+
+        group = await self.get_by_id(session, group_id)
+        if group is not None:
+            group.deleted_at = datetime.now(tz=timezone.utc)
+            session.add(group)
+            await session.flush()
+
+
+project_budget_group_repository = ProjectBudgetGroupRepository()
 project_budget_assignment_repository = ProjectBudgetAssignmentRepository()
 project_member_budget_assignment_repository = ProjectMemberBudgetAssignmentRepository()
