@@ -161,9 +161,9 @@ class CodeExecutorConfig(CodeMieToolConfig):
     )
 
     sandbox_mode: SandboxMode = Field(
-        default=SandboxMode.JOBS,
-        description="Sandbox execution mode: 'sandbox-shared' (pooled long-lived pods), "
-        "or 'sandbox-jobs' (one K8s Job per execution, default).",
+        default=SandboxMode.SHARED,
+        description="Sandbox execution mode: 'sandbox-shared' (pooled long-lived pods, default), "
+        "or 'sandbox-jobs' (one K8s Job per execution).",
     )
 
     verbose: bool = Field(
@@ -214,7 +214,7 @@ class CodeExecutorConfig(CodeMieToolConfig):
     def validate_sandbox_mode(cls, v) -> "SandboxMode":
         """Validate sandbox mode value."""
         if not v:
-            return SandboxMode.JOBS
+            return SandboxMode.SHARED
 
         if isinstance(v, SandboxMode):
             return v
@@ -295,7 +295,7 @@ class CodeExecutorConfig(CodeMieToolConfig):
             CODE_EXECUTOR_SKIP_ENVIRONMENT_SETUP: Skip environment setup (true/false)
             CODE_EXECUTOR_KUBECONFIG_PATH: Path to kubeconfig file (optional, takes priority over in-cluster config)
             CODE_EXECUTOR_SANDBOX_MODE: Sandbox mode (sandbox-shared/sandbox-jobs,
-                default: sandbox-jobs)
+                default: sandbox-shared)
 
         Returns:
             CodeExecutorConfig: Configuration instance with values from environment or defaults
@@ -328,7 +328,7 @@ class CodeExecutorConfig(CodeMieToolConfig):
             keep_template=str_to_bool(os.getenv("CODE_EXECUTOR_KEEP_TEMPLATE", "true")),
             skip_environment_setup=str_to_bool(os.getenv("CODE_EXECUTOR_SKIP_ENVIRONMENT_SETUP", "false")),
             kubeconfig_path=os.getenv("CODE_EXECUTOR_KUBECONFIG_PATH", ""),
-            sandbox_mode=os.getenv("CODE_EXECUTOR_SANDBOX_MODE", "sandbox-jobs"),
+            sandbox_mode=os.getenv("CODE_EXECUTOR_SANDBOX_MODE", "sandbox-shared"),
         )
 
     @classmethod
