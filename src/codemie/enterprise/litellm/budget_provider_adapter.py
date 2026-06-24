@@ -1283,6 +1283,26 @@ class LiteLLMBudgetEnforcementProvider:
             f"provider_member_ref={provider_member_ref!r}"
         )
 
+    async def delete_override_budget(self, *, override_budget_id: str) -> None:
+        service = self._get_service()
+        if service is None:
+            logger.debug(
+                f"budget_event=override_budget_delete_skipped component=litellm_budget_provider "
+                f"provider={_PROVIDER_NAME!r} override_budget_id={override_budget_id!r} reason=provider_unavailable"
+            )
+            return
+        try:
+            await asyncio.to_thread(service.api_client.post, "/budget/delete", data={"id": override_budget_id})
+            logger.debug(
+                f"budget_event=override_budget_delete_completed component=litellm_budget_provider "
+                f"provider={_PROVIDER_NAME!r} override_budget_id={override_budget_id!r}"
+            )
+        except Exception as exc:
+            logger.warning(
+                f"budget_event=override_budget_delete_failed component=litellm_budget_provider "
+                f"provider={_PROVIDER_NAME!r} override_budget_id={override_budget_id!r} error={exc}"
+            )
+
     def _resolve_runtime_core(self, *, context: BudgetRuntimeContext) -> BudgetRuntimeProviderResult:
         from codemie.service.settings.settings import SettingsService
 

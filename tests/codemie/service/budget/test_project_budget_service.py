@@ -82,7 +82,7 @@ async def test_resync_member_allocations_updates_shared_child_budget_for_equal_m
             provider=provider,
         )
 
-    provider.sync_member_allocation.assert_not_awaited()
+    provider.sync_member_allocation.assert_awaited_once()
     mock_update_metadata.assert_not_awaited()
     mock_ensure_shared_child_budget.assert_awaited_once_with(
         session,

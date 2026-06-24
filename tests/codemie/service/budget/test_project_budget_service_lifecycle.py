@@ -242,3 +242,278 @@ async def test_resync_member_allocations_raises_400_when_fixed_overrides_exceed_
 
     assert exc_info.value.code == 400
     assert exc_info.value.message == "fixed overrides exceed project budget"
+
+
+@pytest.mark.asyncio
+async def test_clear_member_override_syncs_litellm_with_shared_child_value():
+    """When shared child budget exists, provider receives its max_budget — not the stale override value."""
+    service = ProjectBudgetService()
+    session = AsyncMock()
+
+    # Allocation returned by repo after mode is switched to equal.
+    # allocated_max_budget is intentionally stale (50.0 — the old override value).
+    allocation = SimpleNamespace(
+        id="alloc-1",
+        user_id="user-a",
+        project_budget_id="proj-budget-1",
+        project_name="proj-a",
+        budget_category="cli",
+        override_budget_id="proj-budget-1:user:user-a",
+        shared_budget_id="proj-budget-1:shared",
+        effective_budget_id="proj-budget-1:shared",
+        allocation_mode=AllocationMode.EQUAL.value,
+        allocated_max_budget=50.0,  # stale override value
+        allocated_soft_budget=40.0,  # stale override value
+        override_reason=None,
+    )
+
+    budget = SimpleNamespace(
+        budget_id="proj-budget-1",
+        budget_type="project",
+        budget_category="cli",
+        budget_duration="30d",
+        budget_reset_at=None,
+        max_budget=100.0,
+        soft_budget=80.0,
+    )
+    assignment = SimpleNamespace(project_name="proj-a", budget_category="cli")
+
+    # Shared child budget holds the correct equal-split value from last rebalance.
+    existing_shared_child = SimpleNamespace(
+        budget_id="proj-budget-1:shared",
+        max_budget=25.0,  # correct equal-split
+        soft_budget=20.0,
+    )
+
+    shared_budget_result = SimpleNamespace(budget_id="proj-budget-1:shared")
+
+    member_state = BudgetProviderMemberState(
+        provider="litellm",
+        provider_member_ref="ref-1",
+        provider_budget_id="provider-bud-1",
+        sync_status=SyncStatus.OK,
+    )
+
+    mock_provider = SimpleNamespace(
+        sync_member_allocation=AsyncMock(return_value=member_state),
+        delete_override_budget=AsyncMock(),
+    )
+
+    with (
+        patch(
+            "codemie.service.budget.project_budget_service.project_member_budget_assignment_repository.clear_member_override",
+            new=AsyncMock(return_value=allocation),
+        ),
+        patch.object(
+            service,
+            "get_project_budget",
+            new=AsyncMock(return_value=(budget, assignment, [])),
+        ),
+        patch(
+            "codemie.service.budget.project_budget_service.budget_repository.get_by_id",
+            new=AsyncMock(return_value=existing_shared_child),
+        ),
+        patch.object(
+            service,
+            "_ensure_shared_child_budget",
+            new=AsyncMock(return_value=shared_budget_result),
+        ) as mock_ensure_shared,
+        patch(
+            "codemie.service.budget.project_budget_service.budget_repository.detach_budget",
+            new=AsyncMock(),
+        ),
+        patch(
+            "codemie.service.budget.project_budget_service.project_member_budget_assignment_repository.update_member_budget_routing",
+            new=AsyncMock(return_value=allocation),
+        ) as mock_routing,
+        patch(
+            "codemie.service.budget.project_budget_service.get_active_provider",
+            return_value=mock_provider,
+        ),
+        patch.object(service, "_persist_child_budget_provider_state", new=AsyncMock()),
+        patch(
+            "codemie.service.budget.project_budget_service.project_member_budget_assignment_repository.update_provider_metadata",
+            new=AsyncMock(),
+        ),
+        patch.object(service, "rebalance_project_budget", new=AsyncMock()) as mock_rebalance,
+    ):
+        await service.clear_member_override(
+            session=session,
+            budget_id="proj-budget-1",
+            user_id="user-a",
+            actor_id="actor-1",
+        )
+
+    # Provider must receive the shared child value (25.0), NOT the stale override (50.0).
+    mock_provider.sync_member_allocation.assert_awaited_once()
+    call_kwargs = mock_provider.sync_member_allocation.await_args.kwargs
+    assert (
+        call_kwargs["effective_max_budget"] == 25.0
+    ), f"expected effective_max_budget=25.0 (shared child value), got {call_kwargs.get('effective_max_budget')}"
+
+    # _ensure_shared_child_budget must also use the correct value.
+    mock_ensure_shared.assert_awaited_once()
+    ensure_kwargs = mock_ensure_shared.await_args.kwargs
+    assert ensure_kwargs["per_member_max_budget"] == 25.0
+    assert ensure_kwargs["per_member_soft_budget"] == 20.0
+
+    # override_budget_id must be cleared — not carried over after clearing.
+    routing_kwargs = mock_routing.await_args.kwargs
+    assert routing_kwargs["override_budget_id"] is None
+
+    # override budget must be deleted from LiteLLM.
+    mock_provider.delete_override_budget.assert_awaited_once_with(override_budget_id="proj-budget-1:user:user-a")
+
+    # rebalance must be called to reset the cleared user's allocated_max_budget.
+    mock_rebalance.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_clear_member_override_falls_back_to_allocation_value_when_no_shared_child():
+    """When no shared child budget exists yet, provider receives allocation.allocated_max_budget as fallback."""
+    service = ProjectBudgetService()
+    session = AsyncMock()
+
+    allocation = SimpleNamespace(
+        id="alloc-1",
+        user_id="user-a",
+        project_budget_id="proj-budget-1",
+        project_name="proj-a",
+        budget_category="cli",
+        override_budget_id="proj-budget-1:user:user-a",
+        shared_budget_id=None,
+        effective_budget_id=None,
+        allocation_mode=AllocationMode.EQUAL.value,
+        allocated_max_budget=50.0,
+        allocated_soft_budget=40.0,
+        override_reason=None,
+    )
+
+    budget = SimpleNamespace(
+        budget_id="proj-budget-1",
+        budget_type="project",
+        budget_category="cli",
+        budget_duration="30d",
+        budget_reset_at=None,
+        max_budget=100.0,
+        soft_budget=80.0,
+    )
+    assignment = SimpleNamespace(project_name="proj-a", budget_category="cli")
+    shared_budget_result = SimpleNamespace(budget_id="proj-budget-1:shared")
+
+    member_state = BudgetProviderMemberState(
+        provider="litellm",
+        provider_member_ref="ref-1",
+        provider_budget_id="provider-bud-1",
+        sync_status=SyncStatus.OK,
+    )
+    mock_provider = SimpleNamespace(
+        sync_member_allocation=AsyncMock(return_value=member_state),
+        delete_override_budget=AsyncMock(),
+    )
+
+    with (
+        patch(
+            "codemie.service.budget.project_budget_service.project_member_budget_assignment_repository.clear_member_override",
+            new=AsyncMock(return_value=allocation),
+        ),
+        patch.object(
+            service,
+            "get_project_budget",
+            new=AsyncMock(return_value=(budget, assignment, [])),
+        ),
+        patch(
+            "codemie.service.budget.project_budget_service.budget_repository.get_by_id",
+            new=AsyncMock(return_value=None),  # no shared child exists
+        ),
+        patch.object(
+            service,
+            "_ensure_shared_child_budget",
+            new=AsyncMock(return_value=shared_budget_result),
+        ),
+        patch(
+            "codemie.service.budget.project_budget_service.budget_repository.detach_budget",
+            new=AsyncMock(),
+        ),
+        patch(
+            "codemie.service.budget.project_budget_service.project_member_budget_assignment_repository.update_member_budget_routing",
+            new=AsyncMock(return_value=allocation),
+        ),
+        patch(
+            "codemie.service.budget.project_budget_service.get_active_provider",
+            return_value=mock_provider,
+        ),
+        patch.object(service, "_persist_child_budget_provider_state", new=AsyncMock()),
+        patch(
+            "codemie.service.budget.project_budget_service.project_member_budget_assignment_repository.update_provider_metadata",
+            new=AsyncMock(),
+        ),
+        patch.object(service, "rebalance_project_budget", new=AsyncMock()),
+    ):
+        await service.clear_member_override(
+            session=session,
+            budget_id="proj-budget-1",
+            user_id="user-a",
+            actor_id="actor-1",
+        )
+
+    # Fallback: must use allocation.allocated_max_budget when no shared child exists.
+    call_kwargs = mock_provider.sync_member_allocation.await_args.kwargs
+    assert call_kwargs["effective_max_budget"] == 50.0
+
+
+@pytest.mark.asyncio
+async def test_resync_member_allocation_syncs_litellm_for_equal_mode_members():
+    """Equal-mode members must trigger provider.sync_member_allocation during rebalance (Gap B fix)."""
+    service = ProjectBudgetService()
+    session = AsyncMock()
+
+    equal_alloc = SimpleNamespace(
+        id="alloc-1",
+        user_id="user-a",
+        project_budget_id="proj-budget-1",
+        project_name="proj-a",
+        budget_category="cli",
+        allocation_mode=AllocationMode.EQUAL.value,
+        allocated_max_budget=25.0,
+        allocated_soft_budget=20.0,
+        effective_budget_id="proj-budget-1:shared",
+        shared_budget_id="proj-budget-1:shared",
+        override_budget_id=None,
+    )
+
+    budget = SimpleNamespace(
+        budget_id="proj-budget-1",
+        budget_duration="30d",
+        budget_reset_at=None,
+    )
+
+    member_state = BudgetProviderMemberState(
+        provider="litellm",
+        provider_member_ref="ref-1",
+        provider_budget_id="provider-bud-1",
+        sync_status=SyncStatus.OK,
+    )
+    mock_provider = SimpleNamespace(sync_member_allocation=AsyncMock(return_value=member_state))
+
+    with patch(
+        "codemie.service.budget.project_budget_service.project_member_budget_assignment_repository.update_allocation",
+        new=AsyncMock(return_value=equal_alloc),
+    ):
+        result = await service._resync_member_allocation(
+            session=session,
+            budget_id="proj-budget-1",
+            budget=budget,
+            alloc=equal_alloc,
+            new_amounts=(25.0, 20.0),
+            provider=mock_provider,
+        )
+
+    # Provider must be called for equal-mode members.
+    mock_provider.sync_member_allocation.assert_awaited_once()
+    call_kwargs = mock_provider.sync_member_allocation.await_args.kwargs
+    assert call_kwargs["allocation"] is equal_alloc
+    assert call_kwargs["budget"] is budget
+
+    # Must still return amounts so _ensure_shared_child_budget_after_resync can run.
+    assert result == (25.0, 20.0)

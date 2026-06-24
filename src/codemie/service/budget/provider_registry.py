@@ -233,6 +233,13 @@ class _NoopBudgetEnforcementProvider:
     ) -> None:
         return self._noop_result(allocation)
 
+    async def delete_override_budget(
+        self,
+        *,
+        override_budget_id: str,
+    ) -> None:
+        return self._noop_result(override_budget_id)
+
     async def resolve_runtime(
         self,
         *,

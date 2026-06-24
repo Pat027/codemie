@@ -347,6 +347,12 @@ class BudgetEnforcementProvider(Protocol):
         allocation: "ProjectMemberBudgetAssignment",
     ) -> None: ...
 
+    async def delete_override_budget(
+        self,
+        *,
+        override_budget_id: str,
+    ) -> None: ...
+
     async def resolve_runtime(
         self,
         *,

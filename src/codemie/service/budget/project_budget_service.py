@@ -377,6 +377,22 @@ class ProjectBudgetService:
         )
         return budget
 
+    async def _resolve_shared_child_budget_amounts(
+        self,
+        session: AsyncSession,
+        *,
+        budget: Budget,
+        fallback_allocation: "ProjectMemberBudgetAssignment",
+    ) -> tuple[float, float]:
+        """Return (max_budget, soft_budget) from the shared child budget.
+
+        Falls back to the allocation's current values when the shared child does not exist yet.
+        """
+        shared_child = await budget_repository.get_by_id(session, build_shared_project_budget_id(budget.budget_id))
+        if shared_child is None:
+            return fallback_allocation.allocated_max_budget, fallback_allocation.allocated_soft_budget
+        return shared_child.max_budget, shared_child.soft_budget
+
     async def _ensure_shared_child_budget(
         self,
         session: AsyncSession,
@@ -997,6 +1013,7 @@ class ProjectBudgetService:
             if updated.allocation_mode == AllocationMode.FIXED.value:
                 await self._sync_fixed_allocation(session, budget, alloc.id, updated, provider)
                 return None
+            await provider.sync_member_allocation(allocation=updated, budget=budget)
             return updated.allocated_max_budget, updated.allocated_soft_budget
         except Exception as exc:
             logger.warning(
@@ -1295,27 +1312,35 @@ class ProjectBudgetService:
                 raise ExtendedHTTPException(code=404, message=f"Project budget not found: {budget_id}")
             raise ExtendedHTTPException(code=404, message=f"Member allocation not found for user '{user_id}'")
         budget, assignment, _allocations = await self.get_project_budget(session, budget_id)
+        correct_max, correct_soft = await self._resolve_shared_child_budget_amounts(
+            session, budget=budget, fallback_allocation=allocation
+        )
         shared_budget = await self._ensure_shared_child_budget(
             session,
             main_budget=budget,
             project_name=assignment.project_name if assignment else "",
             actor_id=actor_id,
-            per_member_soft_budget=allocation.allocated_soft_budget,
-            per_member_max_budget=allocation.allocated_max_budget,
+            per_member_soft_budget=correct_soft,
+            per_member_max_budget=correct_max,
         )
+        provider = get_active_provider()
         if allocation.override_budget_id:
             await budget_repository.detach_budget(session, allocation.override_budget_id)
+            await provider.delete_override_budget(override_budget_id=allocation.override_budget_id)
         allocation = await project_member_budget_assignment_repository.update_member_budget_routing(
             session,
             allocation_id=allocation.id,
             shared_budget_id=shared_budget.budget_id,
-            override_budget_id=allocation.override_budget_id,
+            override_budget_id=None,
             effective_budget_id=shared_budget.budget_id,
             allocation_mode=AllocationMode.EQUAL.value,
             override_reason=None,
         )
-        provider = get_active_provider()
-        member_state = await provider.sync_member_allocation(allocation=allocation, budget=budget)
+        member_state = await provider.sync_member_allocation(
+            allocation=allocation,
+            budget=budget,
+            effective_max_budget=correct_max,
+        )
         await self._persist_child_budget_provider_state(
             session,
             budget_id=self._effective_member_budget_id(budget.budget_id, allocation),
