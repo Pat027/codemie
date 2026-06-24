@@ -22,7 +22,8 @@ are properly included in StreamedGenerationResult final chunks.
 from __future__ import annotations
 
 import json
-from unittest.mock import Mock
+from time import time
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -452,3 +453,35 @@ class TestStreamingErrorIntegration:
         assert tool_errors is not None
         assert len(tool_errors) == 1
         assert tool_errors[0]["tool_name"] == "test_tool"
+
+    @patch(
+        "codemie.rest_api.handlers.assistant_handlers.extract_custom_headers",
+        side_effect=RuntimeError("injected LLM error"),
+    )
+    def test_generator_closed_before_exception_propagates(self, _mock_headers, mock_user, mock_assistant):
+        """Generator must be closed before the exception propagates so the disconnect
+        handler cannot overwrite error history with 'Agent has been interrupted by client'."""
+        handler = StandardAssistantHandler(assistant=mock_assistant, user=mock_user, request_uuid="test-uuid")
+
+        raw_request = Mock()
+        raw_request.state.on_disconnect = Mock()
+        raw_request.state.uuid = "test-uuid"
+
+        request = Mock(spec=AssistantChatRequest)
+        request.conversation_id = "conv-123"
+        request.disable_cache = False
+
+        captured = []
+        real_generator_cls = ThreadedGenerator
+
+        def capture_generator(*args, **kwargs):
+            gen = real_generator_cls(*args, **kwargs)
+            captured.append(gen)
+            return gen
+
+        with patch("codemie.rest_api.handlers.assistant_handlers.ThreadedGenerator", side_effect=capture_generator):
+            with pytest.raises(RuntimeError, match="injected LLM error"):
+                handler._handle_stream(request, raw_request, time())
+
+        assert len(captured) == 1
+        assert captured[0].is_closed()

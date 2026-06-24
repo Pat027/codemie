@@ -508,15 +508,13 @@ class StandardAssistantHandler(AssistantRequestHandler):
                 media_type=NDJSON_MEDIA_TYPE,
             )
         except Exception as e:
-            # Import at function level to avoid circular imports
             from codemie.core.template_security import TemplateSecurityError
 
-            if isinstance(e, TemplateSecurityError):
-                # Return security error as a thought without calling LLM
+            if isinstance(e, TemplateSecurityError):  # Return security error as a thought without calling LLM
                 return self._return_security_error_response(str(e), generator_queue, request, execution_start)
-            else:
-                # Re-raise other exceptions
-                raise
+
+            generator_queue.close()
+            raise
 
     def _handle_client_disconnect(
         self,
