@@ -31,6 +31,7 @@ from codemie.core.exceptions import ExtendedHTTPException
 from codemie.core.models import (
     Application,
     BaseResponse,
+    BaseResponseWithData,
     GitRepo,
     BaseGitRepo,
     SVNRepo,
@@ -111,8 +112,12 @@ from codemie.rest_api.models.tool import (
     ToolInvokeResponse,
     DatasourceSearchInvokeRequest,
 )
-from codemie.rest_api.security.authentication import authenticate, application_access_check
+from codemie.rest_api.security.authentication import authenticate, admin_access_only, application_access_check
 from codemie.rest_api.security.user import User
+from codemie.service.provider.datasource.provider_datasource_import_service import (
+    DatasourceImportSummary,
+    ProviderDatasourceImportService,
+)
 from codemie.rest_api.utils.default_applications import ensure_application_exists
 from codemie.rest_api.routers.utils import (
     raise_access_denied,
@@ -2131,6 +2136,69 @@ def update_provider_datasource_index(
     service.run()
 
     return BaseResponse(message=service.updated_message)
+
+
+@router.get(
+    "/index/provider/datasources/import/availability",
+    status_code=status.HTTP_200_OK,
+    response_model=BaseResponseWithData,
+    dependencies=[Depends(admin_access_only)],
+)
+def datasource_import_availability(admin: User = Depends(authenticate)) -> BaseResponseWithData:
+    """
+    Report which providers can be imported from (drives UI availability of the import action).
+
+    A provider is importable if it advertises a datasource-listing (CATALOG) capability or has a
+    built-in import source. Returns an empty list when no importable provider is installed (e.g.
+    AICE not deployed), so the UI can hide the feature. Admin-only.
+    """
+    providers = ProviderDatasourceImportService.importable_provider_names(user=admin)
+    return BaseResponseWithData(
+        message="Datasource import availability",
+        data={"available": bool(providers), "providers": providers},
+    )
+
+
+@router.post(
+    "/index/provider/datasources/import",
+    status_code=status.HTTP_200_OK,
+    response_model=DatasourceImportSummary,
+    dependencies=[Depends(admin_access_only)],
+)
+def import_provider_datasources(admin: User = Depends(authenticate)) -> DatasourceImportSummary:
+    """
+    Import datasources that already exist on configured providers into CodeMie.
+
+    Provider-agnostic: for every importable provider, enumerates its datasources and creates an
+    ``index_info`` row for each one not yet registered (deduped by external datasource id, so
+    re-running only imports new ones). Does not trigger any provider creation/indexing — the
+    datasources are already built. Providers that aren't installed/importable are skipped. Admin-only.
+
+    Returns:
+        DatasourceImportSummary with per-provider imported/skipped counts and any per-item errors.
+    """
+    logger.info(
+        "Provider datasource import triggered by admin",
+        extra={"admin_id": admin.id, "admin_name": admin.name},
+    )
+
+    try:
+        return ProviderDatasourceImportService(user=admin).run()
+    except ValueError as e:
+        raise ExtendedHTTPException(
+            code=status.HTTP_400_BAD_REQUEST,
+            message="Datasource import failed",
+            details=str(e),
+            help="Verify that the target provider is configured correctly and try again.",
+        )
+    except Exception as e:
+        logger.error(f"Provider datasource import failed: {e}", exc_info=True, extra={"admin_id": admin.id})
+        raise ExtendedHTTPException(
+            code=status.HTTP_502_BAD_GATEWAY,
+            message="Failed to import datasources",
+            details="Could not reach a provider to enumerate its datasources.",
+            help="Check that the provider is reachable and try again.",
+        )
 
 
 @router.post("/index/health", status_code=status.HTTP_200_OK)

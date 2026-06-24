@@ -101,6 +101,10 @@ class ProviderToolMetadata(BaseModel):
     class Purpose(StrEnum):
         LIFE_CYCLE_MANAGEMENT = auto()
         DATA_RETRIEVAL = auto()
+        # Datasource-unscoped listing capability (lists all datasources on a provider).
+        # Intentionally distinct from DATA_RETRIEVAL so it is exempt from the datasource
+        # CRUD validators and is NEVER surfaced as an agent tool — only admin import uses it.
+        CATALOG = auto()
 
     tool_type: Optional[str] = None
     tool_purpose: Optional[Purpose] = Field(None)
@@ -138,6 +142,15 @@ class ProviderToolkit(BaseModel):
         def is_datasource_tool(self) -> bool:
             """Check if the tool is a datasource tool"""
             return self.tool_metadata.tool_purpose == ProviderToolMetadata.Purpose.DATA_RETRIEVAL
+
+        @property
+        def is_catalog_tool(self) -> bool:
+            """Check if the tool is a datasource-listing (catalog) tool.
+
+            Catalog tools list all datasources on a provider. They are never exposed as
+            agent tools and are used only by the admin datasource-import flow.
+            """
+            return self.tool_metadata.tool_purpose == ProviderToolMetadata.Purpose.CATALOG
 
     toolkit_id: str = Field(default_factory=lambda: str(uuid4()))
     name: str
