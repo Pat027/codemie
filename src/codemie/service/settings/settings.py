@@ -24,6 +24,7 @@ from codemie_tools.cloud.kubernetes.models import KubernetesConfig
 from codemie_tools.code.models import SonarConfig
 from codemie_tools.core.project_management.confluence.models import ConfluenceConfig
 from codemie_tools.core.project_management.jira.models import JiraConfig
+from codemie_tools.core.project_management.xwiki.models import XWikiConfig
 from codemie_tools.core.vcs.azure_devops_git.models import AzureDevOpsGitConfig
 from codemie_tools.core.vcs.github.models import GithubConfig
 from codemie_tools.core.vcs.gitlab.models import GitlabConfig
@@ -215,9 +216,12 @@ class SettingsService(BaseSettingsService):
     }
     CONFLUENCE_FIELDS = {URL: "url", TOKEN: "token", USERNAME: "username", IS_CLOUD: "cloud"}
 
+    XWIKI_FIELDS = {URL: "url", TOKEN: "token", USERNAME: "username"}
+
     __CREDENTIAL_CONFIG_TO_TYPE = {
         JiraConfig: CredentialTypes.JIRA,
         ConfluenceConfig: CredentialTypes.CONFLUENCE,
+        XWikiConfig: CredentialTypes.XWIKI,
         KubernetesConfig: CredentialTypes.KUBERNETES,
         AWSConfig: CredentialTypes.AWS,
         AWSCredentials: CredentialTypes.AWS,

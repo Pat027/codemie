@@ -98,6 +98,7 @@ class CredentialTypes(str, Enum):
     A2A = "A2A"  # Assistant-to-Assistant integration
     LITE_LLM = "LiteLLM"
     SHAREPOINT = "SharePoint"
+    XWIKI = "XWiki"
 
     # Project settings
     DIAL = "DIAL"
