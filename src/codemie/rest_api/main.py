@@ -85,6 +85,7 @@ from codemie.rest_api.routers import (
     callbacks,
     logs,
     mcp_config,
+    mcp_managed,
     ai_kata,
     user_kata_progress,
     skill,
@@ -763,6 +764,7 @@ app.include_router(metrics.router)
 app.include_router(analytics.router)
 app.include_router(logs.router)
 app.include_router(mcp_config.router)
+app.include_router(mcp_managed.router)
 app.include_router(user_kata_progress.router)
 app.include_router(ai_kata.router)
 app.include_router(skill_events.router)

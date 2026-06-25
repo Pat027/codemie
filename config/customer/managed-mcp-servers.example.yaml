@@ -1,0 +1,18 @@
+# Example managed MCP catalog. Copy this content into the
+# `managed-mcp-servers.yaml` key of the `codemie-customer-config` ConfigMap.
+# This .example.yaml file is documentation only and is never read at runtime.
+#
+# Schema (remote-only in v1):
+#   name:        unique server name [a-zA-Z0-9_-]
+#   transport:   http | sse
+#   url:         server URL
+#   auth:        oauth | none        (default: none)
+#   description: optional human label
+#   clients:     optional list; omit = all clients (e.g. claude-desktop, codex)
+servers:
+  - name: example
+    transport: http
+    url: https://mcp.example.com/mcp/example
+    auth: oauth
+    description: Example MCP server
+    clients: [claude-desktop]
