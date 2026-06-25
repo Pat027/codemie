@@ -486,7 +486,7 @@ group_router = APIRouter(
 
 
 class CategoryBudgetSpec(BaseModel):
-    pct: float = Field(gt=0, le=100, description="Percentage of total_amount allocated to this category")
+    pct: float = Field(ge=0, le=100, description="Percentage of total_amount allocated to this category")
     soft_budget: Optional[float] = Field(
         default=None,
         ge=0,

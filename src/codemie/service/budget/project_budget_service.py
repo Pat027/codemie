@@ -56,7 +56,6 @@ if TYPE_CHECKING:
 
 _DURATION_RE = re.compile(r"^\d+[smhd]$")
 _CENT = Decimal("0.01")
-PLATFORM_MIN_PCT = 1.0
 PCT_SUM_TOLERANCE = 0.5
 DEFAULT_SOFT_LIMIT_PCT = 80.0
 
@@ -1514,8 +1513,8 @@ class ProjectBudgetService:
                     message=f"Invalid budget category: {key!r}. Must be one of {sorted(valid)}",
                 )
         platform_key = BudgetCategory.PLATFORM.value
-        if platform_key not in categories or categories[platform_key].pct < PLATFORM_MIN_PCT:
-            raise ExtendedHTTPException(code=400, message=f"'platform' category must have pct >= {PLATFORM_MIN_PCT}")
+        if platform_key not in categories:
+            raise ExtendedHTTPException(code=400, message="'platform' category is required")
         total_pct = sum(s.pct for s in categories.values())
         if abs(total_pct - 100.0) > PCT_SUM_TOLERANCE:
             raise ExtendedHTTPException(
@@ -1593,6 +1592,11 @@ class ProjectBudgetService:
                 soft_amount = cat_spec.soft_budget
             else:
                 soft_amount = float(Decimal(str(amount)) * Decimal(str(DEFAULT_SOFT_LIMIT_PCT)) / Decimal("100"))
+
+            # Skip budget creation for zero-allocation categories
+            if cat_spec.pct <= 0:
+                continue
+
             budget_id = f"{data.project_name}-{cat_key}-{uuid.uuid4().hex[:8]}"
 
             budget = Budget(
