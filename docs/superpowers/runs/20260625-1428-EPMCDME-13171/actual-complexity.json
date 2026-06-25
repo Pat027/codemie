@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "mode": "actual",
+  "task": "Add Xray and SharePoint datasource types to scheduler trigger infrastructure (validate_datasource, task models, actor functions, dispatch branches).",
+  "generated": "2026-06-25T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 1, "label": "XS" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 10,
+  "size": "S",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "file_change_estimate",
+      "reason": "6 files changed across 3 directories (triggers/actors/, triggers/bindings/, triggers/ root) plus test directories — fits M (5-7 files, spans 2+ directories)."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "Changes span model, actor, and binding layers but all remain within the triggers subsystem; each change is a direct extension of an existing sibling pattern."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Two layers touched: Service/Actor (actors/datasource.py) and Binding/Workflow (bindings/cron.py + bindings/utils.py); no DB schema change, no external layer added."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null,
+  "run_dir": "docs/superpowers/runs/20260625-1428-EPMCDME-13171"
+}

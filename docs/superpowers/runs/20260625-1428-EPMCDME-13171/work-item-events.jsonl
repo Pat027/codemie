@@ -1,0 +1,1 @@
+{"schema":1,"ts":"2026-06-25T14:28:00Z","event":"work_item.created","run_id":"20260625-1428-EPMCDME-13171","phase":0,"actor":"sdlc-pipeline","summary":"Placeholder work item created from raw_input EPMCDME-13171","artifacts":["docs/superpowers/runs/20260625-1428-EPMCDME-13171/work-item.md"],"data":{"source":"placeholder","ticket":"EPMCDME-13171"}}

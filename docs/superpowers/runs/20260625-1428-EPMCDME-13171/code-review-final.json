@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "round": "code-review.final",
+  "run_id": "20260625-1428-EPMCDME-13171",
+  "decision": "approve",
+  "confidence": "medium",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "criterion": "AC1: Xray scheduled reindexing fires correctly for datasources with a valid setting_id",
+      "status": "pass",
+      "notes": "reindex_xray fetches Xray credentials via SettingsService.get_xray_creds with setting_id, constructs XrayDatasourceProcessor, and calls datasource_concurrency_manager.run(processor.incremental_reindex). validate_datasource ensures setting_id is present before job is scheduled."
+    },
+    {
+      "criterion": "AC2: SharePoint scheduled reindexing fires correctly for datasources with auth_type=='integration'",
+      "status": "partial",
+      "notes": "reindex_sharepoint correctly executes for integration-auth SharePoint datasources. No explicit precondition guard restricts scheduling to auth_type=='integration' only; however, SharePointDatasourceProcessor._create_or_update_scheduler already prevents scheduler records from being created for OAuth types, so only integration-auth datasources can have scheduler settings in practice."
+    },
+    {
+      "criterion": "AC3: validate_datasource returns non-None for knowledge_base_xray and knowledge_base_sharepoint",
+      "status": "pass",
+      "notes": "'knowledge_base_xray' and 'knowledge_base_sharepoint' added to the allowlist in utils.py. Two tests confirm the positive path."
+    },
+    {
+      "criterion": "AC4: __schedule_datasource_job schedules APScheduler jobs for Xray and SharePoint",
+      "status": "pass",
+      "notes": "Two new elif branches added in cron.py dispatch to reindex_xray and reindex_sharepoint respectively. Tests verify scheduler.add_job is called with the correct actor function."
+    },
+    {
+      "criterion": "AC5: Existing datasource types (Jira, Confluence, Git, etc.) not regressed",
+      "status": "pass",
+      "notes": "All pre-existing branches in validate_datasource and __schedule_datasource_job are unchanged. All 119 trigger tests pass."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "git-workflow: commit format EPMCDME-####: Description",
+      "status": "na",
+      "notes": "No commits made yet; format will be enforced at commit time."
+    },
+    {
+      "standard": "code-quality: type hints on public functions",
+      "status": "pass",
+      "notes": "New functions reindex_xray and reindex_sharepoint follow existing actor signatures (no explicit return type, consistent with reindex_jira, reindex_confluence, etc.)."
+    },
+    {
+      "standard": "code-quality: Ruff/lint compliance",
+      "status": "pass",
+      "notes": "Additions follow existing code style; no obviously lint-failing patterns introduced."
+    },
+    {
+      "standard": "security: no credentials, tokens, or secrets in code",
+      "status": "pass",
+      "notes": "Credentials fetched at runtime from SettingsService, not hardcoded."
+    }
+  ],
+  "findings": [],
+  "rationale": "All three review lenses ran successfully. The blind lens raised 5 items, all of which were dismissed after verification: logging IS present before the early returns (the blind lens misread the diff); ValueError catch is consistent with the existing _resume_sharepoint pattern; the `if not sp_index_info` guard covers the None case; hardcoded defaults match _resume_sharepoint; and datasource_concurrency_manager.run() is never wrapped in try/except in any existing actor. The edge-case lens raised 6 items: EC-001 (empty JQL fallback) is identical to the pattern already used in _resume_xray; EC-002 (ValueError) is dismissed as above; EC-003/EC-004 (OAuth SharePoint scheduling) is deferred — OAuth types cannot have scheduler settings created through normal flows because _create_or_update_scheduler blocks it at the API layer; EC-005 is a structural observation not a defect; EC-006 (stamp before guard) is consistent with all existing actors. The acceptance lens confirmed AC1, AC3, AC4, AC5 pass and AC2 is partial, but the auth_type constraint is not an explicit Jira AC — it is an implementation constraint that is enforced upstream. No blocking findings survived triage. Confidence is medium (not high) due to the AC2 partial and the deferred EC-003 edge case."
+}

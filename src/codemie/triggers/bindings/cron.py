@@ -44,7 +44,9 @@ from codemie.triggers.actors.datasource import (
     reindex_confluence,
     reindex_google,
     reindex_jira,
+    reindex_sharepoint,
     reindex_svn,
+    reindex_xray,
     resume_stale_datasource,
 )
 from codemie.triggers.actors.workflow import invoke_workflow
@@ -58,7 +60,9 @@ from codemie.triggers.trigger_models import (
     ConfluenceReindexTask,
     GoogleReindexTask,
     JiraReindexTask,
+    SharePointReindexTask,
     SVNReindexTask,
+    XrayReindexTask,
 )
 
 # Constants
@@ -635,6 +639,36 @@ class Cron:
             )
             return self.scheduler.add_job(
                 reindex_azure_devops_work_item,
+                trigger=cron_trigger,
+                id=job_id,
+                replace_existing=True,
+                kwargs={"payload": payload},
+            )
+        elif index_type_str == "knowledge_base_xray":
+            payload = XrayReindexTask(
+                project_name=project_name,
+                resource_id=job_id,
+                resource_name=resource_name,
+                user=user,
+                index_info=index_info,
+            )
+            return self.scheduler.add_job(
+                reindex_xray,
+                trigger=cron_trigger,
+                id=job_id,
+                replace_existing=True,
+                kwargs={"payload": payload},
+            )
+        elif index_type_str == "knowledge_base_sharepoint":
+            payload = SharePointReindexTask(
+                project_name=project_name,
+                resource_id=job_id,
+                resource_name=resource_name,
+                user=user,
+                index_info=index_info,
+            )
+            return self.scheduler.add_job(
+                reindex_sharepoint,
                 trigger=cron_trigger,
                 id=job_id,
                 replace_existing=True,

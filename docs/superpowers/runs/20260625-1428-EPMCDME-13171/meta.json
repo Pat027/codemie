@@ -1,0 +1,39 @@
+{
+  "run_id": "20260625-1428-EPMCDME-13171",
+  "mode": "autonomous",
+  "started_at": "2026-06-25T14:28:00Z",
+  "task_input": "Use /brianna to read all the task details of the EPMCDME-13171 jira, analyze, prepare plan, and fix the bug. Remember that you have access to codemie and codemie-enterprise repositories: '../codemie' and '../codemie-enterprise'",
+  "branch": "EPMCDME-13171",
+  "work_item": {
+    "canonical_path": null,
+    "run_mirror": "docs/superpowers/runs/20260625-1428-EPMCDME-13171/work-item.md",
+    "event_ledger": "docs/superpowers/runs/20260625-1428-EPMCDME-13171/work-item-events.jsonl"
+  },
+  "current_phase": 3,
+  "status": "running",
+  "escalate_on": ["security", "breaking-change"],
+  "branch_guard": {
+    "current_branch": "EPMCDME-13171",
+    "base_branch": "main",
+    "target_branch": "EPMCDME-13171",
+    "working_tree": "dirty",
+    "upstream": "none",
+    "target_branch_exists": true,
+    "base_refreshed": false,
+    "decision": "proceed-dirty",
+    "dirty_warning": "Pre-existing .codemie/codemie-cli.config.json modification and untracked planning artifacts from this SDLC run. Not blocking implementation."
+  },
+  "phases": {
+    "0":  {"status": "completed", "started_at": "2026-06-25T14:28:00Z", "completed_at": "2026-06-25T14:29:00Z"},
+    "1":  {"status": "completed", "started_at": "2026-06-25T14:29:00Z", "completed_at": "2026-06-25T14:32:00Z"},
+    "2":  {"status": "completed", "started_at": "2026-06-25T14:32:00Z", "completed_at": "2026-06-25T14:33:00Z"},
+    "3":  {"status": "running", "started_at": "2026-06-25T14:33:00Z"},
+    "4":  {"status": "pending"},
+    "5":  {"status": "pending"},
+    "6":  {"status": "pending"},
+    "7":  {"status": "pending"},
+    "8":  {"status": "pending"},
+    "9":  {"status": "pending"},
+    "10": {"status": "pending"}
+  }
+}

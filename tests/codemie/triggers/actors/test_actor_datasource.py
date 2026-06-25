@@ -940,3 +940,47 @@ class TestReindexActorStampsTriggeredAt:
 
         mock_stamp.assert_called_once_with(payload.index_info.id)
         payload.index_info.update.assert_not_called()
+
+    @patch.object(IndexInfo, "stamp_reindex_triggered_at")
+    @patch("codemie.triggers.actors.datasource.datasource_concurrency_manager")
+    @patch("codemie.triggers.actors.datasource.XrayDatasourceProcessor")
+    @patch("codemie.triggers.actors.datasource.SettingsService")
+    def test_reindex_xray_stamps_triggered_at(self, mock_settings, mock_processor_cls, mock_concurrency, mock_stamp):
+        from codemie.triggers.actors.datasource import reindex_xray
+
+        mock_settings.get_xray_creds.return_value = MagicMock()
+        payload = self._make_payload(index_type="knowledge_base_xray")
+        payload.index_info.xray = MagicMock(jql="test_jql")
+
+        reindex_xray(payload)
+
+        mock_stamp.assert_called_once_with(payload.index_info.id)
+        payload.index_info.update.assert_not_called()
+
+    @patch.object(IndexInfo, "stamp_reindex_triggered_at")
+    @patch("codemie.triggers.actors.datasource.datasource_concurrency_manager")
+    @patch("codemie.triggers.actors.datasource.SharePointDatasourceProcessor")
+    @patch("codemie.triggers.actors.datasource.SettingsService")
+    def test_reindex_sharepoint_stamps_triggered_at(
+        self, mock_settings, mock_processor_cls, mock_concurrency, mock_stamp
+    ):
+        from codemie.triggers.actors.datasource import reindex_sharepoint
+
+        mock_settings.get_sharepoint_creds.return_value = MagicMock()
+        payload = self._make_payload(index_type="knowledge_base_sharepoint")
+        payload.index_info.sharepoint = MagicMock(
+            site_url="https://tenant.sharepoint.com/sites/test",
+            include_pages=True,
+            include_documents=True,
+            include_lists=True,
+            max_file_size_mb=50,
+            files_filter="",
+            auth_type="integration",
+            oauth_client_id=None,
+            oauth_tenant_id=None,
+        )
+
+        reindex_sharepoint(payload)
+
+        mock_stamp.assert_called_once_with(payload.index_info.id)
+        payload.index_info.update.assert_not_called()

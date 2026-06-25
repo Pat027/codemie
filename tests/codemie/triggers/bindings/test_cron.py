@@ -486,3 +486,117 @@ def test_actualize_jobs_bad_setting_does_not_block_others(cron_instance):
         cron_instance._Cron__actualize_jobs([good_setting_1, bad_setting, good_setting_2])
 
     assert mock_actualize.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Tests for validate_datasource with Xray and SharePoint types (EPMCDME-13171)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_datasource_xray_type_is_supported():
+    mock_ds = MagicMock()
+    mock_ds.is_code_index.return_value = False
+    mock_ds.index_type = "knowledge_base_xray"
+    mock_ds.setting_id = "some-setting-id"
+
+    with patch("codemie.triggers.bindings.utils.IndexInfo.find_by_id", return_value=mock_ds):
+        result = validate_datasource("some-ds-id")
+
+    assert result is mock_ds
+
+
+def test_validate_datasource_sharepoint_type_is_supported():
+    mock_ds = MagicMock()
+    mock_ds.is_code_index.return_value = False
+    mock_ds.index_type = "knowledge_base_sharepoint"
+    mock_ds.setting_id = "some-setting-id"
+
+    with patch("codemie.triggers.bindings.utils.IndexInfo.find_by_id", return_value=mock_ds):
+        result = validate_datasource("some-ds-id")
+
+    assert result is mock_ds
+
+
+# ---------------------------------------------------------------------------
+# Tests for __schedule_datasource_job dispatch — Xray and SharePoint (EPMCDME-13171)
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_index_info(index_type, repo_type=None):
+    mock_info = MagicMock()
+    mock_info.index_type = index_type
+    mock_info.repo_type = repo_type or ""
+    mock_info.setting_id = "setting-123"
+    mock_info.project_name = "test-project"
+    mock_info.repo_name = "test-repo"
+    mock_info.xray = MagicMock(jql="test jql")
+    mock_info.sharepoint = MagicMock(
+        site_url="https://tenant.sharepoint.com/sites/test",
+        include_pages=True,
+        include_documents=True,
+        include_lists=True,
+        max_file_size_mb=50,
+        files_filter="",
+        auth_type="integration",
+        oauth_client_id=None,
+        oauth_tenant_id=None,
+    )
+    return mock_info
+
+
+def test_schedule_datasource_job_xray_schedules_job(cron_instance):
+    from codemie.triggers.actors.datasource import reindex_xray
+
+    mock_index_info = _make_mock_index_info("knowledge_base_xray")
+    mock_scheduler = MagicMock()
+    cron_instance.scheduler = mock_scheduler
+    cron_trigger = MagicMock()
+
+    with (
+        patch("codemie.triggers.bindings.cron.resolve_trigger_user", return_value=MagicMock()),
+        patch.object(cron_instance, "_Cron__get_index_info_cached", return_value=mock_index_info),
+        patch("codemie.triggers.bindings.cron.XrayReindexTask"),
+    ):
+        cron_instance._Cron__schedule_datasource_job(
+            index_type="knowledge_base_xray",
+            cron_trigger=cron_trigger,
+            job_id="job-xray-1",
+            resource_id="ds-xray-1",
+            user_id="user-1",
+            project_name="test-project",
+            resource_name="xray-ds",
+            jql="test jql",
+        )
+
+    mock_scheduler.add_job.assert_called_once()
+    call_kwargs = mock_scheduler.add_job.call_args
+    assert call_kwargs[0][0] is reindex_xray
+
+
+def test_schedule_datasource_job_sharepoint_schedules_job(cron_instance):
+    from codemie.triggers.actors.datasource import reindex_sharepoint
+
+    mock_index_info = _make_mock_index_info("knowledge_base_sharepoint")
+    mock_scheduler = MagicMock()
+    cron_instance.scheduler = mock_scheduler
+    cron_trigger = MagicMock()
+
+    with (
+        patch("codemie.triggers.bindings.cron.resolve_trigger_user", return_value=MagicMock()),
+        patch.object(cron_instance, "_Cron__get_index_info_cached", return_value=mock_index_info),
+        patch("codemie.triggers.bindings.cron.SharePointReindexTask"),
+    ):
+        cron_instance._Cron__schedule_datasource_job(
+            index_type="knowledge_base_sharepoint",
+            cron_trigger=cron_trigger,
+            job_id="job-sp-1",
+            resource_id="ds-sp-1",
+            user_id="user-1",
+            project_name="test-project",
+            resource_name="sharepoint-ds",
+            jql="",
+        )
+
+    mock_scheduler.add_job.assert_called_once()
+    call_kwargs = mock_scheduler.add_job.call_args
+    assert call_kwargs[0][0] is reindex_sharepoint

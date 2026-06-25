@@ -52,6 +52,8 @@ from codemie.triggers.trigger_models import (
     GoogleReindexTask,
     JiraReindexTask,
     SVNReindexTask,
+    XrayReindexTask,
+    SharePointReindexTask,
 )
 
 REINDEX_START_MSG = "Starting reindexing for %s datasource (Trigger Invoked, job_id: %s, project: %s, resource: %s)."
@@ -490,6 +492,140 @@ def reindex_azure_devops_work_item(payload: AzureDevOpsWorkItemReindexTask):
         index_info=payload.index_info,
         request_uuid=str(uuid4()),
         embedding_model=payload.index_info.embeddings_model,
+    )
+
+    datasource_concurrency_manager.run(processor.reprocess, processor.index)
+
+    logger.info(
+        REINDEX_SUCCESS_MSG,
+        payload.index_info.index_type,
+        payload.resource_id,
+        payload.project_name,
+        payload.resource_name,
+    )
+
+
+def reindex_xray(payload: XrayReindexTask):
+    """Initiates the reindexing process for an Xray datasource."""
+    IndexInfo.stamp_reindex_triggered_at(payload.index_info.id)
+
+    logger.info(
+        REINDEX_START_MSG,
+        payload.index_info.index_type,
+        payload.resource_id,
+        payload.project_name,
+        payload.resource_name,
+    )
+
+    xray_creds = SettingsService.get_xray_creds(
+        user_id=payload.user.id,
+        project_name=payload.project_name,
+        setting_id=payload.index_info.setting_id,
+    )
+    if not xray_creds:
+        error_msg = f"Xray credentials not found for project '{payload.project_name}'."
+        logger.error(
+            REINDEX_FAILED_MSG,
+            payload.index_info.index_type,
+            payload.resource_id,
+            payload.project_name,
+            payload.resource_name,
+            error_msg,
+        )
+        return
+
+    processor = XrayDatasourceProcessor(
+        datasource_name=payload.resource_name,
+        user=payload.user,
+        project_name=payload.project_name,
+        credentials=xray_creds,
+        jql=payload.index_info.xray.jql if payload.index_info.xray else "",
+        description=payload.index_info.description or "",
+        project_space_visible=payload.index_info.project_space_visible or False,
+        index_info=payload.index_info,
+        request_uuid=str(uuid4()),
+        embedding_model=payload.index_info.embeddings_model,
+    )
+
+    datasource_concurrency_manager.run(processor.incremental_reindex, processor.index)
+
+    logger.info(
+        REINDEX_SUCCESS_MSG,
+        payload.index_info.index_type,
+        payload.resource_id,
+        payload.project_name,
+        payload.resource_name,
+    )
+
+
+def reindex_sharepoint(payload: SharePointReindexTask):
+    """Initiates the reindexing process for a SharePoint datasource."""
+    IndexInfo.stamp_reindex_triggered_at(payload.index_info.id)
+
+    logger.info(
+        REINDEX_START_MSG,
+        payload.index_info.index_type,
+        payload.resource_id,
+        payload.project_name,
+        payload.resource_name,
+    )
+
+    sp_index_info = payload.index_info.sharepoint
+    if not sp_index_info:
+        error_msg = (
+            f"SharePoint index info not found for resource '{payload.resource_name}' "
+            f"in project '{payload.project_name}'."
+        )
+        logger.error(
+            REINDEX_FAILED_MSG,
+            payload.index_info.index_type,
+            payload.resource_id,
+            payload.project_name,
+            payload.resource_name,
+            error_msg,
+        )
+        return
+
+    try:
+        sharepoint_creds = SettingsService.get_sharepoint_creds(
+            user_id=payload.user.id,
+            project_name=payload.project_name,
+            setting_id=payload.index_info.setting_id,
+        )
+    except ValueError:
+        error_msg = f"SharePoint credentials not found for project '{payload.project_name}'."
+        logger.error(
+            REINDEX_FAILED_MSG,
+            payload.index_info.index_type,
+            payload.resource_id,
+            payload.project_name,
+            payload.resource_name,
+            error_msg,
+        )
+        return
+
+    processor = SharePointDatasourceProcessor(
+        datasource_name=payload.resource_name,
+        user=payload.user,
+        project_name=payload.project_name,
+        credentials=sharepoint_creds,
+        sp_config=SharePointProcessorConfig(
+            site_url=sp_index_info.site_url,
+            include_pages=sp_index_info.include_pages if sp_index_info.include_pages is not None else True,
+            include_documents=sp_index_info.include_documents if sp_index_info.include_documents is not None else True,
+            include_lists=sp_index_info.include_lists if sp_index_info.include_lists is not None else True,
+            max_file_size_mb=sp_index_info.max_file_size_mb or 50,
+            files_filter=sp_index_info.files_filter or "",
+            auth_type=sp_index_info.auth_type,
+            oauth_client_id=sp_index_info.oauth_client_id,
+            oauth_tenant_id=sp_index_info.oauth_tenant_id,
+            description=payload.index_info.description or "",
+            project_space_visible=payload.index_info.project_space_visible or False,
+        ),
+        setting_id=payload.index_info.setting_id,
+        embedding_model=payload.index_info.embeddings_model,
+        index_info=payload.index_info,
+        request_uuid=str(uuid4()),
     )
 
     datasource_concurrency_manager.run(processor.reprocess, processor.index)

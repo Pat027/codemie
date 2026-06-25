@@ -66,3 +66,11 @@ class AzureDevOpsWorkItemReindexTask(ReindexTaskPayload):
     azure_devops_work_item_index_info: AzureDevOpsWorkItemIndexInfo = Field(
         ..., description="The Azure DevOps Work Items index information."
     )
+
+
+class XrayReindexTask(ReindexTaskPayload):
+    pass
+
+
+class SharePointReindexTask(ReindexTaskPayload):
+    pass
