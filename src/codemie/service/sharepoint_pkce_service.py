@@ -26,6 +26,7 @@ import httpx
 from codemie.clients.redis import create_redis_client
 from codemie.configs import config, logger
 from codemie.core.exceptions import ExtendedHTTPException
+from codemie.core.utils import get_api_root_path
 from codemie.service.encryption.base_encryption_service import BaseEncryptionService
 from codemie.service.encryption.encryption_factory import EncryptionFactory
 
@@ -109,7 +110,7 @@ class SharePointPKCEService:
             raise ExtendedHTTPException(502, "Failed to initiate authentication")
 
         authorize_base = _MS_BASE.format(tenant=effective_tenant_id) + "/authorize"
-        redirect_uri = f"{config.CALLBACK_API_BASE_URL}/v1/sharepoint/oauth/callback"
+        redirect_uri = f"{config.CALLBACK_API_BASE_URL}{get_api_root_path()}/v1/sharepoint/oauth/callback"
         params = {
             "client_id": effective_client_id,
             "response_type": "code",
@@ -152,7 +153,7 @@ class SharePointPKCEService:
         tenant_id = state_data.get("tenant_id") or None
         client_id = state_data.get("client_id") or config.SHAREPOINT_OAUTH_CLIENT_ID
         code_verifier = state_data["code_verifier"]
-        redirect_uri = f"{config.CALLBACK_API_BASE_URL}/v1/sharepoint/oauth/callback"
+        redirect_uri = f"{config.CALLBACK_API_BASE_URL}{get_api_root_path()}/v1/sharepoint/oauth/callback"
 
         try:
             async with httpx.AsyncClient(timeout=15) as http:
