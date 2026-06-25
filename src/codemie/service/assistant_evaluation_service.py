@@ -146,9 +146,8 @@ class AssistantEvaluationService:
                     query = item.input
                     root_span.update(input=query)
                     # Call application logic
-                    chat_request = AssistantChatRequest(
-                        text=query, llm_model=llm_model, stream=False, system_prompt=system_prompt
-                    )
+                    extra = {"system_prompt": system_prompt} if system_prompt is not None else {}
+                    chat_request = AssistantChatRequest(text=query, llm_model=llm_model, stream=False, **extra)
                     response = handler.process_request(chat_request, None, raw_request)
                     root_span.update(output=response.generated)
                     root_span.end()

@@ -1,0 +1,18 @@
+{
+  "decision": "approve",
+  "rationale": "All three lenses ran cleanly against a 2-file, 76-line diff. The production fix (conditional kwargs omission at the one call site) is correct and minimal: it prevents None being passed to a str Pydantic field with default='', matching the spec and the bug description exactly. Two regression tests were added, verified to fail before the fix and pass after. All three acceptance criteria are met. No blocking findings survive triage — lens concerns were either based on incomplete context (blind lens lacked the default value; acceptance lens received a truncated diff) or are pre-existing/out-of-scope issues. Standards pass: commit format matches EPMCDME-####: Description convention, Apache 2.0 license headers present, no Ruff or security violations introduced. Deferred items (empty-string test coverage, MagicMock autospec idiom) do not block this change.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"id": "AC-1", "text": "/evaluate called without system_prompt completes without ValidationError.", "status": "met", "evidence": "Conditional kwargs omit system_prompt when None; Pydantic uses default=''. test_without_system_prompt_does_not_raise confirms."},
+    {"id": "AC-2", "text": "/evaluate called with system_prompt='...' still forwards the override correctly.", "status": "met", "evidence": "When system_prompt is not None it is placed in extra and unpacked. test_with_system_prompt_forwards_value confirms."},
+    {"id": "AC-3", "text": "Both scenarios are covered by unit tests.", "status": "met", "evidence": "Two tests in TestRunEvaluationTask; verified RED before fix, GREEN after; full test suite (12511 tests) passes."}
+  ],
+  "standards_review": [
+    {"id": "S-1", "standard": "commit-format", "status": "pass", "notes": "EPMCDME-12609: Fix evaluation API passing None system_prompt to AssistantChatRequest — matches EPMCDME-####: Description convention."},
+    {"id": "S-2", "standard": "license-headers", "status": "pass", "notes": "Apache 2.0 header present in both changed files."},
+    {"id": "S-3", "standard": "code-quality", "status": "pass", "notes": "One-line production change; no untyped public functions introduced; Ruff-compatible style."},
+    {"id": "S-4", "standard": "security", "status": "pass", "notes": "No auth, secrets, injection, or unsafe handling changes."}
+  ],
+  "findings": []
+}
