@@ -19,7 +19,6 @@ from typing import Optional, List
 
 import pandas as pd
 from langchain_core.language_models import BaseChatModel
-from langchain_experimental.tools import PythonAstREPLTool
 from pydantic import Field
 
 from codemie_tools.base.base_toolkit import BaseToolkit
@@ -93,18 +92,14 @@ class FileAnalysisToolkit(BaseToolkit):
             return []
 
         tools = []
-        dataframes, repl_tool_description = self._pre_process_csv_files(csv_files)
+        dataframes, _ = self._pre_process_csv_files(csv_files)
 
         if dataframes:
-            logger.debug(
-                f"Initializing PythonAstREPLTool. " f"Locals: {dataframes}. " f"Description: {repl_tool_description}"
-            )
-            repl_tool = PythonAstREPLTool(locals=dataframes)
-            repl_tool.description = repl_tool_description
+            logger.debug(f"Initializing PythonAstREPLTool. " f"Locals: {dataframes}.")
 
             # Create config for CSV tool
             csv_config = FileAnalysisConfig(input_files=csv_files, chat_model=self.chat_model)
-            tools.extend([repl_tool, CSVTool(config=csv_config)])
+            tools.extend([CSVTool(config=csv_config)])
 
         return tools
 

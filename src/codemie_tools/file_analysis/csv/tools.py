@@ -29,6 +29,70 @@ from codemie_tools.file_analysis.tool_vars import CSV_TOOL
 
 logger = logging.getLogger(__name__)
 
+# Pandas DataFrame/Series methods the LLM is allowed to invoke.
+# Excludes eval, query, pipe, apply, applymap, map, transform, agg and any
+# file-writing methods — all of which execute arbitrary Python or write to disk.
+SAFE_PANDAS_METHODS = frozenset(
+    {
+        "head",
+        "tail",
+        "sample",
+        "describe",
+        "info",
+        "sum",
+        "mean",
+        "median",
+        "std",
+        "var",
+        "min",
+        "max",
+        "count",
+        "nunique",
+        "value_counts",
+        "quantile",
+        "mode",
+        "skew",
+        "kurt",
+        "kurtosis",
+        "corr",
+        "cov",
+        "sort_values",
+        "sort_index",
+        "nlargest",
+        "nsmallest",
+        "rank",
+        "dropna",
+        "fillna",
+        "isnull",
+        "notnull",
+        "isna",
+        "notna",
+        "duplicated",
+        "drop_duplicates",
+        "drop",
+        "filter",
+        "rename",
+        "reset_index",
+        "abs",
+        "round",
+        "clip",
+        "diff",
+        "pct_change",
+        "cumsum",
+        "cumprod",
+        "cummax",
+        "cummin",
+        "idxmin",
+        "idxmax",
+        "any",
+        "all",
+        "unique",
+        "to_string",
+        "to_markdown",
+        "to_dict",
+    }
+)
+
 
 def get_csv_delimiter(data: str, length_to_sniff: int) -> str:
     """Get the delimiter of the CSV file."""
@@ -37,7 +101,11 @@ def get_csv_delimiter(data: str, length_to_sniff: int) -> str:
 
 
 class Input(BaseModel):
-    method_name: str = Field(description="Method to be called on the pandas dataframe object generated from the file")
+    method_name: str = Field(
+        description=(
+            "Pandas DataFrame or Series method to call. " "Allowed methods: " + ", ".join(sorted(SAFE_PANDAS_METHODS))
+        )
+    )
     method_args: dict = Field(description="Pandas dataframe arguments to be passed to the method", default={})
     column: Optional[str] = Field(description="Column to be used for the operation", default=None)
 
@@ -83,6 +151,13 @@ class CSVTool(CodeMieTool, FileToolMixin):
         file_object: FileObject, method_name: str, method_args: Dict[str, Any], column: Optional[str] = None
     ) -> Tuple[str, Union[str, pd.DataFrame]]:
         """Process a single CSV file and return its processed content"""
+        if method_name not in SAFE_PANDAS_METHODS:
+            return file_object.name, (
+                f"Error processing {file_object.name}: "
+                f"Method '{method_name}' is not allowed. "
+                f"Allowed methods: {', '.join(sorted(SAFE_PANDAS_METHODS))}"
+            )
+
         try:
             data = file_object.string_content()
             df = pd.read_csv(StringIO(data), sep=get_csv_delimiter(data, 128), on_bad_lines='skip')

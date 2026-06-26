@@ -20,7 +20,6 @@ from unittest import mock
 from unittest.mock import patch
 
 import pytest
-from langchain_experimental.tools import PythonAstREPLTool
 
 from codemie_tools.base.file_object import FileObject
 from codemie_tools.file_analysis.csv.tools import CSVTool
@@ -316,42 +315,21 @@ class TestFileAnalysisToolkitCSVSupport:
 
     def test_get_csv_tools_for_file(self, csv_file):
         """Test that the correct CSV tools are returned for a CSV file."""
-        # Test with new files parameter
         file_obj = FileObject(name="test.csv", mime_type="text/csv", owner="user", content=csv_file)
 
         toolkit = FileAnalysisToolkit.get_toolkit(files=[file_obj])
         tools = toolkit.get_tools()
-        # Should include repl_tool and csv_tool tools
-        assert len(tools) >= 2
-        # Check that we have a PythonAstREPLTool and CSVTool
-        repl_tool = None
-        csv_tool = None
-        for tool in tools:
-            if isinstance(tool, PythonAstREPLTool):
-                repl_tool = tool
-            elif isinstance(tool, CSVTool):
-                csv_tool = tool
 
-        assert repl_tool is not None, "No PythonAstREPLTool found"
+        csv_tool = next((t for t in tools if isinstance(t, CSVTool)), None)
         assert csv_tool is not None, "No CSVTool found"
-        # Check files is set correctly
         assert csv_tool.config.input_files[0].content == csv_file
 
     def test_csv_with_warnings(self, broken_csv_file):
-        """Test CSV processing with warnings."""
+        """Test CSV processing with a malformed file still returns a CSVTool."""
         file_obj = FileObject(name="test.csv", mime_type="text/csv", owner="user", content=broken_csv_file)
 
         toolkit = FileAnalysisToolkit.get_toolkit(files=[file_obj])
         tools = toolkit.get_tools()
 
-        repl_tool = None
-        for tool in tools:
-            if isinstance(tool, PythonAstREPLTool):
-                repl_tool = tool
-                break
-
-        assert repl_tool is not None, "No PythonAstREPLTool found"
-        description = repl_tool.description
-        # Check that the warning is included in the description
-        assert "Warning(s) while reading CSV file(s)" in description
-        assert "expected 3 fields, saw 4" in description
+        csv_tool = next((t for t in tools if isinstance(t, CSVTool)), None)
+        assert csv_tool is not None, "No CSVTool found"
