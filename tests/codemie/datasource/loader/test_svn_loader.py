@@ -14,13 +14,13 @@
 
 """Tests for SVNBatchLoader."""
 
-import os
 from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.documents import Document
 
-from codemie.datasource.loader.svn_loader import SVNBatchLoader, _build_branch_url, _svn_ssh_context
+from codemie.datasource.loader.svn_client import SVNClientError
+from codemie.datasource.loader.svn_loader import SVNBatchLoader, _build_branch_url
 from codemie.rest_api.models.settings import SVNAuthType, SVNCredentials
 
 
@@ -61,53 +61,7 @@ def test_build_branch_url(base_url, branch, expected):
     assert _build_branch_url(base_url, branch) == expected
 
 
-# --- _svn_ssh_context ---
-
-
-class TestSvnSshContext:
-    def test_non_ssh_creds_does_not_modify_svn_ssh_env(self):
-        creds = SVNCredentials(auth_type=SVNAuthType.BASIC, username="u", password="p")
-        original = os.environ.get("SVN_SSH")
-        with _svn_ssh_context(creds):
-            assert os.environ.get("SVN_SSH") == original
-
-    def test_ssh_key_creds_sets_svn_ssh_env(self):
-        creds = SVNCredentials(auth_type=SVNAuthType.SSH_KEY, ssh_key="my_key")
-        with _svn_ssh_context(creds):
-            assert "SVN_SSH" in os.environ
-            assert "ssh" in os.environ["SVN_SSH"]
-            assert "StrictHostKeyChecking=no" in os.environ["SVN_SSH"]
-            assert "BatchMode=yes" in os.environ["SVN_SSH"]
-
-    def test_svn_ssh_env_restored_after_context(self):
-        original = os.environ.get("SVN_SSH")
-        creds = SVNCredentials(auth_type=SVNAuthType.SSH_KEY, ssh_key="my_key")
-        with _svn_ssh_context(creds):
-            pass
-        assert os.environ.get("SVN_SSH") == original
-
-    def test_ssh_key_temp_file_deleted_after_context(self, tmp_path):
-        creds = SVNCredentials(auth_type=SVNAuthType.SSH_KEY, ssh_key="my_key")
-        captured_path = []
-        original_mkstemp = __import__("tempfile").mkstemp
-
-        def capturing_mkstemp(*args, **kwargs):
-            fd, path = original_mkstemp(*args, **kwargs)
-            captured_path.append(path)
-            return fd, path
-
-        with patch("codemie.datasource.loader.svn_loader.tempfile.mkstemp", side_effect=capturing_mkstemp):
-            with _svn_ssh_context(creds):
-                pass
-
-        assert captured_path, "mkstemp was not called"
-        assert not os.path.exists(captured_path[0])
-
-    def test_no_ssh_key_value_does_not_set_svn_ssh(self):
-        creds = SVNCredentials(auth_type=SVNAuthType.SSH_KEY, ssh_key=None)
-        original = os.environ.get("SVN_SSH")
-        with _svn_ssh_context(creds):
-            assert os.environ.get("SVN_SSH") == original
+# --- SvnClient SSH tunnel flags ---
 
 
 # --- _is_unsupported_mime_type ---
@@ -301,57 +255,46 @@ class TestProcessBinaryFile:
 # --- test_connection ---
 
 
-class TestTestConnection:
-    def test_connection_success_returns_head_revision(self, basic_creds):
-        mock_conn = MagicMock()
-        mock_conn.get_latest_revnum.return_value = 100
-        with patch("codemie.datasource.loader.svn_loader._build_remote_access", return_value=mock_conn):
-            result = SVNBatchLoader.test_connection("https://svn.example.com/repos/test", "trunk", basic_creds)
-        assert result[SVNBatchLoader.HEAD_REVISION_KEY] == 100
-
-    def test_connection_failure_propagates_exception(self, basic_creds):
-        mock_conn = MagicMock()
-        mock_conn.get_latest_revnum.side_effect = Exception("Connection refused")
-        with (
-            patch("codemie.datasource.loader.svn_loader._build_remote_access", return_value=mock_conn),
-            pytest.raises(Exception, match="Connection refused"),
-        ):
-            SVNBatchLoader.test_connection("https://svn.example.com/repos/test", "trunk", basic_creds)
-
-    def test_connection_uses_branch_url(self, basic_creds):
-        mock_conn = MagicMock()
-        mock_conn.get_latest_revnum.return_value = 1
-        with patch("codemie.datasource.loader.svn_loader._build_remote_access", return_value=mock_conn) as mock_build:
-            SVNBatchLoader.test_connection("https://svn.example.com/repos/test", "trunk", basic_creds)
-        mock_build.assert_called_once_with("https://svn.example.com/repos/test/trunk", basic_creds)
-
-
 # --- fetch_remote_stats ---
 
 
 class TestFetchRemoteStats:
     def test_returns_head_revision(self, loader):
-        mock_conn = MagicMock()
-        mock_conn.get_latest_revnum.return_value = 55
-        with patch("codemie.datasource.loader.svn_loader._build_remote_access", return_value=mock_conn):
+        mock_client = MagicMock()
+        mock_client.get_latest_revnum.return_value = 55
+        with patch("codemie.datasource.loader.svn_loader.SvnClient") as mock_cls:
+            mock_cls.svn_is_available.return_value = True
+            mock_cls.return_value = mock_client
             result = loader.fetch_remote_stats()
         assert result[SVNBatchLoader.HEAD_REVISION_KEY] == 55
 
     def test_raises_on_svn_error(self, loader):
-        mock_conn = MagicMock()
-        mock_conn.get_latest_revnum.side_effect = Exception("Connection refused")
+        mock_client = MagicMock()
+        mock_client.get_latest_revnum.side_effect = Exception("Connection refused")
         with (
-            patch("codemie.datasource.loader.svn_loader._build_remote_access", return_value=mock_conn),
+            patch("codemie.datasource.loader.svn_loader.SvnClient") as mock_cls,
             pytest.raises(Exception, match="Connection refused"),
         ):
+            mock_cls.svn_is_available.return_value = True
+            mock_cls.return_value = mock_client
             loader.fetch_remote_stats()
 
     def test_documents_count_is_zero(self, loader):
-        mock_conn = MagicMock()
-        mock_conn.get_latest_revnum.return_value = 1
-        with patch("codemie.datasource.loader.svn_loader._build_remote_access", return_value=mock_conn):
+        mock_client = MagicMock()
+        mock_client.get_latest_revnum.return_value = 1
+        with patch("codemie.datasource.loader.svn_loader.SvnClient") as mock_cls:
+            mock_cls.svn_is_available.return_value = True
+            mock_cls.return_value = mock_client
             result = loader.fetch_remote_stats()
         assert result[SVNBatchLoader.DOCUMENTS_COUNT_KEY] == 0
+
+    def test_raises_runtime_error_when_svn_not_available(self, loader):
+        with (
+            patch("codemie.datasource.loader.svn_loader.SvnClient") as mock_cls,
+            pytest.raises(SVNClientError, match="svn CLI is not installed"),
+        ):
+            mock_cls.svn_is_available.return_value = False
+            loader.fetch_remote_stats()
 
 
 # --- get_load_stats ---
@@ -385,9 +328,9 @@ class TestGetLoadStats:
         assert loader.get_load_stats()[SVNBatchLoader.SKIPPED_DOCUMENTS_KEY] == 1
 
     def test_failed_count_increments_on_fetch_error(self, loader):
-        mock_conn = MagicMock()
-        mock_conn.get_file.side_effect = Exception("SVN error")
-        loader._fetch_and_process(mock_conn, "path/file.py", 1, "file.py", "file.py")
+        mock_client = MagicMock()
+        mock_client.get_file.side_effect = Exception("SVN error")
+        loader._fetch_and_process(mock_client, "path/file.py", 1, "file.py", "file.py")
         assert loader.get_load_stats()[SVNBatchLoader.FAILED_DOCUMENTS_KEY] == 1
 
     def test_accumulates_multiple_skips_and_failures(self, loader):
@@ -395,9 +338,22 @@ class TestGetLoadStats:
             mock_cfg.max_file_size_kb = 100
             loader._should_skip("a.dat", 200)
             loader._should_skip("b.dat", 300)
-        mock_conn = MagicMock()
-        mock_conn.get_file.side_effect = Exception("err")
-        loader._fetch_and_process(mock_conn, "c.py", 1, "c.py", "c.py")
+        mock_client = MagicMock()
+        mock_client.get_file.side_effect = Exception("err")
+        loader._fetch_and_process(mock_client, "c.py", 1, "c.py", "c.py")
         stats = loader.get_load_stats()
         assert stats[SVNBatchLoader.SKIPPED_DOCUMENTS_KEY] == 2
         assert stats[SVNBatchLoader.FAILED_DOCUMENTS_KEY] == 1
+
+
+# --- lazy_load ---
+
+
+class TestLazyLoad:
+    def test_raises_runtime_error_when_svn_not_available(self, loader):
+        with (
+            patch("codemie.datasource.loader.svn_loader.SvnClient") as mock_cls,
+            pytest.raises(SVNClientError, match="svn CLI is not installed"),
+        ):
+            mock_cls.svn_is_available.return_value = False
+            list(loader.lazy_load())

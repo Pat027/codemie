@@ -12,18 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import contextlib
-import io
 import mimetypes
 import os
-import stat
-import tempfile
-from contextlib import contextmanager
 from typing import Any, Iterator
-
-import subvertpy.ra as svn_ra
-from subvertpy import NODE_DIR, NODE_FILE
-from subvertpy.ra import DIRENT_KIND, DIRENT_SIZE
 
 from langchain_core.documents import Document
 
@@ -33,7 +24,8 @@ from codemie.core.utils import check_file_type
 from codemie.datasource.datasources_config import CODE_CONFIG, SVN_CONFIG
 from codemie.datasource.loader.base_datasource_loader import BaseDatasourceLoader
 from codemie.datasource.loader.file_extraction_utils import extract_documents_from_bytes, is_binary_extractable
-from codemie.rest_api.models.settings import SVNAuthType, SVNCredentials
+from codemie.datasource.loader.svn_client import SVNClientError, SvnClient
+from codemie.rest_api.models.settings import SVNCredentials
 
 # Reuse the same MIME exclusion list as the Git loader
 from codemie.datasource.loader.git_loader import excluded_mime_types
@@ -51,63 +43,15 @@ def _build_branch_url(base_url: str, branch: str) -> str:
     return f"{base_url}/{branch}"
 
 
-@contextmanager
-def _svn_ssh_context(creds: SVNCredentials):
-    """Context manager for SSH key auth: writes key to a temp file and sets SVN_SSH."""
-    if creds.auth_type != SVNAuthType.SSH_KEY or not creds.ssh_key:
-        yield
-        return
-
-    fd, tmp_key_path = tempfile.mkstemp(prefix="svn_key_", suffix=".pem")
-    fd_open = True
-    try:
-        os.write(fd, creds.ssh_key.encode())
-        os.close(fd)
-        fd_open = False
-        os.chmod(tmp_key_path, stat.S_IRUSR | stat.S_IWUSR)
-
-        ssh_cmd = f"ssh -i {tmp_key_path} -o StrictHostKeyChecking=no -o BatchMode=yes"
-        old_svn_ssh = os.environ.get("SVN_SSH")
-        os.environ["SVN_SSH"] = ssh_cmd
-        try:
-            yield
-        finally:
-            if old_svn_ssh is None:
-                os.environ.pop("SVN_SSH", None)
-            else:
-                os.environ["SVN_SSH"] = old_svn_ssh
-    finally:
-        if fd_open:
-            os.close(fd)
-        with contextlib.suppress(OSError):
-            os.remove(tmp_key_path)
-
-
-def _ssl_server_trust_prompt(realm, failures, cert_info, may_save):
-    return failures, False
-
-
-def _build_remote_access(url: str, creds: SVNCredentials) -> svn_ra.RemoteAccess:
-    """Create an authenticated subvertpy RemoteAccess connection."""
-    providers = [svn_ra.get_ssl_server_trust_prompt_provider(_ssl_server_trust_prompt)]
-
-    if creds.auth_type == SVNAuthType.BASIC and creds.username:
-        username = creds.username
-        password = creds.password or ""
-
-        def simple_prompt(realm, uname, may_save):
-            return username, password, False
-
-        providers.append(svn_ra.get_simple_prompt_provider(simple_prompt, 0))
-
-    auth = svn_ra.Auth(providers)
-    return svn_ra.RemoteAccess(url, auth=auth)
-
-
 class SVNBatchLoader(BaseDatasourceLoader):
     FILTERED_DOCUMENTS_KEY = "filtered_documents"
     TOTAL_SIZE_KB_KEY = "total_size_kb"
     HEAD_REVISION_KEY = "head_revision"
+
+    KIND_KEY = "kind"
+    KIND_DIR = "dir"
+    KIND_FILE = "file"
+    SIZE_KEY = "size"
 
     def __init__(
         self,
@@ -141,22 +85,18 @@ class SVNBatchLoader(BaseDatasourceLoader):
 
     @classmethod
     def test_connection(cls, url: str, branch: str, creds: SVNCredentials) -> dict[str, Any]:
-        """Verify connectivity using subvertpy and return the HEAD revision."""
+        """Verify connectivity using the svn CLI and return the HEAD revision."""
+        cls._ensure_svn_available()
         branch_url = _build_branch_url(url.rstrip("/"), branch.strip("/"))
-        with _svn_ssh_context(creds):
-            conn = _build_remote_access(branch_url, creds)
-            head_revision = conn.get_latest_revnum()
+        client = SvnClient(branch_url, creds)
+        head_revision = client.get_latest_revnum()
         return {cls.HEAD_REVISION_KEY: head_revision}
 
-    # ------------------------------------------------------------------
-    # BaseDatasourceLoader interface
-    # ------------------------------------------------------------------
-
     def fetch_remote_stats(self) -> dict[str, Any]:
-        """Verify connectivity using subvertpy and return HEAD revision."""
-        with _svn_ssh_context(self._creds):
-            conn = _build_remote_access(self._branch_url, self._creds)
-            head_revision = conn.get_latest_revnum()
+        """Verify connectivity using the svn CLI and return HEAD revision."""
+        self._ensure_svn_available()
+        client = SvnClient(self._branch_url, self._creds)
+        head_revision = client.get_latest_revnum()
         logger.info(f"SVN HEAD revision for {self._branch_url}: {head_revision}")
         return {
             self.DOCUMENTS_COUNT_KEY: 0,
@@ -170,47 +110,43 @@ class SVNBatchLoader(BaseDatasourceLoader):
         }
 
     def lazy_load(self) -> Iterator[Document]:
-        """Fetch SVN repository contents in-memory and yield one Document per file."""
-        with _svn_ssh_context(self._creds):
-            conn = _build_remote_access(self._branch_url, self._creds)
-            revision = conn.get_latest_revnum()
-            yield from self._walk_remote(conn, "", revision, "")
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
+        """Fetch SVN repository contents via svn CLI and yield one Document per file."""
+        self._ensure_svn_available()
+        client = SvnClient(self._branch_url, self._creds)
+        revision = client.get_latest_revnum()
+        yield from self._walk_remote(client, "", revision, "")
 
     def _walk_remote(
         self,
-        conn: svn_ra.RemoteAccess,
+        client: SvnClient,
         remote_path: str,
         revision: int,
         rel_prefix: str,
     ) -> Iterator[Document]:
-        dirents, _fetched_rev, _props = conn.get_dir(remote_path, revision, DIRENT_KIND | DIRENT_SIZE)
+        dirents = client.get_dir(remote_path, revision)
         for name, dirent in dirents.items():
-            kind = dirent.get("kind")
+            kind = dirent.get(self.KIND_KEY)
             child_remote = f"{remote_path}/{name}" if remote_path else name
             child_rel = f"{rel_prefix}/{name}" if rel_prefix else name
-            if kind == NODE_DIR:
-                yield from self._walk_remote(conn, child_remote, revision, child_rel)
-            elif kind == NODE_FILE:
-                size_kb = (dirent.get("size") or 0) / 1024
+            if kind == self.KIND_DIR:
+                yield from self._walk_remote(client, child_remote, revision, child_rel)
+
+            elif kind == self.KIND_FILE:
+                size_kb = (dirent.get(self.SIZE_KEY) or 0) / 1024
+
                 if not self._should_skip(child_rel, size_kb):
-                    yield from self._fetch_and_process(conn, child_remote, revision, child_rel, name)
+                    yield from self._fetch_and_process(client, child_remote, revision, child_rel, name)
 
     def _fetch_and_process(
         self,
-        conn: svn_ra.RemoteAccess,
+        client: SvnClient,
         remote_path: str,
         revision: int,
         rel_path: str,
         fname: str,
     ) -> list[Document]:
         try:
-            buf = io.BytesIO()
-            conn.get_file(remote_path, buf, revision)
-            content = buf.getvalue()
+            content = client.get_file(remote_path, revision)
             return self._process_content(content, rel_path, fname)
         except Exception:
             logger.error(f"Error fetching SVN file {remote_path}", exc_info=True)
@@ -298,3 +234,9 @@ class SVNBatchLoader(BaseDatasourceLoader):
             except UnicodeDecodeError:
                 logger.error(f"latin-1 decode error for {path}", exc_info=True)
                 return None
+
+    @staticmethod
+    def _ensure_svn_available() -> None:
+        """Raise SVNClientError if the svn CLI is not available."""
+        if not SvnClient.svn_is_available():
+            raise SVNClientError("svn CLI is not installed or not on PATH")
