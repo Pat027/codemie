@@ -260,7 +260,7 @@ def apply_llm_sandbox_patch() -> None:
 
     try:
         from llm_sandbox.kubernetes import KubernetesContainerAPI
-        from llm_sandbox.core.session_base import SessionBase
+        from llm_sandbox.core.session_base import BaseSession
     except ImportError as e:
         msg = "llm-sandbox with Kubernetes support not installed. Install with: pip install 'llm-sandbox[k8s]'"
         raise ImportError(msg) from e
@@ -269,11 +269,11 @@ def apply_llm_sandbox_patch() -> None:
     if _original_copy_to_container is None:
         _original_copy_to_container = KubernetesContainerAPI.copy_to_container
     if _original_session_base_run is None:
-        _original_session_base_run = SessionBase.run
+        _original_session_base_run = BaseSession.run
 
     # Apply patch
     KubernetesContainerAPI.copy_to_container = _patched_copy_to_container
-    SessionBase.run = _patched_session_base_run
+    BaseSession.run = _patched_session_base_run
 
 
 def restore_sandbox_unpatched_methods() -> None:
@@ -290,12 +290,12 @@ def restore_sandbox_unpatched_methods() -> None:
 
     try:
         from llm_sandbox.kubernetes import KubernetesContainerAPI
-        from llm_sandbox.core.session_base import SessionBase
+        from llm_sandbox.core.session_base import BaseSession
 
         if _original_copy_to_container is not None:
             KubernetesContainerAPI.copy_to_container = _original_copy_to_container
         if _original_session_base_run is not None:
-            SessionBase.run = _original_session_base_run
+            BaseSession.run = _original_session_base_run
         logger.info("Restored original llm-sandbox methods")
     except ImportError:
         logger.warning("llm-sandbox not available, cannot restore method")
