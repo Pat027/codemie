@@ -878,6 +878,142 @@ class TestCollectProviderProjectBudgets:
 
 
 # ---------------------------------------------------------------------------
+# TestZeroSkipResetTransition
+# ---------------------------------------------------------------------------
+
+
+class TestZeroSkipResetTransition:
+    """Change B: zero-delta skip is relaxed on reset transitions."""
+
+    @pytest.fixture(autouse=True)
+    def mock_budget_repo(self):
+        with patch("codemie.service.spend_tracking.spend_collector_service.budget_repository") as mock_repo:
+            mock_repo.get_all_keyed_by_id = AsyncMock(return_value={})
+            yield mock_repo
+
+    @pytest.fixture(autouse=True)
+    def mock_provider(self):
+        with patch("codemie.service.spend_tracking.spend_collector_service.get_active_provider") as mock:
+            mock.return_value.collect_project_budget_spend = AsyncMock(return_value=[])
+            mock.return_value.collect_member_budget_spend = AsyncMock(return_value=[])
+            yield mock
+
+    @pytest.mark.asyncio
+    async def test_zero_delta_on_reset_writes_project_budget_row(
+        self, mock_session, async_session_ctx, mock_budget_repo, mock_provider
+    ):
+        """A reset transition with zero new spend writes one zero project_budget row."""
+        prev = _make_budget_prev_row("proj-reset", "budget-r1", Decimal("50.00"), "project_budget")
+        snapshot = ProjectBudgetSpendSnapshot(
+            project_name="proj-reset",
+            budget_category=BudgetCategory.CLI,
+            budget_id="budget-r1",
+            spend=Decimal("0.00"),
+        )
+
+        service = _make_service()
+        service._tracking_repository.get_latest_before_by_project_budget_ids = AsyncMock(
+            return_value={("proj-reset", "budget-r1"): prev}
+        )
+        service._tracking_repository.get_latest_before_by_member_budget_ids = AsyncMock(return_value={})
+        service._tracking_repository.insert_project_budget_entries = AsyncMock()
+        service._tracking_repository.insert_member_budget_entries = AsyncMock()
+
+        mock_budget_repo.get_all_keyed_by_id = AsyncMock(return_value={"budget-r1": _make_budget("budget-r1", "cli")})
+        mock_provider.return_value.collect_project_budget_spend = AsyncMock(return_value=[snapshot])
+
+        with patch(
+            "codemie.service.spend_tracking.spend_collector_service.get_async_session",
+            side_effect=lambda: async_session_ctx(),
+        ):
+            count = await service._collect_provider_project_budgets(
+                target_snapshot_at=datetime(2026, 7, 2, 10, 0, tzinfo=timezone.utc)
+            )
+
+        assert count == 1
+        inserted = service._tracking_repository.insert_project_budget_entries.await_args[0][1]
+        assert len(inserted) == 1
+        assert inserted[0].budget_period_spend == Decimal("0")
+        assert inserted[0].daily_spend == Decimal("0")
+        assert inserted[0].cumulative_spend == prev.cumulative_spend
+
+    @pytest.mark.asyncio
+    async def test_zero_delta_on_reset_writes_member_budget_row(
+        self, mock_session, async_session_ctx, mock_budget_repo, mock_provider
+    ):
+        """A reset transition with zero new spend writes one zero member_budget row."""
+        prev = _make_budget_prev_row("proj-reset", "budget-r2", Decimal("30.00"), "member_budget", user_id="user-x")
+        snapshot = MemberBudgetSpendSnapshot(
+            project_name="proj-reset",
+            budget_category=BudgetCategory.CLI,
+            budget_id="budget-r2",
+            user_id="user-x",
+            spend=Decimal("0.00"),
+            provider_subject_id="subj-x",
+        )
+
+        service = _make_service()
+        service._tracking_repository.get_latest_before_by_project_budget_ids = AsyncMock(return_value={})
+        service._tracking_repository.get_latest_before_by_member_budget_ids = AsyncMock(
+            return_value={("proj-reset", "budget-r2", "user-x"): prev}
+        )
+        service._tracking_repository.insert_project_budget_entries = AsyncMock()
+        service._tracking_repository.insert_member_budget_entries = AsyncMock()
+
+        mock_budget_repo.get_all_keyed_by_id = AsyncMock(return_value={"budget-r2": _make_budget("budget-r2", "cli")})
+        mock_provider.return_value.collect_member_budget_spend = AsyncMock(return_value=[snapshot])
+
+        with patch(
+            "codemie.service.spend_tracking.spend_collector_service.get_async_session",
+            side_effect=lambda: async_session_ctx(),
+        ):
+            count = await service._collect_provider_project_budgets(
+                target_snapshot_at=datetime(2026, 7, 2, 10, 0, tzinfo=timezone.utc)
+            )
+
+        assert count == 1
+        inserted = service._tracking_repository.insert_member_budget_entries.await_args[0][1]
+        assert len(inserted) == 1
+        assert inserted[0].budget_period_spend == Decimal("0")
+        assert inserted[0].cumulative_spend == prev.cumulative_spend
+
+    @pytest.mark.asyncio
+    async def test_idle_user_zero_delta_still_skipped(
+        self, mock_session, async_session_ctx, mock_budget_repo, mock_provider
+    ):
+        """Idle user (no reset, delta == 0) is still skipped — anti-bloat unchanged."""
+        prev = _make_budget_prev_row("proj-idle", "budget-i1", Decimal("10.00"), "project_budget")
+        snapshot = ProjectBudgetSpendSnapshot(
+            project_name="proj-idle",
+            budget_category=BudgetCategory.CLI,
+            budget_id="budget-i1",
+            spend=Decimal("10.00"),
+        )
+
+        service = _make_service()
+        service._tracking_repository.get_latest_before_by_project_budget_ids = AsyncMock(
+            return_value={("proj-idle", "budget-i1"): prev}
+        )
+        service._tracking_repository.get_latest_before_by_member_budget_ids = AsyncMock(return_value={})
+        service._tracking_repository.insert_project_budget_entries = AsyncMock()
+        service._tracking_repository.insert_member_budget_entries = AsyncMock()
+
+        mock_budget_repo.get_all_keyed_by_id = AsyncMock(return_value={"budget-i1": _make_budget("budget-i1", "cli")})
+        mock_provider.return_value.collect_project_budget_spend = AsyncMock(return_value=[snapshot])
+
+        with patch(
+            "codemie.service.spend_tracking.spend_collector_service.get_async_session",
+            side_effect=lambda: async_session_ctx(),
+        ):
+            count = await service._collect_provider_project_budgets(
+                target_snapshot_at=datetime(2026, 7, 2, 10, 0, tzinfo=timezone.utc)
+            )
+
+        assert count == 0
+        service._tracking_repository.insert_project_budget_entries.assert_called_once_with(mock_session, [])
+
+
+# ---------------------------------------------------------------------------
 # TestSchedulerJobRegistration
 # ---------------------------------------------------------------------------
 

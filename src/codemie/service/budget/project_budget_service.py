@@ -34,6 +34,8 @@ from codemie.repository.project_budget_repository import (
     project_budget_group_repository,
     project_member_budget_assignment_repository,
 )
+from codemie.repository.project_spend_tracking_repository import project_spend_tracking_repository
+from codemie.service.spend_tracking.spend_models import ProjectSpendTracking
 from codemie.service.budget.budget_enums import AllocationMode, BudgetCategory, BudgetType, SyncStatus
 from codemie.service.budget.budget_models import (
     Budget,
@@ -1240,6 +1242,69 @@ class ProjectBudgetService:
             f"budget_category={budget.budget_category!r} allocation_count={len(allocations)} "
             f"actor_id={actor_id!r}"
         )
+
+        try:
+            now = datetime.now(timezone.utc)
+
+            prev_project_rows = await project_spend_tracking_repository.get_latest_before_by_project_budget_ids(
+                session,
+                [(assignment.project_name, budget_id)],
+                now,
+                spend_subject_type="project_budget",
+            )
+            prev_project = prev_project_rows.get((assignment.project_name, budget_id))
+            project_markers: list[ProjectSpendTracking] = []
+            if prev_project is not None and prev_project.budget_period_spend > Decimal("0"):
+                project_markers.append(
+                    ProjectSpendTracking(
+                        id=uuid.uuid4(),
+                        project_name=assignment.project_name,
+                        budget_id=budget_id,
+                        budget_category=budget.budget_category,
+                        spend_subject_type="project_budget",
+                        spend_date=now,
+                        budget_period_spend=Decimal("0"),
+                        daily_spend=Decimal("0"),
+                        cumulative_spend=prev_project.cumulative_spend,
+                        provider_subject_id=prev_project.provider_subject_id,
+                    )
+                )
+            await project_spend_tracking_repository.insert_project_budget_entries(session, project_markers)
+
+            member_triples = [
+                (assignment.project_name, alloc.project_budget_id, alloc.user_id) for alloc in allocations
+            ]
+            prev_member_rows: dict = {}
+            if member_triples:
+                prev_member_rows = await project_spend_tracking_repository.get_latest_before_by_member_budget_ids(
+                    session, member_triples, now
+                )
+            member_markers: list[ProjectSpendTracking] = []
+            for alloc in allocations:
+                prev_member = prev_member_rows.get((assignment.project_name, alloc.project_budget_id, alloc.user_id))
+                if prev_member is not None and prev_member.budget_period_spend > Decimal("0"):
+                    member_markers.append(
+                        ProjectSpendTracking(
+                            id=uuid.uuid4(),
+                            project_name=assignment.project_name,
+                            budget_id=alloc.project_budget_id,
+                            budget_category=budget.budget_category,
+                            spend_subject_type="member_budget",
+                            user_id=alloc.user_id,
+                            spend_date=now,
+                            budget_period_spend=Decimal("0"),
+                            daily_spend=Decimal("0"),
+                            cumulative_spend=prev_member.cumulative_spend,
+                            provider_subject_id=prev_member.provider_subject_id,
+                        )
+                    )
+            await project_spend_tracking_repository.insert_member_budget_entries(session, member_markers)
+        except Exception as exc:
+            logger.warning(
+                f"budget_event=reset_marker_write_failed component=project_budget_service "
+                f"project_name={assignment.project_name!r} budget_id={budget_id!r}: {exc}"
+            )
+
         return budget
 
     async def override_member_allocation(
