@@ -162,6 +162,38 @@ def test_get_load_stats_counts_multiple_skips(sample_files_datasource_loader):
     assert sample_files_datasource_loader.get_load_stats() == {"skipped_documents": 3}
 
 
+def test_lazy_load_documents_counts_empty_extract_as_skipped(sample_files_datasource_loader):
+    from codemie_tools.base.file_object import FileObject
+    from unittest.mock import patch
+
+    file = FileObject(name="img.gif", content=b"x", owner="owner1", mime_type="image/gif")
+
+    with patch(
+        "codemie.datasource.loader.file_loader.extract_documents_from_bytes",
+        return_value=[],
+    ):
+        result = sample_files_datasource_loader._lazy_load_documents(file)
+
+    assert result == []
+    assert sample_files_datasource_loader.get_load_stats() == {"skipped_documents": 1}
+
+
+def test_lazy_load_documents_does_not_double_count_skipped_exception(sample_files_datasource_loader):
+    from codemie.datasource.exceptions import SkippedFileException
+    from codemie_tools.base.file_object import FileObject
+    from unittest.mock import patch
+
+    file = FileObject(name="big.jpg", content=b"x", owner="owner1", mime_type="image/jpeg")
+
+    with patch(
+        "codemie.datasource.loader.file_loader.extract_documents_from_bytes",
+        side_effect=SkippedFileException(file_name="big.jpg", reason="too large"),
+    ):
+        sample_files_datasource_loader._lazy_load_documents(file)
+
+    assert sample_files_datasource_loader.get_load_stats() == {"skipped_documents": 1}
+
+
 def test_lazy_load_documents_returns_empty_list_on_skip(sample_files_datasource_loader):
     from codemie.datasource.exceptions import SkippedFileException
     from codemie_tools.base.file_object import FileObject
@@ -237,3 +269,43 @@ class TestLoadDocsParallel:
         assert results == []
         mock_logger.error.assert_called_once()
         assert "bad.txt" in str(mock_logger.error.call_args)
+
+    def test_empty_result_counted_as_skipped(self):
+        """_load_docs_parallel counts empty-result files as skipped."""
+        fd1 = MagicMock()
+        fd1.name = "img.gif"
+        fd1.owner = "u1"
+
+        loader = self._make_loader([fd1])
+        file1 = FileObject(name="img.gif", content=b"x", owner="u1", mime_type="image/gif")
+        loader.file_repo.read_file = MagicMock(return_value=file1)
+
+        with patch(
+            "codemie.datasource.loader.file_loader.maybe_pool_submit",
+            return_value=[],
+        ):
+            results = list(loader._load_docs_parallel())
+
+        assert results == [[]]
+        assert loader.get_load_stats() == {"skipped_documents": 1}
+
+    def test_skipped_file_exception_counted_as_skipped(self):
+        """_load_docs_parallel counts SkippedFileException as skipped."""
+        from codemie.datasource.exceptions import SkippedFileException
+
+        fd1 = MagicMock()
+        fd1.name = "big.jpg"
+        fd1.owner = "u1"
+
+        loader = self._make_loader([fd1])
+        file1 = FileObject(name="big.jpg", content=b"x", owner="u1", mime_type="image/jpeg")
+        loader.file_repo.read_file = MagicMock(return_value=file1)
+
+        with patch(
+            "codemie.datasource.loader.file_loader.maybe_pool_submit",
+            side_effect=SkippedFileException(file_name="big.jpg", reason="too large"),
+        ):
+            results = list(loader._load_docs_parallel())
+
+        assert results == [[]]
+        assert loader.get_load_stats() == {"skipped_documents": 1}

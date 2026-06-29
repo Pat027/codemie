@@ -113,7 +113,7 @@ class FilesDatasourceLoader(BaseDatasourceLoader):
         for file_data in self.files_paths:
             file = self.file_repo.read_file(file_data.name, file_data.owner)
             try:
-                yield maybe_pool_submit(
+                docs = maybe_pool_submit(
                     extract_documents_from_bytes,
                     file.bytes_content(),
                     file.name,
@@ -122,6 +122,12 @@ class FilesDatasourceLoader(BaseDatasourceLoader):
                     self._include_email_attachments,
                     datasource_id=self.datasource_id,
                 )
+                if not docs:
+                    self._skipped_count += 1
+                yield docs
+            except SkippedFileException:
+                self._skipped_count += 1
+                yield []
             except Exception as e:
                 logger.error(f"Failed to extract documents from file {file_data.name}: {e}")
 
@@ -136,7 +142,7 @@ class FilesDatasourceLoader(BaseDatasourceLoader):
             List[Document]: A list of documents loaded from the file.
         """
         try:
-            return extract_documents_from_bytes(
+            docs = extract_documents_from_bytes(
                 file_bytes=file.bytes_content(),
                 file_name=file.name,
                 request_uuid=self.request_uuid,
@@ -144,6 +150,9 @@ class FilesDatasourceLoader(BaseDatasourceLoader):
                 include_email_attachments=self._include_email_attachments,
                 datasource_id=self.datasource_id,
             )
+            if not docs:
+                self._skipped_count += 1
+            return docs
         except SkippedFileException:
             self._skipped_count += 1
             return []
