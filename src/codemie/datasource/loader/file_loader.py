@@ -26,7 +26,7 @@ from codemie.datasource.loader.base_datasource_loader import BaseDatasourceLoade
 from codemie.datasource.loader.file_extraction_utils import extract_documents_from_bytes
 from codemie.repository.repository_factory import FileRepositoryFactory
 from codemie.configs import config
-from codemie.datasource.loader.file_processor_pool import file_process_pool
+from codemie.datasource.loader.file_processor_pool import maybe_pool_submit
 
 logger = logging.getLogger(__name__)
 
@@ -110,25 +110,20 @@ class FilesDatasourceLoader(BaseDatasourceLoader):
                 yield self._lazy_load_documents(file)
 
     def _load_docs_parallel(self):
-        futures: dict = {}
-        processor = file_process_pool.get_executor()
         for file_data in self.files_paths:
             file = self.file_repo.read_file(file_data.name, file_data.owner)
-            future = processor.submit(
-                extract_documents_from_bytes,
-                file.bytes_content(),
-                file.name,
-                self.request_uuid,
-                self._csv_separator,
-                self._include_email_attachments,
-                datasource_id=self.datasource_id,
-            )
-            futures[future] = file_data.name
-        for future, name in futures.items():
             try:
-                yield future.result()
+                yield maybe_pool_submit(
+                    extract_documents_from_bytes,
+                    file.bytes_content(),
+                    file.name,
+                    self.request_uuid,
+                    self._csv_separator,
+                    self._include_email_attachments,
+                    datasource_id=self.datasource_id,
+                )
             except Exception as e:
-                logger.error(f"Failed to extract documents from file {name}: {e}")
+                logger.error(f"Failed to extract documents from file {file_data.name}: {e}")
 
     def _lazy_load_documents(self, file: FileObject) -> List[Document]:
         """

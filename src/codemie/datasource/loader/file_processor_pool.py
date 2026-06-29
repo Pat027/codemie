@@ -17,13 +17,14 @@
 import atexit
 import contextlib
 import multiprocessing
+import threading
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from typing import Any, Callable, Optional
 
 from codemie.configs import logger
 from codemie.configs import config
 from codemie.configs.pyroscope_config import configure_pyroscope
-# from codemie.core.exceptions import CodeMieException
 
 
 class FileProcessPoolManager:
@@ -121,12 +122,27 @@ if config.ENABLE_FILE_MULTIPROCESSING:
         max_tasks_per_child=config.FILE_MULTIPROCESSING_MAX_EXECUTED_TASK_PER_WORKER,
     )
 
+_reinit_lock = threading.Lock()
+
+
+def _reinitialize_pool() -> None:
+    with _reinit_lock:
+        file_process_pool.shutdown(wait=False)
+        file_process_pool.initialize(
+            max_workers=config.FILE_DATASOURCE_MULTIPROCESSING_MAX_WORKERS,
+            max_tasks_per_child=config.FILE_MULTIPROCESSING_MAX_EXECUTED_TASK_PER_WORKER,
+            force=True,
+        )
+
 
 def maybe_pool_submit(fn: Callable, *args: Any, **kwargs: Any) -> Any:
-    if config.ENABLE_FILE_MULTIPROCESSING and file_process_pool.is_initialized():
-        try:
-            future = file_process_pool.get_executor().submit(fn, *args, **kwargs)
-            return future.result()
-        except Exception as e:
-            raise e
-    return fn(*args, **kwargs)
+    if not (config.ENABLE_FILE_MULTIPROCESSING and file_process_pool.is_initialized()):
+        return fn(*args, **kwargs)
+    try:
+        return file_process_pool.get_executor().submit(fn, *args, **kwargs).result()
+    except BrokenProcessPool:
+        logger.warning("Process pool broken; reinitializing and retrying", exc_info=True)
+        _reinitialize_pool()
+        return file_process_pool.get_executor().submit(fn, *args, **kwargs).result()
+    except Exception:
+        raise

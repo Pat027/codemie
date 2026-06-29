@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from codemie.datasource.loader.file_loader import FilesDatasourceLoader
 from codemie_tools.base.file_object import FileObject
 from langchain_core.documents import Document
@@ -176,3 +176,64 @@ def test_lazy_load_documents_returns_empty_list_on_skip(sample_files_datasource_
         result = sample_files_datasource_loader._lazy_load_documents(file)
 
     assert result == []
+
+
+class TestLoadDocsParallel:
+    def _make_loader(self, file_datas):
+        loader = FilesDatasourceLoader(
+            total_count_of_documents=len(file_datas),
+            files_paths=file_datas,
+            csv_separator=",",
+            request_uuid="uuid-1",
+        )
+        return loader
+
+    def test_calls_maybe_pool_submit_per_file(self):
+        """_load_docs_parallel routes each file through maybe_pool_submit."""
+        file1 = FileObject(name="a.txt", content=b"x", owner="u1", mime_type="txt")
+        file2 = FileObject(name="b.txt", content=b"y", owner="u1", mime_type="txt")
+
+        fd1 = MagicMock()
+        fd1.name = "a.txt"
+        fd1.owner = "u1"
+        fd2 = MagicMock()
+        fd2.name = "b.txt"
+        fd2.owner = "u1"
+
+        loader = self._make_loader([fd1, fd2])
+        loader.file_repo.read_file = MagicMock(side_effect=[file1, file2])
+
+        docs1 = [Document(page_content="a")]
+        docs2 = [Document(page_content="b")]
+
+        with patch(
+            "codemie.datasource.loader.file_loader.maybe_pool_submit",
+            side_effect=[docs1, docs2],
+        ) as mock_submit:
+            results = list(loader._load_docs_parallel())
+
+        assert mock_submit.call_count == 2
+        assert results == [docs1, docs2]
+
+    def test_error_per_file_is_logged_and_skipped(self):
+        """If maybe_pool_submit raises for a file, error is logged and loop continues."""
+        fd1 = MagicMock()
+        fd1.name = "bad.txt"
+        fd1.owner = "u1"
+
+        loader = self._make_loader([fd1])
+        file1 = FileObject(name="bad.txt", content=b"x", owner="u1", mime_type="txt")
+        loader.file_repo.read_file = MagicMock(return_value=file1)
+
+        with (
+            patch(
+                "codemie.datasource.loader.file_loader.maybe_pool_submit",
+                side_effect=RuntimeError("pool exploded"),
+            ),
+            patch("codemie.datasource.loader.file_loader.logger") as mock_logger,
+        ):
+            results = list(loader._load_docs_parallel())
+
+        assert results == []
+        mock_logger.error.assert_called_once()
+        assert "bad.txt" in str(mock_logger.error.call_args)
