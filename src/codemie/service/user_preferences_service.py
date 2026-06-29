@@ -127,6 +127,8 @@ class UserPreferencesService:
                     icon_url=a.icon_url or "",
                     name=a.name,
                     description=a.description or "",
+                    slug=a.slug,
+                    project=a.project,
                     type=a.type.value if a.type else None,
                     is_global=a.is_global,
                     shared=a.shared,

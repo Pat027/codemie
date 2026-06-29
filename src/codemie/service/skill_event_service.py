@@ -30,6 +30,7 @@ from datetime import datetime
 from typing import Optional, Tuple
 
 from codemie.configs import logger
+from codemie.core.utils import slugify
 from codemie.repository.skill_event_repository import (
     SkillEventRepository,
     SkillEventRepositoryImpl,
@@ -57,23 +58,10 @@ def to_skill_slug(name: str) -> str:
 
     Identical algorithm — keeps our canonical id in sync with whatever the
     upstream tooling stores (so cross-system reconciliation works without
-    surprise).
+    surprise). Delegates to the shared :func:`slugify` so the normalization
+    lives in a single place.
     """
-    if not name:
-        return ""
-
-    slug_parts: list[str] = []
-    previous_dash = False
-    for char in name.lower():
-        if char.isspace() or char in {"_", "-"}:
-            if not previous_dash:
-                slug_parts.append("-")
-                previous_dash = True
-        elif "a" <= char <= "z" or "0" <= char <= "9":
-            slug_parts.append(char)
-            previous_dash = False
-
-    return "".join(slug_parts).strip("-")
+    return slugify(name)
 
 
 def derive_skill_identity(

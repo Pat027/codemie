@@ -264,6 +264,8 @@ class TestGetFavoriteAssistants:
         mock_a1.id = "a1"
         mock_a1.name = "Assistant 1"
         mock_a1.description = "Desc 1"
+        mock_a1.slug = "assistant-1"
+        mock_a1.project = "proj"
         mock_a1.icon_url = "icon1.png"
         mock_a1.type = None
         mock_a1.is_global = None
@@ -277,6 +279,8 @@ class TestGetFavoriteAssistants:
         mock_a2.id = "a2"
         mock_a2.name = "Assistant 2"
         mock_a2.description = "Desc 2"
+        mock_a2.slug = "assistant-2"
+        mock_a2.project = "proj"
         mock_a2.icon_url = None
         mock_a2.type = None
         mock_a2.is_global = None
@@ -320,6 +324,8 @@ class TestGetFavoriteAssistants:
         mock_a1.id = "a1"
         mock_a1.name = "Assistant 1"
         mock_a1.description = "Desc"
+        mock_a1.slug = "assistant-1"
+        mock_a1.project = "proj"
         mock_a1.icon_url = "icon.png"
         mock_a1.type = None
         mock_a1.is_global = None

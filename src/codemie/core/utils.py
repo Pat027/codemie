@@ -667,6 +667,40 @@ def append_random_suffix(value: str) -> str:
     return f"{value}_{suffix}"
 
 
+def slugify(value: str) -> str:
+    """Normalize an arbitrary string into a URL-friendly slug.
+
+    Lowercases the value, collapses any run of whitespace/underscores/dashes
+    into a single ``-``, drops every character that is not ``a-z``/``0-9``/``-``,
+    and strips leading/trailing dashes.
+
+    The algorithm mirrors the upstream ``skills`` CLI ``toSkillSlug`` exactly so
+    slugs stay consistent across systems (see ``to_skill_slug``).
+
+    Args:
+        value: The source string (e.g. an assistant name).
+
+    Returns:
+        The slugified string, or an empty string when ``value`` is empty or
+        contains no slug-eligible characters.
+    """
+    if not value:
+        return ""
+
+    slug_parts: list[str] = []
+    previous_dash = False
+    for char in value.lower():
+        if char.isspace() or char in {"_", "-"}:
+            if not previous_dash:
+                slug_parts.append("-")
+                previous_dash = True
+        elif "a" <= char <= "z" or "0" <= char <= "9":
+            slug_parts.append(char)
+            previous_dash = False
+
+    return "".join(slug_parts).strip("-")
+
+
 def get_api_root_path() -> str:
     """
     Build the normalized API root path from configuration.

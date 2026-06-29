@@ -56,6 +56,10 @@ class FavoriteItem(BaseModel):
     icon_url: str
     name: str
     description: str
+    # Let the UI build human-readable /assistants/{project}/{slug} links (assistant
+    # favorites only; stays None for workflows/skills).
+    slug: str | None = None
+    project: str | None = None
     type: str | None = None
     is_global: bool | None = None
     shared: bool | None = None

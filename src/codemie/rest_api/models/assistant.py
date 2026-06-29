@@ -517,6 +517,8 @@ class AssistantListResponse(BaseModel):
     id: str
     name: str
     slug: Optional[str]
+    # Needed by the UI to build human-readable /assistants/{project}/{slug} URLs.
+    project: Optional[str] = None
     type: AssistantType
     description: str
     icon_url: Optional[str] = None
@@ -663,6 +665,14 @@ class AssistantBase(CommonBaseModel, Owned):
                 "(bedrock->>'bedrock_agent_id') IS NOT NULL AND "
                 "(bedrock->>'bedrock_agent_alias_id') IS NOT NULL"
             ),
+        ),
+        # Human-readable URLs: slug is unique within a project (NULL slugs are exempt)
+        Index(
+            'uq_assistants_project_slug',
+            'project',
+            'slug',
+            unique=True,
+            postgresql_where=text("slug IS NOT NULL"),
         ),
         # Bedrock AgentCore Runtime indexes
         Index(
@@ -836,9 +846,17 @@ class AssistantBase(CommonBaseModel, Owned):
 
     def _check_slug_uniqueness(self) -> Optional[str]:
         if self.slug:
-            assistant_by_slug = self.get_by_fields({"slug.keyword": self.slug})
+            # Without a project the check can't be scoped (the partial unique index is
+            # on (project, slug)), so there's nothing to enforce — treat as valid.
+            if not self.project:
+                return ""
+            # Per-project, not global: the same slug may exist in different projects.
+            assistant_by_slug = self.get_by_fields({"slug.keyword": self.slug, "project.keyword": self.project})
             if assistant_by_slug and assistant_by_slug.id != self.id:
-                return 'Slug should be unique'
+                return (
+                    f"Slug '{self.slug}' is already used by another assistant in this project. "
+                    "Slugs must be unique within a project — please choose a different slug."
+                )
             return ""
         return None
 

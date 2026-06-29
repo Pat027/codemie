@@ -1155,6 +1155,7 @@ description: {skill.description}
                 id=assistant.id,
                 name=assistant.name,
                 slug=assistant.slug,
+                project=assistant.project,
                 type=assistant.type,
                 description=assistant.description,
                 icon_url=assistant.icon_url,

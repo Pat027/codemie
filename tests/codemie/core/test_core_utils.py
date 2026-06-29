@@ -33,6 +33,7 @@ from codemie.core.utils import (
     append_random_suffix,
     generate_zip,
     sanitize_string,
+    slugify,
     unpack_json_strings,
 )
 from codemie.configs.llm_config import CostConfig
@@ -470,6 +471,31 @@ def test_append_random_suffix_empty_base():
     result = append_random_suffix("")
     assert result.startswith("_")
     assert len(result) == 16
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ("Knowledge Companion", "knowledge-companion"),
+        ("  Team_SKILL: v2!!  ", "team-skill-v2"),
+        ("Already-Slugged", "already-slugged"),
+        ("Multiple   spaces__and--dashes", "multiple-spaces-and-dashes"),
+        ("MiXeD CaSe 123", "mixed-case-123"),
+        ("", ""),
+        ("***", ""),
+        ("Только кириллица", ""),
+    ],
+)
+def test_slugify(value, expected):
+    assert slugify(value) == expected
+
+
+def test_slugify_matches_to_skill_slug():
+    # to_skill_slug now delegates to slugify; keep them in lock-step.
+    from codemie.service.skill_event_service import to_skill_slug
+
+    for value in ["  Team_SKILL: v2!!  ", "Knowledge Companion", ""]:
+        assert slugify(value) == to_skill_slug(value)
 
 
 class TestFormatFileSize:

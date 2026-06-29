@@ -832,3 +832,39 @@ class TestSelectAgentClassForWorkflow:
 
         # Assert
         assert result == AIToolsAgent
+
+
+class TestEnsureUniqueSlug:
+    """Test cases for AssistantService.ensure_unique_slug (per-project uniqueness)."""
+
+    @patch('codemie.service.assistant_service.Assistant.get_by_fields')
+    def test_returns_slug_unchanged_when_free_in_project(self, mock_get_by_fields):
+        # No existing assistant with this slug in the project.
+        mock_get_by_fields.return_value = None
+
+        result = AssistantService.ensure_unique_slug("knowledge-companion", "scor-gits")
+
+        assert result == "knowledge-companion"
+        # Collision check must be scoped to the project, not global.
+        mock_get_by_fields.assert_called_once_with(
+            {"slug.keyword": "knowledge-companion", "project.keyword": "scor-gits"}
+        )
+
+    @patch('codemie.service.assistant_service.Assistant.get_by_fields')
+    def test_appends_suffix_when_slug_taken_in_project(self, mock_get_by_fields):
+        # Slug already exists within the same project -> a suffixed variant is returned.
+        mock_get_by_fields.return_value = Mock(spec=Assistant)
+
+        result = AssistantService.ensure_unique_slug("knowledge-companion", "scor-gits")
+
+        assert result != "knowledge-companion"
+        assert result.startswith("knowledge-companion_")
+
+    @patch('codemie.service.assistant_service.Assistant.get_by_fields')
+    def test_no_project_skips_collision_check(self, mock_get_by_fields):
+        # Without a project there is no per-project scope: return the slug untouched
+        # and never query (a None/empty project filter has undefined semantics).
+        for empty_project in (None, ""):
+            result = AssistantService.ensure_unique_slug("knowledge-companion", empty_project)
+            assert result == "knowledge-companion"
+        mock_get_by_fields.assert_not_called()

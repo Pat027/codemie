@@ -863,6 +863,57 @@ def test_validate_assistant_ids_unchanged_skips_validation():
         mock_get_changed.assert_called_once()
 
 
+class TestCheckSlugUniqueness:
+    """Tests for Assistant._check_slug_uniqueness (per-project slug validation)."""
+
+    def _make_assistant(self, slug, project="demo", assistant_id="current-id"):
+        assistant = Assistant(
+            name="Test Assistant",
+            description="Test Description",
+            system_prompt="Test Prompt",
+            project=project,
+            slug=slug,
+        )
+        assistant.id = assistant_id
+        return assistant
+
+    def test_returns_none_when_slug_is_empty(self):
+        # NULL/empty slugs are exempt from the partial unique index.
+        assistant = self._make_assistant(slug=None)
+        assert assistant._check_slug_uniqueness() is None
+
+    @patch.object(Assistant, 'get_by_fields')
+    def test_returns_empty_when_slug_free_in_project(self, mock_get_by_fields):
+        mock_get_by_fields.return_value = None
+        assistant = self._make_assistant(slug="my-slug")
+
+        assert assistant._check_slug_uniqueness() == ""
+        # Collision check must be scoped to the project, not global.
+        mock_get_by_fields.assert_called_once_with({"slug.keyword": "my-slug", "project.keyword": "demo"})
+
+    @patch.object(Assistant, 'get_by_fields')
+    def test_returns_clear_error_when_slug_taken_in_project(self, mock_get_by_fields):
+        # A different assistant in the same project already owns this slug.
+        other = self._make_assistant(slug="my-slug", assistant_id="other-id")
+        mock_get_by_fields.return_value = other
+        assistant = self._make_assistant(slug="my-slug")
+
+        error = assistant._check_slug_uniqueness()
+
+        assert error
+        # Error must be user-facing: include the slug and mention per-project uniqueness.
+        assert "my-slug" in error
+        assert "unique within" in error
+
+    @patch.object(Assistant, 'get_by_fields')
+    def test_returns_empty_when_match_is_same_assistant(self, mock_get_by_fields):
+        # Re-saving the same assistant (same id) is not a collision.
+        assistant = self._make_assistant(slug="my-slug", assistant_id="current-id")
+        mock_get_by_fields.return_value = assistant
+
+        assert assistant._check_slug_uniqueness() == ""
+
+
 class TestAssistantListResponse:
     """Tests for AssistantListResponse model to ensure it includes required fields for minimal response."""
 

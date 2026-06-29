@@ -15,6 +15,7 @@
 from unittest.mock import patch, MagicMock
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from codemie.core.exceptions import ExtendedHTTPException, MCPAuthenticationRequiredException
 from codemie.core.models import AssistantChatRequest
@@ -482,3 +483,149 @@ class TestPrepareAssistantForExecutionWithSkills:
         # Verify execution_assistant is a different object from both
         assert execution_assistant is not original_assistant
         assert execution_assistant is not versioned_assistant
+
+
+class TestCreateAssistantSlug:
+    """Tests for slug resolution in create_assistant.
+
+    Rule: a client-provided slug is kept verbatim and validated (a per-project
+    collision must surface a clear error instead of being silently suffixed); a
+    slug the client did NOT provide is derived from the name and auto-resolved
+    against collisions with a random suffix.
+    """
+
+    def _build_request(self, slug=None, name="Knowledge Companion"):
+        from codemie.rest_api.models.assistant import AssistantRequest
+
+        return AssistantRequest(
+            name=name,
+            description="Test Description",
+            system_prompt="Test Prompt",
+            project="demo",
+            slug=slug,
+            llm_model_type="gpt-4o",
+            skip_integration_validation=True,
+        )
+
+    def _patches(self):
+        """Patch the create_assistant collaborators around the slug branch."""
+        return [
+            patch("codemie.rest_api.routers.assistant.project_access_check"),
+            patch("codemie.rest_api.routers.assistant.ensure_application_exists"),
+            patch(
+                "codemie.service.assistant.assistant_version_service.AssistantVersionService" ".create_initial_version"
+            ),
+            patch("codemie.rest_api.routers.assistant.GuardrailService" ".sync_guardrail_assignments_for_entity"),
+            patch("codemie.rest_api.routers.assistant._track_mcp_usage_on_create"),
+            patch("codemie.rest_api.routers.assistant._track_assistant_management_metric"),
+        ]
+
+    def _run_create(self, request, save_side_effect=None):
+        """Invoke create_assistant with collaborators patched; capture the saved slug."""
+        from codemie.rest_api.routers.assistant import create_assistant
+
+        captured = {}
+
+        def fake_save(self, *args, **kwargs):
+            captured["slug"] = self.slug
+            if save_side_effect:
+                save_side_effect(self)
+            return MagicMock()
+
+        user = MagicMock(spec=User)
+        user.id = "user-123"
+        user.username = "testuser"
+        user.name = "Test User"
+
+        ctx_managers = self._patches()
+        started = [cm.start() for cm in ctx_managers]
+        try:
+            with patch.object(Assistant, "save", new=fake_save):
+                response = create_assistant(request, user=user)
+            return response, captured, started
+        finally:
+            for cm in ctx_managers:
+                cm.stop()
+
+    @patch("codemie.rest_api.routers.assistant.AssistantService.ensure_unique_slug")
+    def test_provided_slug_kept_and_not_suffixed(self, mock_ensure):
+        # Client supplied a slug -> kept verbatim, ensure_unique_slug must NOT run.
+        request = self._build_request(slug="my-custom-slug")
+
+        _response, captured, _ = self._run_create(request)
+
+        assert captured["slug"] == "my-custom-slug"
+        mock_ensure.assert_not_called()
+
+    def test_provided_slug_collision_surfaces_error(self):
+        # A provided slug that collides must fail validation (clear 400) — never suffixed.
+        request = self._build_request(slug="taken-slug")
+
+        def raise_validation(_assistant):
+            raise ValueError(
+                "Slug 'taken-slug' is already used by another assistant in this project. "
+                "Slugs must be unique within a project — please choose a different slug."
+            )
+
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            self._run_create(request, save_side_effect=raise_validation)
+
+        assert exc_info.value.code == 400
+        assert "taken-slug" in exc_info.value.details
+
+    @patch("codemie.rest_api.routers.assistant.AssistantService.ensure_unique_slug")
+    def test_derived_slug_auto_suffixed_on_collision(self, mock_ensure):
+        # No slug provided -> derived from name and run through ensure_unique_slug.
+        mock_ensure.return_value = "knowledge-companion_ab12"
+        request = self._build_request(slug=None, name="Knowledge Companion")
+
+        _response, captured, _ = self._run_create(request)
+
+        mock_ensure.assert_called_once_with("knowledge-companion", "demo")
+        assert captured["slug"] == "knowledge-companion_ab12"
+
+    @patch("codemie.rest_api.routers.assistant.AssistantService.ensure_unique_slug")
+    def test_no_slug_and_empty_derivation_yields_null(self, mock_ensure):
+        # Name without slug-eligible characters -> slug stays NULL, ensure_unique_slug skipped.
+        request = self._build_request(slug=None, name="???")
+
+        _response, captured, _ = self._run_create(request)
+
+        assert captured["slug"] is None
+        mock_ensure.assert_not_called()
+
+    def test_concurrent_create_integrity_error_maps_to_400(self):
+        # Concurrency backstop: two simultaneous creates can both pass the ES uniqueness read and
+        # collide only at COMMIT on uq_assistants_project_slug. That IntegrityError must surface as
+        # a clean 400 (with the slug), not a raw psycopg2 constraint error.
+        request = self._build_request(slug="taken-slug")
+
+        def raise_integrity(_assistant):
+            raise IntegrityError(
+                "INSERT INTO assistants ...",
+                {},
+                Exception('duplicate key value violates unique constraint "uq_assistants_project_slug"'),
+            )
+
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            self._run_create(request, save_side_effect=raise_integrity)
+
+        assert exc_info.value.code == 400
+        assert "taken-slug" in exc_info.value.details
+
+    def test_unrelated_integrity_error_is_not_swallowed_as_slug_conflict(self):
+        # A different constraint violation must keep the generic save-error handling, not be
+        # mislabeled as a slug conflict.
+        request = self._build_request(slug="ok-slug")
+
+        def raise_other_integrity(_assistant):
+            raise IntegrityError(
+                "INSERT INTO assistants ...",
+                {},
+                Exception('violates unique constraint "uq_assistants_bedrock_settings"'),
+            )
+
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            self._run_create(request, save_side_effect=raise_other_integrity)
+
+        assert "Slug conflict" not in (exc_info.value.message or "")

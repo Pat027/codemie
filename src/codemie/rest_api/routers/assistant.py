@@ -15,9 +15,10 @@
 import json
 import asyncio
 from time import time
-from typing import Annotated, Literal, Optional, List
+from typing import Annotated, Any, Literal, Optional, List
 
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select, and_
 
 from codemie_tools.base.models import ToolKit
@@ -31,6 +32,7 @@ from codemie.configs.logger import set_logging_info
 from codemie.core.ability import Ability, Action
 from codemie.core.errors import ErrorDetailLevel
 from codemie.core.exceptions import ExtendedHTTPException, MCPAuthenticationRequiredException
+from codemie.core.utils import slugify
 from codemie.core.models import (
     BaseResponse,
     BaseModelResponse,
@@ -279,11 +281,20 @@ def get_assistant_by_id(request: Request, assistant_id: str, user: User = Depend
     response_model=Assistant,
     response_model_by_alias=True,
 )
-def get_assistant_by_slug(request: Request, assistant_slug: str, user: User = Depends(authenticate)):
+def get_assistant_by_slug(
+    request: Request,
+    assistant_slug: str,
+    user: User = Depends(authenticate),
+    project: Optional[str] = Query(
+        None,
+        description="Project name to scope the slug lookup. Slugs are unique per-project; "
+        "pass it to resolve human-readable {project}/{slug} URLs deterministically.",
+    ),
+):
     """
     Returns saved assistant by slug
     """
-    assistant = _get_assistant_by_slug_or_raise(assistant_slug)
+    assistant = _get_assistant_by_slug_or_raise(assistant_slug, project)
     _check_user_can_access_assistant(user, assistant, "view", Action.READ)
     _validate_remote_entities_and_raise(assistant)
 
@@ -667,9 +678,15 @@ def create_assistant(request: AssistantRequest, user: User = Depends(authenticat
     # Encrypt sensitive prompt variable default values before saving
     _encrypt_sensitive_prompt_variables(assistant)
 
-    # Ensure slug is unique before saving
-    if assistant.slug:
-        assistant.slug = AssistantService.ensure_unique_slug(assistant.slug)
+    # Slug powers /assistants/{project}/{slug} URLs. A client-supplied slug is kept as-is and
+    # validated by _check_slug_uniqueness() on save (per-project collision -> clear error, not a
+    # silent suffix). When none is supplied, derive it from the name and auto-suffix collisions;
+    # an empty derivation stays NULL (exempt from the partial unique index).
+    if not request.slug:
+        derived_slug = slugify(assistant.name) or None
+        if derived_slug:
+            derived_slug = AssistantService.ensure_unique_slug(derived_slug, assistant.project)
+        assistant.slug = derived_slug
 
     if request.agent_card and request.agent_card.bedrock_agentcore:
         assistant.origin = AssistantOrigin.BEDROCK_AGENT_CORE
@@ -695,6 +712,25 @@ def create_assistant(request: AssistantRequest, user: User = Depends(authenticat
 
         _track_mcp_usage_on_create(assistant.mcp_servers)
         _track_assistant_management_metric("create_assistant", assistant, user, True)
+    except IntegrityError as e:
+        # Concurrency backstop. _check_slug_uniqueness() (in validate_fields) reads ES in a
+        # separate transaction, so two simultaneous creates can both pass it and collide only at
+        # COMMIT on uq_assistants_project_slug. Map that to the same friendly 400 the serial path
+        # returns instead of leaking the raw psycopg2 constraint error; other integrity errors keep
+        # the previous generic handling.
+        _track_assistant_management_metric(
+            "create_assistant", assistant, user, False, {"error_class": e.__class__.__name__}
+        )
+        if "uq_assistants_project_slug" in str(getattr(e, "orig", e)):
+            raise ExtendedHTTPException(
+                code=status.HTTP_400_BAD_REQUEST,
+                message="Slug conflict",
+                details=(
+                    f"Slug '{assistant.slug}' is already used by another assistant in this project. "
+                    "Slugs must be unique within a project — please choose a different slug."
+                ),
+            ) from e
+        _raise_assistant_operation_error("save", e)
     except Exception as e:
         _track_assistant_management_metric(
             "create_assistant", assistant, user, False, {"error_class": e.__class__.__name__}
@@ -979,6 +1015,11 @@ def ask_assistant_by_slug(
         ErrorDetailLevel.STANDARD,
         description="Error verbosity level: minimal (code+message), standard (+http_status), full (+all details)",
     ),
+    project: Optional[str] = Query(
+        None,
+        description="Project name to scope the slug lookup. Slugs are unique per-project; "
+        "pass it to resolve human-readable {project}/{slug} URLs deterministically.",
+    ),
 ):
     """
     Ask questions for assistant by assistant slug.
@@ -991,7 +1032,7 @@ def ask_assistant_by_slug(
     - error_detail_level: Controls error verbosity (minimal/standard/full)
     """
     # Get master assistant record
-    assistant = _get_assistant_by_slug_or_raise(assistant_slug)
+    assistant = _get_assistant_by_slug_or_raise(assistant_slug, project)
 
     # Prepare assistant for execution (current config or specific version)
     execution_assistant = _prepare_assistant_for_execution(assistant, request)
@@ -1806,16 +1847,27 @@ def _get_assistant_by_id_or_raise(assistant_id: str) -> Assistant:
     return assistant
 
 
-def _get_assistant_by_slug_or_raise(assistant_slug: str) -> Assistant:
+def _get_assistant_by_slug_or_raise(assistant_slug: str, project: Optional[str] = None) -> Assistant:
     """
-    Retrieves an assistant by slug or raises a standardized exception if not found
+    Retrieves an assistant by slug or raises a standardized exception if not found.
+
+    When ``project`` is provided the lookup is scoped to that project, which makes
+    the result deterministic given that slugs are unique per-project (this backs
+    the human-readable ``{project}/{slug}`` URLs). Without ``project`` the first
+    matching assistant is returned, preserving backward compatibility with older
+    links that carried only the slug.
     """
-    assistant = Assistant.get_by_fields({"slug.keyword": assistant_slug})
+    fields: dict[str, Any] = {"slug.keyword": assistant_slug}
+    if project:
+        fields["project.keyword"] = project
+
+    assistant = Assistant.get_by_fields(fields)
     if not assistant:
+        scope_hint = f" in project '{project}'" if project else ""
         raise ExtendedHTTPException(
             code=status.HTTP_404_NOT_FOUND,
             message="Assistant not found",
-            details=f"No assistant found with the slug '{assistant_slug}'.",
+            details=f"No assistant found with the slug '{assistant_slug}'{scope_hint}.",
             help="Please check the assistant slug and ensure it is correct. ",
         )
     return assistant

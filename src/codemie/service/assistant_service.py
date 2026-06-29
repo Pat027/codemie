@@ -110,11 +110,21 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
         return ToolsInfoService.get_tools_info(show_for_ui=show_for_ui, user=user)
 
     @staticmethod
-    def ensure_unique_slug(slug: str) -> str:
-        """Return a unique slug for an assistant, generating a suffixed variant if the slug is already taken."""
-        if Assistant.get_by_fields({"slug.keyword": slug}):
-            unique_slug = append_random_suffix(slug)
-            return unique_slug
+    def ensure_unique_slug(slug: str, project: str) -> str:
+        """Return a slug unique within the given project.
+
+        Slugs are unique per-project (two assistants in different projects may
+        share a slug), so the collision check is scoped to ``project``. When the
+        slug is already taken inside that project, a random suffix is appended.
+        """
+        # No project -> no per-project scope (the partial unique index on
+        # (project, slug) doesn't constrain NULL-project rows either), leave as-is.
+        if not project:
+            return slug
+        if Assistant.get_by_fields({"slug.keyword": slug, "project.keyword": project}):
+            # Single suffix attempt; the partial unique index is the final backstop
+            # should the suffixed slug also collide (astronomically unlikely).
+            return append_random_suffix(slug)
         return slug
 
     @staticmethod
