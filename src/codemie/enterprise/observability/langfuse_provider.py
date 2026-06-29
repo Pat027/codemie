@@ -24,7 +24,29 @@ from typing import Any
 
 from codemie.configs import logger
 
-from .base import ObservabilityProvider
+from .base import ObservabilityProvider, ObservationLevel
+
+
+def _drop_none(values: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of ``values`` without keys whose value is ``None``."""
+    return {k: v for k, v in values.items() if v is not None}
+
+
+def _safe_call(fn: Any, kwargs: dict[str, Any], action: str) -> None:
+    """Invoke ``fn(**kwargs)`` if there is anything to send; log on failure."""
+    if not kwargs:
+        return
+    try:
+        fn(**kwargs)
+    except Exception as e:
+        logger.warning(f"Failed to {action}: {e}")
+
+
+def _client_or_none() -> Any | None:
+    """Return the active Langfuse client, or ``None`` when Langfuse is disabled."""
+    from codemie.enterprise.langfuse import get_langfuse_client_or_none
+
+    return get_langfuse_client_or_none()
 
 
 class LangfuseObservabilityProvider(ObservabilityProvider):
@@ -46,6 +68,29 @@ class LangfuseObservabilityProvider(ObservabilityProvider):
 
         self._service = initialize_langfuse_from_config()
         set_global_langfuse_service(self._service)
+        self._register_control_flow_exceptions()
+
+    @staticmethod
+    def _register_control_flow_exceptions() -> None:
+        """Mark stream-cancellation exceptions as DEFAULT level in Langfuse traces.
+
+        ``stream.close()`` on a LangChain / LangGraph stream injects ``GeneratorExit``
+        into the chain, which fires ``on_chain_error`` and — by default — marks the
+        observation level as ERROR. This causes both legitimate user disconnects and
+        request-hedging fast-path wins to surface as red traces in the UI.
+
+        Langfuse's callback handler already has an extensible escape hatch for this
+        (``CONTROL_FLOW_EXCEPTION_TYPES``); we register ``GeneratorExit`` so that
+        any planned cancellation is reported at DEFAULT level instead of ERROR.
+        Tags / status_message added by callers (e.g. ``mark_trace_cancelled_by_hedging``)
+        still differentiate hedging cancellation from other cancellations.
+        """
+        try:
+            from langfuse.langchain.CallbackHandler import CONTROL_FLOW_EXCEPTION_TYPES
+
+            CONTROL_FLOW_EXCEPTION_TYPES.add(GeneratorExit)
+        except Exception as e:
+            logger.warning(f"Could not register GeneratorExit as Langfuse control-flow exception: {e}")
 
     def shutdown(self) -> None:
         """Flush pending traces, release resources, and clear the global singleton."""
@@ -120,10 +165,11 @@ class LangfuseObservabilityProvider(ObservabilityProvider):
     def should_trace_request(self, request_metadata: dict | None) -> bool:
         """Determine if tracing should be enabled for this request.
 
-        Priority: HAS_LANGFUSE + is_langfuse_enabled() > request metadata override.
-        Also checks that the callback handler is available (service initialized).
+        Order of evaluation: a per-request metadata override (if set) wins over
+        the global ``is_langfuse_enabled()`` gate. Also requires that the
+        callback handler is available (service initialized) — otherwise tracing
+        would silently no-op even if requested.
         """
-        from codemie.configs import config
         from codemie.enterprise.langfuse import get_langfuse_callback_handler, is_langfuse_enabled
 
         if not is_langfuse_enabled():
@@ -149,7 +195,8 @@ class LangfuseObservabilityProvider(ObservabilityProvider):
             logger.warning("Unsupported type for traces_enabled metadata key; defaulting to False.")
             return False
 
-        return config.LANGFUSE_TRACES
+        # is_langfuse_enabled() already gated on config.LANGFUSE_TRACES.
+        return True
 
     def get_trace_context(
         self,
@@ -178,3 +225,107 @@ class LangfuseObservabilityProvider(ObservabilityProvider):
         from codemie.enterprise.loader import observe
 
         return observe
+
+    def update_current_observation(
+        self,
+        *,
+        name: str | None = None,
+        input: Any | None = None,
+        output: Any | None = None,
+        metadata: dict[str, Any] | None = None,
+        level: ObservationLevel | None = None,
+        status_message: str | None = None,
+    ) -> None:
+        """Update the active observation (span) on the v4 Langfuse SDK."""
+        client = _client_or_none()
+        if client is None:
+            return
+        _safe_call(
+            client.update_current_span,
+            _drop_none(
+                {
+                    "name": name,
+                    "input": input,
+                    "output": output,
+                    "metadata": metadata,
+                    "level": level,
+                    "status_message": status_message,
+                }
+            ),
+            "update current Langfuse observation",
+        )
+
+    def update_current_trace(
+        self,
+        *,
+        name: str | None = None,
+        input: Any | None = None,
+        output: Any | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        """Update the active trace on the v4 Langfuse SDK.
+
+        Input/output go via ``set_current_trace_io``; tags, metadata, user_id,
+        and session_id are not exposed as a public method, so they are written
+        directly to the active OTEL span using Langfuse's documented attribute names.
+        """
+        client = _client_or_none()
+        if client is None:
+            return
+        _safe_call(
+            client.set_current_trace_io,
+            _drop_none({"input": input, "output": output}),
+            "set Langfuse trace I/O",
+        )
+        self._set_trace_tags_metadata_via_otel(
+            name=name, tags=tags, metadata=metadata, user_id=user_id, session_id=session_id
+        )
+
+    @staticmethod
+    def _set_trace_tags_metadata_via_otel(
+        *,
+        name: str | None,
+        tags: list[str] | None,
+        metadata: dict[str, Any] | None,
+        user_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        """Write name / tags / metadata / user / session as OTEL attributes on the
+        active span using Langfuse's documented attribute keys (matches
+        ``propagate_attributes``).
+
+        The ``user.id`` and ``session.id`` attribute names match
+        ``LangfuseOtelSpanAttributes.TRACE_USER_ID`` /
+        ``LangfuseOtelSpanAttributes.TRACE_SESSION_ID``.
+        """
+        if name is None and tags is None and metadata is None and user_id is None and session_id is None:
+            return
+        try:
+            import json as _json
+
+            from opentelemetry import trace as _otel_trace
+
+            span = _otel_trace.get_current_span()
+            if not span.is_recording():
+                return
+            if name is not None:
+                # Langfuse maps `langfuse.trace.name` to the trace's display name.
+                span.set_attribute("langfuse.trace.name", name)
+            if tags is not None:
+                span.set_attribute("langfuse.trace.tags", list(tags))
+            if user_id is not None:
+                span.set_attribute("user.id", user_id)
+            if session_id is not None:
+                span.set_attribute("session.id", session_id)
+            if metadata is not None:
+                for k, v in metadata.items():
+                    attr_key = f"langfuse.trace.metadata.{k}"
+                    if isinstance(v, (str, int, float, bool)):
+                        span.set_attribute(attr_key, v)
+                    else:
+                        span.set_attribute(attr_key, _json.dumps(v, default=str))
+        except Exception as e:
+            logger.warning(f"Failed to set Langfuse trace name/tags/metadata via OTEL: {e}")

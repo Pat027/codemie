@@ -468,6 +468,17 @@ def get_tools(request: Request, user: User = Depends(authenticate)):
 
 
 @router.get(
+    "/assistants/hedgeable_tools",
+    status_code=status.HTTP_200_OK,
+    response_model=list[ToolKit],
+    response_model_by_alias=True,
+)
+def get_hedgeable_tools(request: Request, user: User = Depends(authenticate)):
+    """Returns tools that support request hedging (extend CodeMieHedgeTool)."""
+    return ToolsInfoService.get_hedgeable_tools_info(user=user)
+
+
+@router.get(
     "/assistants/plugin_tools",
     status_code=status.HTTP_200_OK,
     response_model=list[ToolKit],

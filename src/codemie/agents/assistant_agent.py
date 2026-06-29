@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import json
 import traceback
 from time import time
@@ -53,6 +54,7 @@ from codemie.agents.tools.agent import WorkspaceAwareAgent
 from codemie.agents.utils import (
     render_text_description_and_args,
     get_run_config,
+    mark_trace_cancelled_by_hedging,
 )
 from codemie.chains.base import StreamedGenerationResult, GenerationResult
 from codemie.chains.pure_chat_chain import PureChatChain
@@ -71,7 +73,7 @@ from codemie.core.constants import (
 from codemie.core.dependecies import get_llm_by_credentials
 from codemie.core.exceptions import MCPAuthenticationRequiredException
 from codemie.core.models import ChatMessage, AssistantChatRequest
-from codemie.core.thread import ThreadedGenerator
+from codemie.core.thread import HedgingCancellationReason, ThreadedGenerator
 from codemie.core.utils import extract_text_from_llm_output, calculate_tokens
 from codemie_tools.base.file_object import FileObject
 from codemie.agents.aws_bedrock.agentcore_executor import AgentCoreExecutor
@@ -472,8 +474,6 @@ class AIToolsAgent(WorkspaceAwareAgent):
         if self.is_pure_chain():
             response = self.agent_executor.invoke(inputs)
         else:
-            import contextlib
-
             run_config = self._get_run_config()
             trace_ctx = run_config.pop("_trace_ctx", contextlib.nullcontext())
             with trace_ctx:
@@ -499,6 +499,7 @@ class AIToolsAgent(WorkspaceAwareAgent):
             additional_tags=tags,
             assistant_version=assistant_version,
             trace_context=self.trace_context,  # Pass trace context for workflow unification
+            request_uuid=self.request_uuid,
         )
 
     @staticmethod
@@ -624,19 +625,33 @@ class AIToolsAgent(WorkspaceAwareAgent):
                 self.thread_generator.close()
 
     def _agent_streaming(self, chunks_collector: List[str]):
-        import contextlib
-
         run_config = self._get_run_config()
         trace_ctx = run_config.pop("_trace_ctx", contextlib.nullcontext())
         with trace_ctx:
             stream = self.agent_executor.stream(self._get_inputs(), config=run_config)
             for chunk in stream:
                 if self.thread_generator.is_closed():
-                    logger.info(f"Stopping agent {self.agent_name}, user is disconnected")
+                    self._stop_closed_stream(stream)
                     break
                 if not chunk:
                     continue
                 AIToolsAgent.process_chunk(chunk, chunks_collector)
+
+    def _stop_closed_stream(self, stream):
+        cancelled_by_hedging = self.thread_generator.cancellation_reason == HedgingCancellationReason.FAST_PATH_WON
+        # Demote BEFORE stream.close(): once closed, LangChain's spans
+        # are ended and OTEL current-span becomes a NoOp — set_current_trace_io
+        # and span.set_attribute would silently no-op. GeneratorExit is
+        # registered as a Langfuse control-flow exception so on_chain_error
+        # uses DEFAULT level and won't overwrite our earlier DEFAULT update.
+        if cancelled_by_hedging:
+            mark_trace_cancelled_by_hedging(
+                user_input=self.request.text,
+                request_uuid=self.thread_generator.request_uuid,
+            )
+        stream.close()
+        reason = "cancelled by hedging fast-path" if cancelled_by_hedging else "user is disconnected"
+        logger.info(f"Stopping agent {self.agent_name}, {reason}")
 
     @staticmethod
     def process_chunk(chunk, chunks_collector: List[str]):

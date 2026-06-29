@@ -119,7 +119,7 @@ class TestPhoenixProviderIsEnabled:
 
     def test_returns_false_when_service_not_initialized_flag(self, provider):
         mock_service = MagicMock()
-        mock_service._initialized = False
+        mock_service.tracer_provider = None
         provider._service = mock_service
         assert provider.is_enabled() is False
 

@@ -135,6 +135,7 @@ class ToolSet(str, Enum):
     ITSM = "IT Service Management"
     REPORT_PORTAL = "Report Portal"
     PLATFORM_TOOLS = "Platform Tools"
+    HEDGING = "Request Hedging"
 
 
 class Tool(BaseModel):

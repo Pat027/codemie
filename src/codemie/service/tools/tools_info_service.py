@@ -15,7 +15,7 @@
 from copy import deepcopy
 from typing import List, Dict, Optional
 
-from codemie_tools.base.models import ToolSet
+from codemie_tools.base.models import ToolKit, ToolSet
 from codemie_tools.base import toolkit_provider
 from codemie_tools.data_management.file_system.toolkit import FileSystemToolkit
 from codemie_tools.data_management.workspace.toolkit import AgentWorkspaceToolkit
@@ -46,8 +46,7 @@ class ToolsInfoService:
 
         # Create a copy of cached toolkits
         toolkits = deepcopy(list(toolkit_provider.get_available_toolkits_info()))
-        logger.info(f"Get available toolkits. Autodiscovered toolkits: {len(toolkits)}")
-        logger.debug(f"Get available toolkits. Autodiscovered toolkits: {toolkits}")
+        logger.debug(f"Autodiscovered toolkits: {toolkits}")
 
         # Import plugin UI info using enterprise dependency pattern
         from codemie.enterprise.plugin import get_plugin_toolkit_ui_info
@@ -68,21 +67,31 @@ class ToolsInfoService:
             standard_toolkits.append(plugin_toolkit_ui.model_dump())
 
         toolkits.extend(standard_toolkits)
-        logger.info(f"Get available toolkits. Append standard toolkits: {len(toolkits)}")
 
         ToolsInfoService._merge_code_toolkit(toolkits, show_for_ui)
 
         if not show_for_ui:
             toolkits.append(KBToolkit.get_tools_ui_info())
-            logger.info(f"Get available toolkits. Append KB toolkit: {len(toolkits)}")
 
         toolkits.append(PlatformToolkit.get_tools_ui_info(show_admin_tools))
-        logger.info(f"Get available toolkits. Append Platform toolkit: {len(toolkits)}")
 
         toolkits.extend(ToolsInfoService._provider_toolkits_info())
-        logger.info(f"Get available toolkits. Append provider toolkits: {len(toolkits)}")
+        logger.debug(f"Total toolkits assembled: {len(toolkits)}")
 
         return toolkits
+
+    @classmethod
+    def get_hedgeable_tools_info(cls, user: User) -> list[ToolKit]:
+        """
+        Get hedgeable toolkits for request-hedging support.
+
+        Hedgeable toolkits are global — no per-user filtering is applied.
+
+        Args:
+            user: Current user. Retained for interface consistency with other
+                get_*_info methods and to support future ACL-based filtering if needed.
+        """
+        return list(toolkit_provider.get_hedgeable_toolkits())
 
     @staticmethod
     def _merge_code_toolkit(toolkits: List[Dict], show_for_ui: bool) -> None:

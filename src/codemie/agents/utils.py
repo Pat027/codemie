@@ -85,6 +85,49 @@ class LangfuseLiteLLMErrorOutputCallback(BaseCallbackHandler):
 error_output_callback = LangfuseLiteLLMErrorOutputCallback()
 
 
+_HEDGING_CANCELLED_OUTPUT = "[Request Hedging]: FAST_PATH_WON"
+
+
+def mark_trace_cancelled_by_hedging(user_input: Any = None, request_uuid: Optional[str] = None) -> None:
+    """Demote the active observability trace from ERROR to a normal 'cancelled' state.
+
+    Called from the agent thread when its stream is being cancelled because the
+    hedging fast path won. Must run BEFORE the underlying stream is closed — at
+    that point the provider trace context is still active and the chain span has
+    not yet been marked ERROR by ``on_chain_error`` (Langfuse) or otherwise.
+
+    ``user_input`` (optional) is propagated to the trace so the cancelled run is
+    not blank — typically the originating user query string.
+
+    Provider-agnostic: routes through the active ``ObservabilityProvider`` so
+    both Langfuse and Phoenix backends receive the same demotion semantics
+    (Langfuse: observation level DEFAULT; Phoenix: OTEL Status OK).
+    """
+    provider = get_observability_provider()
+    if not provider.is_enabled():
+        return
+    try:
+        provider.update_current_observation(
+            input=user_input,
+            level="DEFAULT",
+            status_message="cancelled_by_hedging",
+            output=_HEDGING_CANCELLED_OUTPUT,
+        )
+        from codemie.core.thread import HedgingCancellationReason  # local import avoids circular dependency
+
+        trace_metadata: Dict[str, Any] = {"cancellation_reason": HedgingCancellationReason.FAST_PATH_WON}
+        if request_uuid:
+            trace_metadata["request_uuid"] = request_uuid
+        provider.update_current_trace(
+            input=user_input,
+            tags=["hedging_role:agent", "hedging_winner:fast_path", "cancelled_by_hedging"],
+            metadata=trace_metadata,
+            output=_HEDGING_CANCELLED_OUTPUT,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to demote trace on hedging cancellation: {e}")
+
+
 class ThreadSafeStdout:
     """
     In some places of code we need to supress stdout because it produces garbage in logs.
@@ -323,6 +366,7 @@ def get_run_config(
     additional_tags: Optional[List[str]] = None,
     assistant_version: Optional[int] = None,
     trace_context=None,  # For workflow trace unification
+    request_uuid: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Creates a run configuration based on the request, model, and agent name.
@@ -385,6 +429,10 @@ def get_run_config(
         tags=tags,
         trace_context=trace_context,
     )
+    # Mirror the fast-path trace's request_uuid on the agent trace so both paths
+    # are correlatable in the observability UI under the same key.
+    if request_uuid:
+        metadata["request_uuid"] = request_uuid
 
     # Log trace type
     if trace_context and hasattr(trace_context, "workflow_id"):

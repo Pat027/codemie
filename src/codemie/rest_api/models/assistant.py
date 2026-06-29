@@ -42,6 +42,7 @@ from codemie.rest_api.models.base import (
     PydanticListType,
 )
 from codemie.rest_api.models.guardrail import GuardrailAssignmentItem, GuardrailEntity
+from codemie.rest_api.models.hedging import HedgingConfig
 from codemie.rest_api.models.index import IndexInfo, IndexTypeByContextTypeMapping
 from codemie.rest_api.models.settings import SettingsBase
 from codemie.rest_api.models.standard import PostResponse
@@ -311,6 +312,7 @@ class AssistantRequest(BaseModel):
         default=None, gt=0, description="Max token size limit for tool outputs for this assistant"
     )
     smart_tool_selection_enabled: Optional[bool] = False
+    hedging_config: Optional[HedgingConfig] = None
     mcp_servers: list[MCPServerDetails] = Field(default_factory=list)
     assistant_ids: list[str] = Field(default_factory=list)
     skill_ids: list[str] = Field(default_factory=list)
@@ -596,6 +598,7 @@ class AssistantBase(CommonBaseModel, Owned):
     top_p: Optional[float] = None
     tools_tokens_size_limit: Optional[int] = None
     smart_tool_selection_enabled: Optional[bool] = False
+    hedging_config: Optional[HedgingConfig] = SQLField(default=None, sa_column=Column(PydanticType(HedgingConfig)))
     context: list[Context] = SQLField(default_factory=list, sa_column=Column(PydanticListType(Context)))
     user_abilities: Optional[list[Action]] = SQLField(default=None, sa_column=Column(JSONB))
     mcp_servers: list[MCPServerDetails] = SQLField(

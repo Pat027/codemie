@@ -436,13 +436,13 @@ def test_serialize_regular_float_unchanged():
 def test_serialize_bool_true_unchanged():
     result = serialize_state(True)
     assert result is True
-    assert type(result) is bool
+    assert isinstance(result, bool)
 
 
 def test_serialize_bool_false_unchanged():
     result = serialize_state(False)
     assert result is False
-    assert type(result) is bool
+    assert isinstance(result, bool)
 
 
 def test_serialize_nan_in_dict_returns_none():

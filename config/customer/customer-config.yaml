@@ -180,6 +180,12 @@ components:
       name: "Favorites Page"
       description: "Enable the dedicated Favorites page and its navigation link"
 
+  - id: "features:requestHedging"
+    settings:
+      enabled: false
+      name: "Request Hedging"
+      description: "Race a fast-path tool against the agent pipeline to reduce response latency"
+
   - id: "features:personalLiteLLMIntegrations"
     settings:
       enabled: false

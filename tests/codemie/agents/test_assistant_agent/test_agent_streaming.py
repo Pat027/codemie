@@ -42,6 +42,7 @@ def test_setup():
     # Create mock ThreadedGenerator
     mock_thread_generator = MagicMock(spec=ThreadedGenerator)
     mock_thread_generator.is_closed.return_value = False
+    mock_thread_generator.cancellation_reason = None
 
     # Setup agent with mocks and patch init_agent to avoid initialization
     with patch.object(AIToolsAgent, 'init_agent', return_value=MagicMock()):
@@ -176,9 +177,14 @@ def test_agent_streaming_breaks_when_generator_closed(mock_logger, test_setup):
     # Second check: True - break before processing second chunk
     mock_thread_generator.is_closed.side_effect = [False, True]
 
-    # Set up agent_executor to return multiple chunks
+    # Set up agent_executor to return multiple chunks. The stream must be a
+    # closeable iterator: when the generator reports closed, _agent_streaming
+    # calls stream.close() before breaking. A plain list has no close(), so use
+    # a MagicMock that iterates over the chunks and exposes a no-op close().
+    mock_stream = MagicMock()
+    mock_stream.__iter__.return_value = iter([action_chunk, output_chunk])
     agent.agent_executor = MagicMock()
-    agent.agent_executor.stream.return_value = [action_chunk, output_chunk]
+    agent.agent_executor.stream.return_value = mock_stream
     agent._get_inputs = MagicMock(return_value={"input": "test input"})
 
     chunks_collector = []

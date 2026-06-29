@@ -20,7 +20,7 @@ import pkgutil
 from typing import List, Type, Set, TypeVar, Optional
 
 from codemie_tools.base.base_toolkit import BaseToolkit, DiscoverableToolkit
-from codemie_tools.base.models import Tool, CodeMieToolConfig
+from codemie_tools.base.models import Tool, ToolKit, CodeMieToolConfig
 
 T = TypeVar('T')
 
@@ -241,6 +241,8 @@ def get_tools() -> List[Tool]:
     toolkits = get_available_toolkits()
 
     for toolkit_class in toolkits:
+        if getattr(toolkit_class, "is_hedging_only", False):
+            continue
         try:
             # Get the toolkit definition which contains the tools
             toolkit_definition = toolkit_class.get_definition()
@@ -254,6 +256,39 @@ def get_tools() -> List[Tool]:
             logger.error(f"Error getting tools from {toolkit_class.__name__}: {e}")
 
     return all_tools
+
+
+@functools.lru_cache(maxsize=None)
+def get_hedgeable_toolkits() -> List[ToolKit]:
+    """
+    Get toolkits containing hedgeable tools, with tool_class references preserved.
+
+    Unlike get_available_toolkits_info(), this returns live ToolKit objects (not dicts)
+    so that tool_class is accessible for hedging feature discovery and instantiation.
+
+    To register a new hedgeable tool, create a DiscoverableToolkit subclass anywhere
+    under codemie_tools/ that includes Tool entries with tool_class set to a
+    CodeMieHedgeTool subclass. It will be auto-discovered with no extra registration.
+
+    Returns:
+        List of ToolKit objects that contain at least one tool with is_hedgeable=True on tool_class
+    """
+    hedgeable_toolkits = []
+    for toolkit_class in get_available_toolkits():
+        try:
+            definition = toolkit_class.get_definition()
+            if definition is None:
+                continue
+            hedgeable_tools = [
+                t for t in definition.tools if t.tool_class is not None and getattr(t.tool_class, "is_hedgeable", False)
+            ]
+            if hedgeable_tools:
+                hedgeable_toolkits.append(definition.model_copy(deep=True, update={"tools": hedgeable_tools}))
+        except Exception as e:
+            logger.error(f"Error getting hedgeable tools from {toolkit_class.__name__}: {e}")
+
+    logger.info(f"Found {len(hedgeable_toolkits)} toolkits with hedgeable tools")
+    return hedgeable_toolkits
 
 
 @functools.lru_cache(maxsize=128)
@@ -296,6 +331,8 @@ def get_available_toolkits_info() -> List[dict]:
     toolkits = get_available_toolkits()
 
     for toolkit_class in toolkits:
+        if getattr(toolkit_class, "is_hedging_only", False):
+            continue
         try:
             # Get the toolkit definition
             toolkit_definition = toolkit_class.get_definition()

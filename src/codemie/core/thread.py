@@ -27,15 +27,22 @@ class MessageQueue(Protocol):
 
     def send(self, data: Any): ...
 
-    def close(self): ...
+    def close(self, error: BaseException | None = None, *, reason: str | None = None): ...
 
     def is_closed(self): ...
+
+
+class HedgingCancellationReason:
+    """Known cancellation reasons for ThreadedGenerator.close()."""
+
+    FAST_PATH_WON = "hedging_fast_path_won"
 
 
 class ThreadedGenerator:
     def __init__(self, request_uuid: str = '', user_id: str = '', conversation_id: str = ''):
         self.queue = queue.Queue()
         self.closed = False
+        self.cancellation_reason: str | None = None
         self.request_uuid = request_uuid
         self.user_id = user_id
         self.conversation_id = conversation_id
@@ -105,10 +112,18 @@ class ThreadedGenerator:
                 else:
                     self.thoughts.append(thought_object)
 
-    def close(self, error: BaseException | None = None):
+    def get(self, timeout: float | None = None) -> Any:
+        """Get the next item, re-raising any queued exception; raises queue.Empty on timeout."""
+        item = self.queue.get(timeout=timeout) if timeout is not None else self.queue.get()
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+    def close(self, error: BaseException | None = None, *, reason: str | None = None):
         if self.closed:
             return
         self.closed = True
+        self.cancellation_reason = reason
         if error is not None:
             self.queue.put(error)
         self.queue.put(StopIteration)

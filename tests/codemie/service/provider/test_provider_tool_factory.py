@@ -99,13 +99,21 @@ def test_build_creates_tool_class_incorrect_auth_type(tool_factory, tool_params)
         klass(**tool_params).execute()
 
 
+@patch("codemie.service.provider.provider_tool_factory.get_traceparent_headers", return_value={})
 @patch("codemie.clients.provider.client.Configuration", return_value=MagicMock())
 @patch("codemie.clients.provider.client.ApiClient", return_value=MagicMock())
 @patch("codemie.clients.provider.client.ToolInvocationManagementApi.invoke_tool")
 @patch("codemie.service.provider.datasource.ProviderDatasourceSchemaService.schema_for")
 @patch("codemie.service.provider.util.decrypt_datasource_provider_fields", return_value={})
 def test_built_execute_method(
-    _mock_decrypt, _mock_schema_get, mock_invoke_tool, mock_api_client, mock_api_config, tool_factory, tool_params
+    _mock_decrypt,
+    _mock_schema_get,
+    mock_invoke_tool,
+    mock_api_client,
+    mock_api_config,
+    _mock_tp,
+    tool_factory,
+    tool_params,
 ):
     mock_result = MagicMock()
     mock_result.result = "test_result"
@@ -118,22 +126,19 @@ def test_built_execute_method(
 
     assert result == "test_result"
     # invoke_headers defaults to None — no propagation, x_correlation_id falls back to request_uuid
-    mock_invoke_tool.assert_called_once_with(
-        toolkit_name='test',
-        tool_name='test',
-        x_correlation_id="tool_request",
-        tool_invocation_request={
-            "user_id": "tool_user",
-            "project_id": "tool_project",
-            "configuration": {"configuration_type": "tool_invocation", "parameters": {}},
-            "parameters": {
-                "param1": "test_param1",
-                "param2": 42,
-            },
-            "async": False,
-        },
-        _headers=None,
-    )
+    mock_invoke_tool.assert_called_once()
+    call_kwargs = mock_invoke_tool.call_args.kwargs
+    assert call_kwargs["toolkit_name"] == "test"
+    assert call_kwargs["tool_name"] == "test"
+    assert call_kwargs["x_correlation_id"] == "tool_request"
+    assert call_kwargs["_headers"] is None
+    # tool_invocation_request is a typed ToolInvocationRequest (built by ProviderToolFactory.invoke)
+    invocation_request = call_kwargs["tool_invocation_request"]
+    assert invocation_request.user_id == "tool_user"
+    assert invocation_request.project_id == "tool_project"
+    assert invocation_request.configuration.configuration_type == "tool_invocation"
+    assert invocation_request.configuration.parameters == {}
+    assert invocation_request.parameters == {"param1": "test_param1", "param2": 42}
 
 
 @patch("codemie.clients.provider.client.Configuration", return_value=MagicMock())
@@ -174,13 +179,14 @@ def test_build_sanitizes_datasource_tool_name(provider_config, toolkit_config, t
     assert tool_class.name == "my_repo_name_test"
 
 
+@patch("codemie.service.provider.provider_tool_factory.get_traceparent_headers", return_value={})
 @patch("codemie.clients.provider.client.Configuration", return_value=MagicMock())
 @patch("codemie.clients.provider.client.ApiClient", return_value=MagicMock())
 @patch("codemie.clients.provider.client.ToolInvocationManagementApi.invoke_tool")
 @patch("codemie.service.provider.datasource.ProviderDatasourceSchemaService.schema_for")
 @patch("codemie.service.provider.util.decrypt_datasource_provider_fields", return_value={})
 def test_execute_propagates_invoke_headers(
-    _mock_decrypt, _mock_schema, mock_invoke_tool, mock_api_client, mock_api_config, tool_factory
+    _mock_decrypt, _mock_schema, mock_invoke_tool, mock_api_client, mock_api_config, _mock_tp, tool_factory
 ):
     """Pre-built invoke_headers dict is passed as _headers; X-Correlation-ID used for x_correlation_id."""
     mock_result = MagicMock()
@@ -214,13 +220,14 @@ def test_execute_propagates_invoke_headers(
     assert call_kwargs["x_correlation_id"] == "corr-xyz"
 
 
+@patch("codemie.service.provider.provider_tool_factory.get_traceparent_headers", return_value={})
 @patch("codemie.clients.provider.client.Configuration", return_value=MagicMock())
 @patch("codemie.clients.provider.client.ApiClient", return_value=MagicMock())
 @patch("codemie.clients.provider.client.ToolInvocationManagementApi.invoke_tool")
 @patch("codemie.service.provider.datasource.ProviderDatasourceSchemaService.schema_for")
 @patch("codemie.service.provider.util.decrypt_datasource_provider_fields", return_value={})
 def test_execute_no_headers_when_invoke_headers_none(
-    _mock_decrypt, _mock_schema, mock_invoke_tool, mock_api_client, mock_api_config, tool_factory, tool_params
+    _mock_decrypt, _mock_schema, mock_invoke_tool, mock_api_client, mock_api_config, _mock_tp, tool_factory, tool_params
 ):
     """When invoke_headers is None, _headers=None and request_uuid used for correlation."""
     mock_result = MagicMock()
@@ -235,3 +242,166 @@ def test_execute_no_headers_when_invoke_headers_none(
     call_kwargs = mock_invoke_tool.call_args.kwargs
     assert call_kwargs["_headers"] is None
     assert call_kwargs["x_correlation_id"] == "tool_request"  # falls back to request_uuid
+
+
+# ---------------------------------------------------------------------------
+# invoke() — the reusable entry point shared by the agent tool path and the
+# request-hedging fast path.
+# ---------------------------------------------------------------------------
+
+
+@patch("codemie.service.provider.provider_tool_factory.get_traceparent_headers", return_value={})
+@patch("codemie.clients.provider.client.Configuration", return_value=MagicMock())
+@patch("codemie.clients.provider.client.ApiClient", return_value=MagicMock())
+@patch("codemie.clients.provider.client.ToolInvocationManagementApi.invoke_tool")
+def test_invoke_returns_full_response_and_builds_request(
+    mock_invoke_tool, _mock_api_client, _mock_api_config, _mock_tp, tool_factory
+):
+    """invoke() returns the raw ToolInvocationResponse (not response.result) and forwards headers."""
+    response = MagicMock()
+    mock_invoke_tool.return_value = response
+
+    headers = {"X-Correlation-Id": "corr-1", "X-Tenant-ID": "t"}
+    result = tool_factory.invoke(
+        user=User(id="u1", auth_token="tok"),
+        project_id="proj-1",
+        request_uuid="req-1",
+        params={"q": "hello"},
+        headers=headers,
+    )
+
+    assert result is response
+    call_kwargs = mock_invoke_tool.call_args.kwargs
+    assert call_kwargs["toolkit_name"] == "test"
+    assert call_kwargs["tool_name"] == "test"
+    # correlation id taken from the header, not the request_uuid fallback
+    assert call_kwargs["x_correlation_id"] == "corr-1"
+    assert call_kwargs["_headers"] == headers
+    invocation_request = call_kwargs["tool_invocation_request"]
+    assert invocation_request.user_id == "u1"
+    assert invocation_request.project_id == "proj-1"
+    assert invocation_request.parameters == {"q": "hello"}
+
+
+@patch("codemie.service.provider.provider_tool_factory.get_traceparent_headers", return_value={})
+@patch("codemie.clients.provider.client.Configuration", return_value=MagicMock())
+@patch("codemie.clients.provider.client.ApiClient", return_value=MagicMock())
+@patch("codemie.clients.provider.client.ToolInvocationManagementApi.invoke_tool")
+def test_invoke_empty_headers_passed_as_none_and_uses_request_uuid(
+    mock_invoke_tool, _mock_api_client, _mock_api_config, _mock_tp, tool_factory
+):
+    mock_invoke_tool.return_value = MagicMock()
+
+    tool_factory.invoke(
+        user=User(id="u1", auth_token="tok"),
+        project_id="proj-1",
+        request_uuid="req-1",
+        params={},
+        headers={},
+    )
+
+    call_kwargs = mock_invoke_tool.call_args.kwargs
+    assert call_kwargs["_headers"] is None
+    assert call_kwargs["x_correlation_id"] == "req-1"
+
+
+def test_resolve_configuration_params_returns_empty_without_datasource(tool_factory):
+    assert tool_factory._resolve_configuration_params(None) == {}
+
+
+@patch("codemie.service.provider.provider_tool_factory.ProviderDatasourceSchemaService")
+@patch(
+    "codemie.service.provider.provider_tool_factory.decrypt_datasource_provider_fields",
+    return_value={"decrypted": "value"},
+)
+def test_resolve_configuration_params_decrypts_datasource(mock_decrypt, mock_schema_service, tool_factory):
+    datasource = MagicMock()
+    datasource.provider_fields.base_params = {"raw": "enc"}
+    schema = MagicMock()
+    schema.base_schema = {"raw": {"type": "string"}}
+    mock_schema_service.return_value.schema_for.return_value = schema
+
+    result = tool_factory._resolve_configuration_params(datasource)
+
+    assert result == {"decrypted": "value"}
+    mock_schema_service.assert_called_once_with(provider=tool_factory.provider_config)
+    mock_schema_service.return_value.schema_for.assert_called_once_with(toolkit_id="test_id")
+    mock_decrypt.assert_called_once_with(params={"raw": "enc"}, schema={"raw": {"type": "string"}})
+
+
+@patch("codemie.clients.provider.client.Configuration", return_value=MagicMock())
+@patch("codemie.clients.provider.client.ApiClient", return_value=MagicMock())
+@patch("codemie.clients.provider.client.ToolInvocationManagementApi.invoke_tool")
+def test_invoke_uses_explicit_datasource_for_configuration_params(
+    mock_invoke_tool, _mock_api_client, _mock_api_config, tool_factory
+):
+    """A datasource passed to invoke() overrides self.datasource for config resolution."""
+    mock_invoke_tool.return_value = MagicMock()
+    datasource = MagicMock(spec=ProviderIndexInfo)
+
+    with patch.object(tool_factory, "_resolve_configuration_params", return_value={"cfg": "1"}) as mock_resolve:
+        tool_factory.invoke(
+            user=User(id="u1", auth_token="tok"),
+            project_id="proj-1",
+            request_uuid="req-1",
+            params={},
+            datasource=datasource,
+        )
+
+    mock_resolve.assert_called_once_with(datasource)
+    invocation_request = mock_invoke_tool.call_args.kwargs["tool_invocation_request"]
+    assert invocation_request.configuration.parameters == {"cfg": "1"}
+
+
+@patch("codemie.clients.provider.client.Configuration", return_value=MagicMock())
+@patch("codemie.clients.provider.client.ApiClient", return_value=MagicMock())
+@patch("codemie.clients.provider.client.ToolInvocationManagementApi.invoke_tool")
+@patch(
+    "codemie.service.provider.provider_tool_factory.get_traceparent_headers",
+    return_value={"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"},
+)
+def test_invoke_injects_traceparent_into_headers(
+    _mock_tp, mock_invoke_tool, _mock_api_client, _mock_api_config, tool_factory
+):
+    """traceparent from get_traceparent_headers() is merged into the outbound _headers."""
+    mock_invoke_tool.return_value = MagicMock()
+
+    tool_factory.invoke(
+        user=User(id="u1", auth_token="tok"),
+        project_id="proj-1",
+        request_uuid="req-1",
+        params={},
+        headers={"X-Correlation-Id": "corr-1"},
+    )
+
+    call_kwargs = mock_invoke_tool.call_args.kwargs
+    assert call_kwargs["_headers"]["traceparent"] == "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+    assert call_kwargs["_headers"]["X-Correlation-Id"] == "corr-1"
+    assert call_kwargs["x_correlation_id"] == "corr-1"
+
+
+@patch("codemie.clients.provider.client.Configuration", return_value=MagicMock())
+@patch("codemie.clients.provider.client.ApiClient", return_value=MagicMock())
+@patch("codemie.clients.provider.client.ToolInvocationManagementApi.invoke_tool")
+@patch(
+    "codemie.service.provider.provider_tool_factory.get_traceparent_headers",
+    return_value={},
+)
+def test_invoke_proceeds_without_traceparent_when_no_span(
+    _mock_tp, mock_invoke_tool, _mock_api_client, _mock_api_config, tool_factory
+):
+    """When get_traceparent_headers() returns {}, the DSP call still succeeds."""
+    mock_invoke_tool.return_value = MagicMock()
+
+    tool_factory.invoke(
+        user=User(id="u1", auth_token="tok"),
+        project_id="proj-1",
+        request_uuid="req-1",
+        params={},
+        headers={"X-Correlation-Id": "corr-1"},
+    )
+
+    call_kwargs = mock_invoke_tool.call_args.kwargs
+    assert "traceparent" not in call_kwargs["_headers"]
+    assert call_kwargs["_headers"]["X-Correlation-Id"] == "corr-1"
+    assert call_kwargs["x_correlation_id"] == "corr-1"

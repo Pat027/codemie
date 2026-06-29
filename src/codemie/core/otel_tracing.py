@@ -27,7 +27,7 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from typing import Any
 
-from opentelemetry import context, trace
+from opentelemetry import context, propagate, trace
 from opentelemetry.context import Context
 from opentelemetry.context import Token
 from opentelemetry.trace import SpanKind, StatusCode
@@ -206,3 +206,16 @@ def attach_otel_context(ctx: Context) -> Token:
 def detach_otel_context(token: Token) -> None:
     """Detach a context that was attached with ``attach_otel_context``."""
     context.detach(token)
+
+
+def get_traceparent_headers() -> dict[str, str]:
+    """Return W3C traceparent headers for the current active OTEL span.
+
+    Returns {} when no valid span is active (OTEL disabled, no active trace). Never raises.
+    """
+    try:
+        carrier: dict[str, str] = {}
+        propagate.inject(carrier)
+        return carrier
+    except Exception:
+        return {}

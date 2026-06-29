@@ -59,10 +59,10 @@ class DualQueue:
         self.streaming_queue.send(data)  # For client streaming
         self.persistence_queue.send(data)  # For database saving
 
-    def close(self) -> None:
-        """Close both queues."""
-        self.streaming_queue.close()
-        self.persistence_queue.close()
+    def close(self, error: BaseException | None = None, *, reason: str | None = None) -> None:
+        """Close both queues, forwarding ``error`` and ``reason`` to both."""
+        self.streaming_queue.close(error, reason=reason)
+        self.persistence_queue.close(reason=reason)
 
     def is_closed(self) -> bool:
         """

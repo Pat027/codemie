@@ -29,6 +29,7 @@ from starlette.responses import StreamingResponse
 
 from codemie.chains.base import Thought, StreamedGenerationResult
 from codemie.configs import config, logger
+from codemie.configs.customer_config import customer_config
 from codemie.core.ability import Ability, Action
 from codemie.core.dependecies import set_disable_prompt_cache
 from codemie.core.errors import ErrorDetailLevel
@@ -1039,4 +1040,8 @@ def get_request_handler(assistant: Assistant, user: User, request_uuid: str) -> 
     """Factory function to create appropriate handler based on assistant type"""
     if assistant.type == AssistantType.A2A:
         return A2AAssistantHandler(assistant, user, request_uuid)
+    if assistant.hedging_config is not None and customer_config.is_feature_enabled("requestHedging"):
+        from codemie.rest_api.handlers.hedged_handler import HedgedAssistantHandler
+
+        return HedgedAssistantHandler(assistant, user, request_uuid)
     return StandardAssistantHandler(assistant, user, request_uuid)

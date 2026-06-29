@@ -74,7 +74,7 @@ from codemie.agents.callbacks.agent_streaming_callback import AgentStreamingCall
 from codemie.agents.callbacks.tool_error_capture_callback import ToolErrorCaptureCallback
 from codemie.agents.smart_react_agent import create_smart_react_agent
 from codemie.agents.utils import suppress_stdout, validate_json_schema
-from codemie.agents.utils import get_run_config, ExecutionErrorEnum
+from codemie.agents.utils import get_run_config, ExecutionErrorEnum, mark_trace_cancelled_by_hedging
 from codemie.chains.base import StreamedGenerationResult, GenerationResult, ThoughtAuthorType
 from codemie.chains.pure_chat_chain import PureChatChain
 from codemie.configs import Config, config
@@ -93,7 +93,7 @@ from codemie.core.constants import (
 )
 from codemie.core.dependecies import get_llm_by_credentials
 from codemie.core.models import ChatMessage, AssistantChatRequest
-from codemie.core.thread import ThreadedGenerator
+from codemie.core.thread import HedgingCancellationReason, ThreadedGenerator
 from codemie.core.utils import extract_text_from_llm_output, calculate_tokens, unpack_json_strings
 from codemie.rest_api.models.assistant import AssistantBase
 from codemie.rest_api.security.user import User
@@ -853,6 +853,21 @@ class LangGraphAgent(WorkspaceAwareAgent):
                     current_message, last_message, has_structured_response
                 )
                 if self._should_stop_streaming():
+                    cancelled_by_hedging = (
+                        self.thread_generator.cancellation_reason == HedgingCancellationReason.FAST_PATH_WON
+                    )
+                    # Demote BEFORE stream.close(): once the stream is closed, the
+                    # LangChain callback has ended its spans and the OTEL current-span
+                    # falls back to a non-recording NoOp span — at which point neither
+                    # set_current_trace_io nor span.set_attribute land on any real span.
+                    # GeneratorExit is registered as a Langfuse control-flow exception,
+                    # so on_chain_error writes DEFAULT level (not ERROR), meaning our
+                    # earlier DEFAULT-level update is not overwritten.
+                    if cancelled_by_hedging:
+                        mark_trace_cancelled_by_hedging(
+                            user_input=self.request.text,
+                            request_uuid=self.request_uuid,
+                        )
                     stream.close()
                     break
 
@@ -860,9 +875,12 @@ class LangGraphAgent(WorkspaceAwareAgent):
         return last_message
 
     def _should_stop_streaming(self) -> bool:
-        """Check if streaming should stop due to user disconnection."""
+        """Check if streaming should stop due to user disconnection or hedging cancellation."""
         if self.thread_generator and self.thread_generator.is_closed():
-            logger.info(f"Stopping agent {self.agent_name}, user is disconnected")
+            if self.thread_generator.cancellation_reason == HedgingCancellationReason.FAST_PATH_WON:
+                logger.debug(f"Stopping agent {self.agent_name}, fast-path won the race")
+            else:
+                logger.info(f"Stopping agent {self.agent_name}, user is disconnected")
             return True
         return False
 
@@ -979,6 +997,7 @@ class LangGraphAgent(WorkspaceAwareAgent):
             additional_tags=tags,
             assistant_version=assistant_version,
             trace_context=self.trace_context,
+            request_uuid=self.request_uuid,
         )
 
         # Add LangGraph specific configuration

@@ -24,15 +24,42 @@ is installed.
 
 from __future__ import annotations
 
+import contextlib
+import json
 from typing import TYPE_CHECKING, Any
 
 from codemie.configs import config, logger
 
-from .base import ObservabilityProvider
+from .base import ObservabilityProvider, ObservationLevel
 
 if TYPE_CHECKING:
     from codemie_enterprise.phoenix.models import PhoenixTraceContext
     from codemie_enterprise.phoenix.service import PhoenixService
+
+
+def _current_recording_span() -> Any | None:
+    """Return the active OTEL span if it is recording, else ``None``."""
+    from opentelemetry import trace as otel_trace
+
+    span = otel_trace.get_current_span()
+    return span if span.is_recording() else None
+
+
+def _set_span_name(span: Any, name: str) -> None:
+    """Best-effort rename of an active span; never raises."""
+    with contextlib.suppress(Exception):
+        span.update_name(name)
+
+
+def _set_json_attr(span: Any, key: str, value: Any) -> None:
+    """Set a span attribute whose value is JSON-encoded (``default=str`` fallback)."""
+    span.set_attribute(key, json.dumps(value, default=str))
+
+
+def _set_metadata_attrs(span: Any, prefix: str, metadata: dict[str, Any]) -> None:
+    """Flatten ``metadata`` into ``{prefix}.metadata.{key}`` string attributes."""
+    for key, value in metadata.items():
+        span.set_attribute(f"{prefix}.metadata.{key}", str(value))
 
 
 class PhoenixObservabilityProvider(ObservabilityProvider):
@@ -75,7 +102,7 @@ class PhoenixObservabilityProvider(ObservabilityProvider):
 
     def is_enabled(self) -> bool:
         """True if Phoenix was configured and initialized successfully."""
-        return self._config.enabled and self._service is not None and self._service._initialized
+        return self._config.enabled and self._service is not None and self._service.tracer_provider is not None
 
     # ── Tracing surface ────────────────────────────────────────────────────────
 
@@ -86,9 +113,9 @@ class PhoenixObservabilityProvider(ObservabilityProvider):
     def create_workflow_trace_context(
         self,
         execution_id: str,
-        workflow_id: str | None = None,
-        workflow_name: str | None = None,
-        user_id: str | None = None,
+        workflow_id: str | None,
+        workflow_name: str,
+        user_id: str | None,
         session_id: str | None = None,
         tags: list[str] | None = None,
     ) -> PhoenixTraceContext | None:
@@ -122,8 +149,8 @@ class PhoenixObservabilityProvider(ObservabilityProvider):
     def build_agent_metadata(
         self,
         agent_name: str,
-        conversation_id: str | None = None,
-        llm_model: str | None = None,
+        conversation_id: str,
+        llm_model: str,
         username: str | None = None,
         tags: list[str] | None = None,
         trace_context: Any | None = None,
@@ -165,3 +192,86 @@ class PhoenixObservabilityProvider(ObservabilityProvider):
             is_enabled=self.is_enabled,
             tracer_provider=self._service.tracer_provider if self._service else None,
         )
+
+    def update_current_observation(
+        self,
+        *,
+        name: str | None = None,
+        input: Any | None = None,
+        output: Any | None = None,
+        metadata: dict[str, Any] | None = None,
+        level: ObservationLevel | None = None,
+        status_message: str | None = None,
+    ) -> None:
+        """Annotate the currently recording OTEL span with attributes / status.
+
+        Phoenix has no separate observation/trace distinction — the active OTEL
+        span is updated. ``level`` maps to OTEL ``Status``: ``DEFAULT`` clears
+        any prior error state to OK; ``ERROR`` records ERROR with the message.
+        """
+        if not self.is_enabled():
+            return
+        try:
+            from opentelemetry.trace.status import Status, StatusCode
+
+            span = _current_recording_span()
+            if span is None:
+                return
+            if name is not None:
+                _set_span_name(span, name)
+            if input is not None:
+                _set_json_attr(span, "observation.input", input)
+            if output is not None:
+                _set_json_attr(span, "observation.output", output)
+            if metadata:
+                _set_metadata_attrs(span, "observation", metadata)
+            if level == "DEFAULT":
+                span.set_status(Status(StatusCode.OK, status_message or ""))
+            elif level == "ERROR":
+                span.set_status(Status(StatusCode.ERROR, status_message or ""))
+            if level is not None:
+                span.set_attribute("observation.level", level)
+            if status_message is not None:
+                span.set_attribute("observation.status_message", status_message)
+        except Exception as e:
+            logger.warning("Failed to update current Phoenix observation: %s", e, exc_info=True)
+
+    def update_current_trace(
+        self,
+        *,
+        name: str | None = None,
+        input: Any | None = None,
+        output: Any | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        """Annotate the active OTEL span with trace-level fields.
+
+        OTEL has no parent-trace concept distinct from the active span, so
+        ``input``, ``output``, ``tags``, and ``metadata`` are added as span
+        attributes.
+        """
+        if not self.is_enabled():
+            return
+        try:
+            span = _current_recording_span()
+            if span is None:
+                return
+            if name is not None:
+                _set_span_name(span, name)
+            if input is not None:
+                _set_json_attr(span, "trace.input", input)
+            if output is not None:
+                _set_json_attr(span, "trace.output", output)
+            if tags:
+                _set_json_attr(span, "trace.tags", list(tags))
+            if user_id is not None:
+                span.set_attribute("user.id", user_id)
+            if session_id is not None:
+                span.set_attribute("session.id", session_id)
+            if metadata:
+                _set_metadata_attrs(span, "trace", metadata)
+        except Exception as e:
+            logger.warning("Failed to update current Phoenix trace: %s", e, exc_info=True)

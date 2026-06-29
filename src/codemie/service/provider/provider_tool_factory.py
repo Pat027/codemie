@@ -26,8 +26,12 @@ from codemie.service.provider.util import decrypt_datasource_provider_fields
 from codemie.service.provider.datasource import ProviderDatasourceSchemaService
 from codemie.service.provider.provider_header_context import ProviderHeaderContext
 from codemie.configs import logger
+from codemie.clients.provider.client.models.tool_invocation_request import ToolInvocationRequest
+from codemie.clients.provider.client.models.tool_invocation_response import ToolInvocationResponse
+from codemie.clients.provider.client.models.toolkit_configuration import ToolkitConfiguration
 from .util import to_class_name
 from .provider_api_client import ProviderAPIClient
+from codemie.core.otel_tracing import get_traceparent_headers
 
 
 class ProviderConnectionError(Exception):
@@ -108,64 +112,104 @@ class ProviderToolFactory:
         return self.tool_config.name
 
     def _generate_execute(self):
-        """Generate tool execute method"""
+        """Generate the tool's execute method; the HTTP call itself is delegated to invoke()."""
         context = self
 
         def execute(self, *_args, **kwargs):
-            log_prefix = f"Execute provider tool '{context.tool_config.name}' [{self.request_uuid}]:"
-            host = context.provider_config.service_location_url
-
-            api_client: provider_client.ToolInvocationManagementApi = ProviderAPIClient(
+            response = context.invoke(
                 user=self.user,
-                url=host,
-                provider_security_config=context.provider_config.configuration,
-                log_prefix=log_prefix,
-            ).build()
-
-            if context.datasource:
-                schema = ProviderDatasourceSchemaService(
-                    provider=context.provider_config,
-                ).schema_for(
-                    toolkit_id=context.toolkit_config.toolkit_id,
-                )
-                configuration_params = decrypt_datasource_provider_fields(
-                    params=context.datasource.provider_fields.base_params, schema=schema.base_schema
-                )
-            else:
-                configuration_params = {}
-
-            payload = {
-                "user_id": self.user.id,
-                "project_id": self.project_id,
-                "configuration": {"configuration_type": context.CONFIGURATION_TYPE, "parameters": configuration_params},
-                "parameters": kwargs,
-                "async": False,
-            }
-
-            x_correlation_id = (self.invoke_headers or {}).get(
-                ProviderHeaderContext.HEADERS["CORRELATION_ID"]
-            ) or self.request_uuid
-
-            try:
-                logger.info(f"{log_prefix} Invoking tool")
-                response = api_client.invoke_tool(
-                    toolkit_name=context.toolkit_config.name,
-                    tool_name=context.tool_config.name,
-                    x_correlation_id=x_correlation_id,
-                    tool_invocation_request=payload,
-                    _headers=self.invoke_headers,
-                )
-                logger.info(f"{log_prefix} Invoked tool successfully")
-                return response.result
-            except MaxRetryError:
-                msg = context.CONNECTION_ERROR_MSG.format(host=host)
-                logger.warning(f"{log_prefix} {msg}")
-                raise ProviderConnectionError(msg)
-            except Exception as e:
-                logger.error(f"{log_prefix} Failed to invoke tool: {str(e)}")
-                raise e
+                project_id=self.project_id,
+                request_uuid=self.request_uuid,
+                params=kwargs,
+                headers=self.invoke_headers,
+                datasource=context.datasource,
+            )
+            return response.result
 
         return execute
+
+    def invoke(
+        self,
+        user: User,
+        project_id: str,
+        request_uuid: str,
+        params: dict,
+        headers: Optional[dict] = None,
+        datasource: Optional[ProviderIndexInfo] = None,
+    ) -> ToolInvocationResponse:
+        """Invoke this provider tool over HTTP and return the raw ToolInvocationResponse.
+
+        Shared by the dynamically built agent tool (see build()/_generate_execute) and the
+        request-hedging fast path (HedgingToolService). Resolves datasource-backed
+        configuration parameters, forwards the correlation id from request headers, and
+        translates connection failures into ProviderConnectionError.
+
+        Args:
+            user: Caller identity, forwarded to the provider as user_id and for auth.
+            project_id: Project scope of the invocation.
+            request_uuid: Fallback correlation id when no X-Correlation-Id header is present.
+            params: Resolved tool parameters.
+            headers: Optional request headers forwarded to the provider.
+            datasource: Optional datasource backing the tool; falls back to self.datasource.
+        """
+        log_prefix = f"Invoke provider tool '{self.tool_config.name}' [{request_uuid}]:"
+        host = self.provider_config.service_location_url
+
+        api_client: provider_client.ToolInvocationManagementApi = ProviderAPIClient(
+            user=user,
+            url=host,
+            provider_security_config=self.provider_config.configuration,
+            log_prefix=log_prefix,
+        ).build()
+
+        configuration_params = self._resolve_configuration_params(datasource or self.datasource)
+
+        tool_invocation_request = ToolInvocationRequest(
+            user_id=user.id,
+            project_id=project_id,
+            configuration=ToolkitConfiguration(
+                configuration_type=self.CONFIGURATION_TYPE,
+                parameters=configuration_params,
+            ),
+            parameters=params,
+        )
+
+        merged_headers = {**(headers or {}), **get_traceparent_headers()}
+        x_correlation_id = merged_headers.get(ProviderHeaderContext.HEADERS["CORRELATION_ID"]) or request_uuid
+
+        try:
+            logger.info(f"{log_prefix} Invoking tool")
+            response = api_client.invoke_tool(
+                toolkit_name=self.toolkit_config.name,
+                tool_name=self.tool_config.name,
+                x_correlation_id=x_correlation_id,
+                tool_invocation_request=tool_invocation_request,
+                _headers=merged_headers or None,
+            )
+            logger.info(f"{log_prefix} Invoked tool successfully")
+            return response
+        except MaxRetryError:
+            msg = self.CONNECTION_ERROR_MSG.format(host=host)
+            logger.warning(f"{log_prefix} {msg}")
+            raise ProviderConnectionError(msg)
+        except Exception as e:
+            logger.error(f"{log_prefix} Failed to invoke tool: {str(e)}")
+            raise e
+
+    def _resolve_configuration_params(self, datasource: Optional[ProviderIndexInfo]) -> dict:
+        """Decrypt datasource-backed configuration params, or return {} when no datasource is set."""
+        if not datasource:
+            return {}
+
+        schema = ProviderDatasourceSchemaService(
+            provider=self.provider_config,
+        ).schema_for(
+            toolkit_id=self.toolkit_config.toolkit_id,
+        )
+        return decrypt_datasource_provider_fields(
+            params=datasource.provider_fields.base_params,
+            schema=schema.base_schema,
+        )
 
     def _generate_args_schema(self) -> BaseModel:
         """Generate args schema for a tool"""

@@ -411,6 +411,7 @@ class TransformNode(BaseNode[AgentMessages]):
         Raises:
             TransformationError: If evaluation fails or uses unsafe constructs
         """
+
         try:
             return safe_eval(expr, local_vars)
         except SafeEvalError as e:

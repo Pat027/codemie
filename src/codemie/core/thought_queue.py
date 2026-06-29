@@ -36,6 +36,7 @@ class ThoughtQueue:
     def __init__(self):
         self.queue = queue.Queue()
         self.closed = False
+        self.cancellation_reason: str | None = None
         self.context = ThoughtContext()
 
     def __iter__(self):
@@ -74,8 +75,9 @@ class ThoughtQueue:
             )
         )
 
-    def close(self):
+    def close(self, *, reason: str | None = None) -> None:
         self.closed = True
+        self.cancellation_reason = reason
         self.queue.put(StopIteration)
 
     def is_closed(self):

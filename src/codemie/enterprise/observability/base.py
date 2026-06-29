@@ -22,7 +22,13 @@ from __future__ import annotations
 
 import contextlib
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Literal
+
+ObservationLevel = Literal["DEFAULT", "DEBUG", "WARNING", "ERROR"]
+"""Observation severity, mirrored 1:1 from Langfuse's ObservationLevel enum.
+
+Phoenix maps DEFAULT -> OTEL Status OK, ERROR -> OTEL Status ERROR; DEBUG and
+WARNING are recorded as the ``observation.level`` span attribute only."""
 
 
 class ObservabilityProvider(ABC):
@@ -118,3 +124,43 @@ class ObservabilityProvider(ABC):
         Must never raise; degrade silently to nullcontext() on any failure.
         """
         return contextlib.nullcontext()
+
+    def update_current_observation(
+        self,
+        *,
+        name: str | None = None,
+        input: Any | None = None,
+        output: Any | None = None,
+        metadata: dict[str, Any] | None = None,
+        level: ObservationLevel | None = None,
+        status_message: str | None = None,
+    ) -> None:
+        """Update attributes on the currently active observation/span.
+
+        Provider-agnostic primitive used by callers that are inside an active
+        ``@observe``-decorated frame. Maps to ``update_current_observation`` on
+        Langfuse and to OTEL span attribute/status updates on Phoenix.
+
+        Default implementation is a no-op — safe to call when no provider is active.
+        Must never raise; degrade silently on any failure.
+        """
+
+    def update_current_trace(
+        self,
+        *,
+        name: str | None = None,
+        input: Any | None = None,
+        output: Any | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        """Update attributes on the currently active trace (root).
+
+        Provider-agnostic primitive. Maps to ``update_current_trace`` on Langfuse;
+        on Phoenix where there is no separate trace-root concept, falls back to
+        annotating the current OTEL span.
+
+        Default implementation is a no-op. Must never raise.
+        """
