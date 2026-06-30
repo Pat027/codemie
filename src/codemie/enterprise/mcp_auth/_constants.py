@@ -40,6 +40,7 @@ _OAUTH2_CALLBACK_PATH = "/v1/mcp-auth/oauth2/callback"
 _CLIENT_METADATA_DOCUMENT_PATH = "/oauth/client-metadata.json"
 _CLIENT_METADATA_CACHE_CONTROL = "max-age=3600"
 _OAUTH2_CALLBACK_PAGE_SCRIPT_PATH = get_api_root_path() + "/v1/mcp-auth/oauth2/callback-page.js"
+_OAUTH2_CALLBACK_DIAGNOSTICS_PATH = get_api_root_path() + "/v1/mcp-auth/oauth2/callback-diagnostics"
 _SAML_ACS_PATH = "/v1/mcp-auth/saml/acs"
 _LOCALHOST_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _INVALID_OAUTH2_CONFIG_MESSAGE = "Invalid OAuth2 MCP configuration"
@@ -53,7 +54,7 @@ _INSTALL_ENTERPRISE_MCP_AUTH_HELP = "Install the enterprise MCP auth package and
 _AUTHENTICATION_FAILED_TITLE = "Authentication failed"
 _SP_METADATA_SAML_ONLY_MESSAGE = "SP metadata is only available for SAML auth configurations"
 _SP_METADATA_GENERATION_FAILED_MESSAGE = "SP metadata generation failed"
-_CALLBACK_CONTENT_SECURITY_POLICY = "default-src 'none'; script-src 'self'"
+_CALLBACK_CONTENT_SECURITY_POLICY = "default-src 'none'; script-src 'self'; connect-src 'self'"
 _CALLBACK_SECURITY_HEADERS = {
     "Content-Security-Policy": _CALLBACK_CONTENT_SECURITY_POLICY,
     "X-Frame-Options": "DENY",

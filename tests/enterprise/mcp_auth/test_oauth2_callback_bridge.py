@@ -705,7 +705,9 @@ def test_enabled_callback_adds_security_headers_on_success_and_failure(monkeypat
 
     for response in (success_response, failure_response):
         assert response.status_code == status.HTTP_200_OK
-        assert response.headers["content-security-policy"] == "default-src 'none'; script-src 'self'"
+        assert (
+            response.headers["content-security-policy"] == "default-src 'none'; script-src 'self'; connect-src 'self'"
+        )
         assert response.headers["x-frame-options"] == "DENY"
 
 
@@ -721,7 +723,7 @@ def test_enabled_callback_tms_store_failure_returns_exact_message(monkeypatch) -
     )
 
     assert response.status_code == status.HTTP_200_OK
-    assert response.headers["content-security-policy"] == "default-src 'none'; script-src 'self'"
+    assert response.headers["content-security-policy"] == "default-src 'none'; script-src 'self'; connect-src 'self'"
     assert response.headers["x-frame-options"] == "DENY"
     assert (
         "Authentication succeeded but credentials could not be saved. Return to CodeMie and try again." in response.text
@@ -897,3 +899,147 @@ def test_enabled_callback_invalid_resource_uri_preserves_trusted_configuration_b
     assert 'data-auth-config-id="auth-config-1"' in response.text
     assert 'data-bridge-error-code="configuration_error"' in response.text
     assert exchange.call_count == 0
+
+
+def test_callback_csp_allows_same_origin_connect_for_beacon() -> None:
+    from codemie.enterprise.mcp_auth._constants import _CALLBACK_CONTENT_SECURITY_POLICY
+
+    assert "connect-src 'self'" in _CALLBACK_CONTENT_SECURITY_POLICY
+
+
+def test_callback_diagnostics_logs_and_returns_204(monkeypatch) -> None:
+    from codemie.enterprise.mcp_auth import _diagnostics
+
+    logged: list[str] = []
+    monkeypatch.setattr(_diagnostics.logger, "info", lambda message, *a, **k: logged.append(message))
+    monkeypatch.setattr(_diagnostics.logger, "warning", lambda message, *a, **k: logged.append(message))
+
+    client = _build_enabled_client()
+    resp = client.post(
+        "/v1/mcp-auth/oauth2/callback-diagnostics",
+        json={
+            "result": "success",
+            "auth_config_id": "discovered:abc",
+            "opener_present": True,
+            "target_origin": "https://app.example.com",
+            "post_message_attempted": True,
+            "window_should_close": True,
+        },
+    )
+
+    assert resp.status_code == status.HTTP_204_NO_CONTENT
+    text = "\n".join(logged)
+    assert "MCP OAuth2 callback client diagnostics" in text
+    assert "opener_present=True" in text
+    assert "target_origin=https://app.example.com" in text
+
+
+def test_callback_diagnostics_warns_on_lost_opener_and_returns_204(monkeypatch) -> None:
+    from codemie.enterprise.mcp_auth import _diagnostics
+
+    warned: list[str] = []
+    monkeypatch.setattr(_diagnostics.logger, "warning", lambda message, *a, **k: warned.append(message))
+
+    client = _build_enabled_client()
+    resp = client.post(
+        "/v1/mcp-auth/oauth2/callback-diagnostics",
+        json={"result": "success", "opener_present": False, "target_origin": "https://app.example.com"},
+    )
+
+    assert resp.status_code == status.HTTP_204_NO_CONTENT
+    assert any("opener_present=False" in message for message in warned)
+
+
+def test_callback_diagnostics_rejects_invalid_result() -> None:
+    client = _build_enabled_client()
+    resp = client.post(
+        "/v1/mcp-auth/oauth2/callback-diagnostics",
+        json={"result": "bogus", "opener_present": True},
+    )
+    assert resp.status_code == 422
+
+
+def test_disabled_callback_diagnostics_returns_503() -> None:
+    client = _build_disabled_client()
+    resp = client.post("/v1/mcp-auth/oauth2/callback-diagnostics", json={"result": "success", "opener_present": True})
+    assert resp.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+
+
+def test_callback_script_includes_diagnostics_beacon() -> None:
+    client = _build_enabled_client()
+
+    script = client.get("/v1/mcp-auth/oauth2/callback-page.js").text
+
+    assert "navigator.sendBeacon" in script
+    assert "/v1/mcp-auth/oauth2/callback-diagnostics" in script
+    assert "post_message_error" in script
+    # The beacon must fire on every branch, including the silent error branch
+    # (the error page that cannot notify the opener — the case we are hunting).
+    assert script.count("sendDiagnostics(") >= 4
+    # postMessage is wrapped so a throw is captured, not propagated.
+    assert "catch" in script
+
+
+def test_callback_logs_entry_and_error_page_served(monkeypatch) -> None:
+    from codemie.configs.logger import logger as shared_logger
+
+    captured: list[str] = []
+    monkeypatch.setattr(shared_logger, "info", lambda message, *a, **k: captured.append(message))
+    monkeypatch.setattr(shared_logger, "warning", lambda message, *a, **k: captured.append(message))
+
+    client = _build_enabled_client()
+    client.get("/v1/mcp-auth/oauth2/callback")  # no code/state -> error page
+
+    text = "\n".join(captured)
+    assert "MCP OAuth2 callback received: has_code=False has_state=False" in text
+    assert "MCP auth callback error page served" in text
+    # entry log must record presence only, never raw secret values
+    assert "has_error=False" in text
+
+
+def test_callback_logs_success_page_served_with_target_origin(monkeypatch) -> None:
+    from codemie.configs.logger import logger as shared_logger
+
+    pkce_store, _, _, _, _ = _set_default_bridge_state(monkeypatch)
+    pkce_store.consume.return_value = _build_pkce_state()
+
+    captured: list[str] = []
+    monkeypatch.setattr(shared_logger, "info", lambda message, *a, **k: captured.append(message))
+
+    client = _build_enabled_client()
+    client.get("/v1/mcp-auth/oauth2/callback", params={"code": "auth-code", "state": "opaque-state"})
+
+    text = "\n".join(captured)
+    assert "MCP auth callback success page served" in text
+    assert "target_origin=https://frontend.example.com" in text
+    # secrets never logged
+    assert "auth-code" not in text
+
+
+def test_callback_diagnostics_sanitizes_newlines_in_logged_fields(monkeypatch) -> None:
+    from codemie.enterprise.mcp_auth import _diagnostics
+
+    logged: list[str] = []
+    monkeypatch.setattr(_diagnostics.logger, "warning", lambda message, *a, **k: logged.append(message))
+    monkeypatch.setattr(_diagnostics.logger, "info", lambda message, *a, **k: logged.append(message))
+
+    client = _build_enabled_client()
+    resp = client.post(
+        "/v1/mcp-auth/oauth2/callback-diagnostics",
+        json={
+            "result": "error",
+            "opener_present": True,
+            "auth_config_id": "discovered:abc",
+            "post_message_error": "boom\nINFO: forged log line",
+            "bridge_error_code": "a\r\nb",
+        },
+    )
+
+    assert resp.status_code == status.HTTP_204_NO_CONTENT
+    assert len(logged) == 1
+    message = logged[0]
+    # CR/LF in client-controlled fields must be neutralized at the source so they
+    # cannot forge log lines (CWE-117), independent of the logger's own escaping.
+    assert "\n" not in message
+    assert "\r" not in message
+    assert "boom INFO: forged log line" in message

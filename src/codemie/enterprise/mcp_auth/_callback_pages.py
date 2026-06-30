@@ -21,6 +21,7 @@ from fastapi import status
 from fastapi.responses import HTMLResponse, Response
 
 from codemie.configs import config
+from codemie.configs.logger import logger
 from codemie.core.exceptions import ExtendedHTTPException
 
 from ._common import CallbackPageError
@@ -32,6 +33,7 @@ from ._constants import (
     _CALLBACK_SUCCESS_MESSAGE,
     _CALLBACK_SUCCESS_OPEN_CODEMIE_MESSAGE,
     _CALLBACK_TRANSITION_MESSAGE,
+    _OAUTH2_CALLBACK_DIAGNOSTICS_PATH,
     _OAUTH2_CALLBACK_PAGE_SCRIPT_PATH,
 )
 
@@ -102,6 +104,10 @@ def _build_callback_page(
 
 
 def _build_success_callback_response(server_name: str | None, auth_config_id: str) -> HTMLResponse:
+    logger.info(
+        "MCP auth callback success page served: "
+        f"auth_config_id={auth_config_id} target_origin={_safe_target_origin()} server_name={server_name}"
+    )
     return _build_callback_page(
         title="Authentication complete",
         message=_CALLBACK_TRANSITION_MESSAGE,
@@ -113,6 +119,11 @@ def _build_success_callback_response(server_name: str | None, auth_config_id: st
 
 
 def _build_error_callback_response(error: CallbackPageError) -> HTMLResponse:
+    logger.warning(
+        "MCP auth callback error page served: "
+        f"auth_config_id={error.auth_config_id} target_origin={_safe_target_origin()} "
+        f"bridge_error_code={error.bridge_error_code} idp_error_code={error.error_code}"
+    )
     return _build_callback_page(
         title=error.title,
         message=error.message,
@@ -138,6 +149,14 @@ def _derive_callback_target_origin() -> str:
     return f"{parsed_origin.scheme}://{parsed_origin.netloc}"
 
 
+def _safe_target_origin() -> str | None:
+    """Best-effort target origin for diagnostics logging; never raises."""
+    try:
+        return _derive_callback_target_origin()
+    except Exception:
+        return None
+
+
 def _build_trusted_callback_error(
     message: str,
     *,
@@ -161,6 +180,7 @@ const CALLBACK_EVENT_TYPE = '{_CALLBACK_EVENT_TYPE}';
 const CALLBACK_SUCCESS_CLOSE_MESSAGE = '{_CALLBACK_SUCCESS_CLOSE_MESSAGE}';
 const CALLBACK_SUCCESS_OPEN_CODEMIE_MESSAGE = '{_CALLBACK_SUCCESS_OPEN_CODEMIE_MESSAGE}';
 const CALLBACK_FALLBACK_DELAY_MS = {_CALLBACK_FALLBACK_DELAY_MS};
+const CALLBACK_DIAGNOSTICS_URL = '{_OAUTH2_CALLBACK_DIAGNOSTICS_PATH}';
 
 const main = document.querySelector('main[data-callback-result]');
 
@@ -176,15 +196,53 @@ if (main instanceof HTMLElement) {{
     }}
   }};
 
+  // Diagnostics-only beacon: report whether this page could notify the opener
+  // window. Fired before postMessage/window.close so it survives the tab closing.
+  // Never throws - diagnostics must not break the auth flow. Carries no secrets.
+  const sendDiagnostics = (extra) => {{
+    try {{
+      const payload = Object.assign({{
+        result: main.dataset.callbackResult,
+        auth_config_id: authConfigId || null,
+        target_origin: targetOrigin || null,
+        opener_present: !!window.opener,
+        post_message_attempted: false,
+        post_message_error: null,
+        window_should_close: false,
+        bridge_error_code: main.dataset.bridgeErrorCode || null,
+        idp_error_code: main.dataset.idpErrorCode || null,
+      }}, extra || {{}});
+      navigator.sendBeacon(
+        CALLBACK_DIAGNOSTICS_URL,
+        new Blob([JSON.stringify(payload)], {{ type: 'application/json' }})
+      );
+    }} catch (e) {{
+      /* diagnostics must never break the auth flow */
+    }}
+  }};
+
   if (main.dataset.callbackResult === 'success') {{
     if (!window.opener) {{
+      sendDiagnostics({{}});
       updateMessage(CALLBACK_SUCCESS_OPEN_CODEMIE_MESSAGE);
     }} else if (authConfigId && targetOrigin) {{
-      window.opener.postMessage({{
-        type: CALLBACK_EVENT_TYPE,
-        status: 'success',
-        auth_config_id: authConfigId,
-      }}, targetOrigin);
+      let postMessageAttempted = false;
+      let postMessageError = null;
+      try {{
+        window.opener.postMessage({{
+          type: CALLBACK_EVENT_TYPE,
+          status: 'success',
+          auth_config_id: authConfigId,
+        }}, targetOrigin);
+        postMessageAttempted = true;
+      }} catch (err) {{
+        postMessageError = String((err && err.message) || err);
+      }}
+      sendDiagnostics({{
+        post_message_attempted: postMessageAttempted,
+        post_message_error: postMessageError,
+        window_should_close: true,
+      }});
       window.close();
       window.setTimeout(() => {{
         if (!window.closed) {{
@@ -194,13 +252,28 @@ if (main instanceof HTMLElement) {{
     }}
   }}
 
-  if (main.dataset.callbackResult === 'error' && window.opener && authConfigId && targetOrigin && errorCode) {{
-    window.opener.postMessage({{
-      type: CALLBACK_EVENT_TYPE,
-      status: 'error',
-      error: errorCode,
-      auth_config_id: authConfigId,
-    }}, targetOrigin);
+  if (main.dataset.callbackResult === 'error') {{
+    if (window.opener && authConfigId && targetOrigin && errorCode) {{
+      let postMessageAttempted = false;
+      let postMessageError = null;
+      try {{
+        window.opener.postMessage({{
+          type: CALLBACK_EVENT_TYPE,
+          status: 'error',
+          error: errorCode,
+          auth_config_id: authConfigId,
+        }}, targetOrigin);
+        postMessageAttempted = true;
+      }} catch (err) {{
+        postMessageError = String((err && err.message) || err);
+      }}
+      sendDiagnostics({{
+        post_message_attempted: postMessageAttempted,
+        post_message_error: postMessageError,
+      }});
+    }} else {{
+      sendDiagnostics({{}});
+    }}
   }}
 }}
 """.strip()

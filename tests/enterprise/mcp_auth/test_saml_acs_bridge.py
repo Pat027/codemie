@@ -352,7 +352,7 @@ def test_enabled_acs_uses_reverse_lookup_and_stores_token(monkeypatch: pytest.Mo
     response = client.post("/v1/mcp-auth/saml/acs", data={"SAMLResponse": "response", "RelayState": "relay-state"})
 
     assert response.status_code == status.HTTP_200_OK
-    assert response.headers["content-security-policy"] == "default-src 'none'; script-src 'self'"
+    assert response.headers["content-security-policy"] == "default-src 'none'; script-src 'self'; connect-src 'self'"
     assert response.headers["x-frame-options"] == "DENY"
     assert "Completing authentication..." in response.text
     assert "Authentication complete. Return to CodeMie to continue using the MCP server." in response.text

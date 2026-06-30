@@ -41,6 +41,10 @@ from codemie.enterprise.mcp_auth.dependencies import (
     is_mcp_auth_enabled,
     MCPAuthEnterpriseUnavailableError,
 )
+from codemie.enterprise.mcp_auth._diagnostics import (
+    OAuth2CallbackDiagnostics,
+    build_oauth2_callback_diagnostics_response,
+)
 from codemie.rest_api.models.mcp_config import MCPConfig
 from codemie.rest_api.security.authentication import authenticate
 from codemie.rest_api.security.user import User
@@ -373,6 +377,26 @@ def oauth2_callback_enabled(
         error_description=error_description,
         error_uri=error_uri,
     )
+
+
+@router.post(
+    "/oauth2/callback-diagnostics",
+    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+    response_model=MCPAuthDisabledResponse,
+)
+def oauth2_callback_diagnostics() -> MCPAuthDisabledResponse:
+    return _DISABLED_RESPONSE
+
+
+@enabled_router.post(
+    "/oauth2/callback-diagnostics",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+def oauth2_callback_diagnostics_enabled(payload: OAuth2CallbackDiagnostics) -> Response:
+    # Unauthenticated on purpose: the bridge page that fires this beacon is itself
+    # unauthenticated. Log-only, no side effects (see build_oauth2_callback_diagnostics_response).
+    return build_oauth2_callback_diagnostics_response(payload)
 
 
 @router.post(

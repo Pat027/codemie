@@ -475,6 +475,10 @@ def build_oauth2_callback_response(
     error_description: str | None,
     error_uri: str | None,
 ) -> HTMLResponse:
+    logger.info(
+        "MCP OAuth2 callback received: "
+        f"has_code={code is not None} has_state={state is not None} has_error={error is not None}"
+    )
     try:
         return _build_oauth2_callback_response(
             code=code,

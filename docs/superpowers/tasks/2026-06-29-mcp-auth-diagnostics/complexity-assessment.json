@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "task": "Add diagnostics-only observability (unauthenticated log-only beacon endpoint, instrumented callback bridge script, CSP connect-src, and structured backend/frontend logging) to the MCP OAuth2 callback flow without changing auth behavior.",
+  "generated": "2026-06-29",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 19,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Full-stack additive change across 4+ components: a new backend endpoint (router.py), the bridge-script generator build_oauth2_callback_page_script_response (_callback_pages.py), CSP constants (_constants.py), callback orchestration logging (_oauth2_callback.py), and two frontend hooks (useAuthCallbackListener.ts, useMCPAuthPrompt.ts). All additive instrumentation, no new abstraction or subsystem restructuring, so L rather than XL." },
+    { "dimension": "technical_risk", "reason": "Security-sensitive OAuth2 callback surface: the new endpoint is unauthenticated and must be hardened (strict payload validation, size cap, no input reflection, return 204, MCP-auth gated); logs and beacon must never carry secrets (code/state/tokens/session_binding_hash); CSP is broadened on a hardened page; the bridge JS is a Python f-string with brace escaping that is easy to break. Reversible diagnostics with standard measures gives a base of M, bumped to L by the Security red flag." },
+    { "dimension": "file_change_estimate", "reason": "Approximately 7-9 modified files plus 1-2 new (diagnostics handler/payload model and its test) spanning four directories across two repositories: backend mcp_auth (callback pages, constants, callback orchestration, router, bridge test) and frontend hooks plus their Vitest specs." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M (3) to L (4): Security/Compliance red flag — OAuth2 security-sensitive callback surface, new unauthenticated log-only endpoint requiring hardening, CSP modification, and secret-leakage avoidance constraints."
+  ],
+  "split_recommendation": null
+}

@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "task": "Realized diagnostics-only observability for the MCP OAuth2/SAML callback flow: unauthenticated log-only beacon endpoint, instrumented bridge-page script, CSP connect-src broadening, sanitized backend logging, and frontend hook diagnostics logging — without changing auth behavior (EPMCDME-13237).",
+  "generated": "2026-06-30",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 20,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "file_change_estimate", "reason": "DELTA +1 vs initial (L 4 -> XL 5). The realized diff touched 11 files total (1 new + 10 modified) across two repos, landing in the XL 11-15 band; the initial estimate of ~7-9 modified + 1-2 new fell in the L band. New: backend _diagnostics.py. Modified backend: router.py, _callback_pages.py, _constants.py, _oauth2_callback.py, test_oauth2_callback_bridge.py, test_saml_acs_bridge.py. Modified frontend: useAuthCallbackListener.ts, useMCPAuthPrompt.ts plus both Vitest specs. The instrumentation spread wider than estimated because diagnostics logging reached both frontend hooks and four test files in addition to the five core backend touch points." },
+    { "dimension": "component_scope", "reason": "Confirmed L (4), no delta. Full-stack additive instrumentation across ~7 components and 2 layers: a new diagnostics endpoint (router.py), a small self-contained diagnostics module (_diagnostics.py: payload model + sanitizer + response builder), beacon emission in the bridge-script generator and page-served logging (_callback_pages.py), CSP/path constants (_constants.py), callback-orchestration entry/verified logging (_oauth2_callback.py), and two instrumented frontend hooks. Held at L rather than XL because nothing was restructured and no new abstraction was introduced — _diagnostics.py is a tiny log-only unit." },
+    { "dimension": "technical_risk", "reason": "Confirmed L (4), no delta. Security-sensitive OAuth2/SAML callback surface: a new UNAUTHENTICATED /oauth2/callback-diagnostics endpoint (router.py) hardened with pydantic extra=ignore, per-field max_length caps, a Literal result, a 204 empty response, and MCP-auth gating. CSP was broadened (connect-src 'self') on a hardened page. The realized risk materialized: code review found and fixed CR-001, a log-injection finding (CWE-117), now mitigated by _sanitize_log_value neutralizing CR/LF/control chars at the source. Base M (reversible, log-only, no migration, easy rollback) bumped to L by the Security red flag — validated by the actual finding." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M (3) to L (4): Security/Compliance red flag — security-sensitive OAuth2/SAML callback surface, a new unauthenticated log-only endpoint requiring hardening, CSP broadening, and secret-leakage avoidance. Validated by the realized CR-001 log-injection (CWE-117) finding, found and fixed during review via _sanitize_log_value."
+  ],
+  "split_recommendation": null
+}

@@ -1,0 +1,32 @@
+{
+  "decision": "request-changes",
+  "rationale": "Full lens coverage — blind, edge-case, and acceptance all ran successfully. Acceptance: all 6 acceptance criteria pass (diagnostics-only; no auth-behavior change; no secrets in any new log/beacon field). Edge-case: zero defects; verified beacon correctness (fires in all branches incl. the silent error branch, never throws, fires before window.close), same-origin under connect-src 'self', _safe_target_origin never raises, CSP scope limited to the mcp_auth callback pages, and frontend control flow unchanged. Blind flagged CWE-117 log injection on the new unauthenticated POST /oauth2/callback-diagnostics endpoint. Triage: the risk is mitigated in PRODUCTION by the logger's process_record_msg (json.dumps(msg)[1:-1] escapes CR/LF/quotes), but NOT in local env (config.is_local returns the message unescaped), and depending on a distant logging layer for a security property of a brand-new unauthenticated endpoint is fragile. One major security finding (CR-001, patch); 0 deferred, 0 dismissed. Recommend a 2-line source-level sanitization of the client-controlled string fields.",
+  "confidence": "high",
+  "risk_flags": ["security"],
+  "business_review": [
+    {"criterion": "AC1 — beacon log line with result/auth_config_id/opener_present/target_origin/post_message_attempted+error", "status": "pass", "notes": "sendDiagnostics fires in all 4 branches before window.close; endpoint logs all fields in one line."},
+    {"criterion": "AC2 — success-page-served log includes exact target_origin", "status": "pass", "notes": "_build_success_callback_response logs target_origin from the same _derive_callback_target_origin used for the page's data-target-origin."},
+    {"criterion": "AC3 — listener logs windowOrigin+apiOrigin at setup and any mcp_auth_callback message (matched or dropped)", "status": "pass", "notes": "listener-ready log + observed-message log gated on type before shape/origin checks."},
+    {"criterion": "AC4 — beacon not blocked by CSP for success and error", "status": "pass", "notes": "connect-src 'self' added; sendBeacon fires on both pages (shared headers)."},
+    {"criterion": "AC5 — no secret values in any new log/beacon", "status": "pass", "notes": "presence booleans for code/state/error; origin-only via safeOrigin/_derive; extra='ignore'; 204 no body."},
+    {"criterion": "AC6 — no behavioral change to the auth flow", "status": "pass", "notes": "postMessage + window.close preserved; backend exchange/store untouched; try/catch only guards the never-hit throw path."}
+  ],
+  "standards_review": [
+    {"standard": "git-workflow (commit format)", "status": "pass", "notes": "All 6 commits across both repos use 'EPMCDME-13237: Capital description'."},
+    {"standard": "code-quality", "status": "pass", "notes": "Small focused functions, clear names, ruff/eslint clean on changed files, no duplication beyond the deliberate per-branch postMessage try/catch."},
+    {"standard": "security-patterns", "status": "partial", "notes": "New unauthenticated endpoint logs client-controlled strings without source-level CR/LF/control-char neutralization (CWE-117). Mitigated in prod by the logger's json escaping, not in local env. See CR-001."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/enterprise/mcp_auth/_diagnostics.py",
+      "location": "build_oauth2_callback_diagnostics_response (the logged message string)",
+      "problem": "The unauthenticated POST /v1/mcp-auth/oauth2/callback-diagnostics endpoint interpolates client-controlled string fields (post_message_error ≤512, target_origin/auth_config_id ≤256, bridge_error_code/idp_error_code ≤128) directly into the INFO/WARNING log message with no CR/LF or control-character neutralization at the source. Pydantic max_length caps size but does not strip newlines.",
+      "impact": "An anonymous caller could embed newline-separated text in these fields to forge log lines (CWE-117). In production this is incidentally neutralized by the logger's process_record_msg (json.dumps escaping), but the local-env path returns the message unescaped, and a new unauthenticated endpoint should not rely on a distant logging layer for this security property.",
+      "recommendation": "Sanitize the client-controlled fields at the source before formatting the log line — e.g. replace CR/LF/control chars (or json.dumps each value) in a small helper applied to auth_config_id, target_origin, post_message_error, bridge_error_code, idp_error_code. Keeps the endpoint self-contained-safe regardless of logger config or environment.",
+      "sources": ["blind", "edge-case (mitigation analysis)"]
+    }
+  ]
+}
