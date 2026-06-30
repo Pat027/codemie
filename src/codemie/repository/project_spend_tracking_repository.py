@@ -161,11 +161,15 @@ class ProjectSpendTrackingRepository:
                 .subquery()
             )
 
-            stmt = select(ProjectSpendTracking).join(
-                latest_dates_subq,
-                (ProjectSpendTracking.project_name == latest_dates_subq.c.project_name)
-                & (ProjectSpendTracking.budget_id == latest_dates_subq.c.budget_id)
-                & (ProjectSpendTracking.spend_date == latest_dates_subq.c.max_spend_date),
+            stmt = (
+                select(ProjectSpendTracking)
+                .join(
+                    latest_dates_subq,
+                    (ProjectSpendTracking.project_name == latest_dates_subq.c.project_name)
+                    & (ProjectSpendTracking.budget_id == latest_dates_subq.c.budget_id)
+                    & (ProjectSpendTracking.spend_date == latest_dates_subq.c.max_spend_date),
+                )
+                .where(ProjectSpendTracking.spend_subject_type == spend_subject_type)
             )
 
             result = await session.execute(stmt)

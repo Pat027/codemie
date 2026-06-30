@@ -436,3 +436,29 @@ class TestGetSpendForPeriodFilters:
         assert "NOT IN" not in agg_sql.upper()
         assert "budget_category = 'platform'" in data_sql
         assert "spend_subject_type = 'budget'" in data_sql
+
+
+@pytest.mark.asyncio
+async def test_get_latest_before_by_project_budget_ids_filters_spend_subject_type_in_outer_query():
+    """Outer SELECT must carry spend_subject_type filter so member_budget rows cannot collide."""
+    repository = ProjectSpendTrackingRepository()
+    execute_result = MagicMock()
+    execute_result.scalars.return_value.all.return_value = []
+    session = AsyncMock()
+    session.execute.return_value = execute_result
+
+    await repository.get_latest_before_by_project_budget_ids(
+        session,
+        [("proj-a", "budget-1")],
+        datetime(2026, 6, 29, tzinfo=timezone.utc),
+        spend_subject_type="project_budget",
+    )
+
+    stmt = session.execute.call_args[0][0]
+    compiled = stmt.compile(dialect=sqlite_dialect.dialect(), compile_kwargs={"literal_binds": True})
+    sql = str(compiled)
+    # "project_budget" must appear at least twice: once in the subquery WHERE
+    # and once in the outer WHERE added by the fix.
+    assert (
+        sql.count("project_budget") >= 2
+    ), f"Expected spend_subject_type filter in both subquery and outer query, got SQL:\n{sql}"
