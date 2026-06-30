@@ -167,3 +167,33 @@ class GetCommentsInput(BaseModel):
 class CreateCommentInput(BaseModel):
     work_item_id: int = Field(description="The work item ID to add a comment to")
     text: str = Field(description="The text content of the comment to create")
+
+
+class GetWorkItemAttachmentContentInput(BaseModel):
+    """Input model for retrieving the content of a work item attachment.
+
+    Supports two identification strategies:
+    1. Direct URL: provide attachment_url from work item relations or get_work_item.
+    2. Discovery: provide work_item_id + attachment_name to locate the attachment by filename.
+
+    At least one of attachment_url OR attachment_name must be provided.
+    """
+
+    work_item_id: int = Field(description="The work item ID whose attachment to retrieve.")
+    attachment_url: Optional[str] = Field(
+        default=None,
+        description="Direct URL to the attachment (from work item relations, e.g. a URL containing "
+        "'/_apis/wit/attachments/'). When provided, the attachment is downloaded directly "
+        "without fetching the work item.",
+    )
+    attachment_name: Optional[str] = Field(
+        default=None,
+        description="Filename of the attachment to retrieve (case-insensitive match against "
+        "relation attributes.name). Required when attachment_url is not provided.",
+    )
+
+    @model_validator(mode="after")
+    def require_url_or_name(self) -> "GetWorkItemAttachmentContentInput":
+        if not self.attachment_url and not self.attachment_name:
+            raise ValueError("Either 'attachment_url' or 'attachment_name' must be provided.")
+        return self

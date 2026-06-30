@@ -25,6 +25,7 @@ from codemie_tools.azure_devops.work_item.tools import (
     GetRelationTypesTool,
     GetCommentsTool,
     CreateCommentTool,
+    GetWorkItemAttachmentContentTool,
 )
 from codemie_tools.azure_devops.work_item.tools_vars import (
     SEARCH_WORK_ITEMS_TOOL,
@@ -35,6 +36,7 @@ from codemie_tools.azure_devops.work_item.tools_vars import (
     GET_RELATION_TYPES_TOOL,
     GET_COMMENTS_TOOL,
     CREATE_COMMENT_TOOL,
+    GET_WORK_ITEM_ATTACHMENT_CONTENT_TOOL,
 )
 
 
@@ -49,6 +51,7 @@ class AzureDevOpsWorkItemToolkitUI(ToolKit):
         Tool.from_metadata(GET_RELATION_TYPES_TOOL, tool_class=GetRelationTypesTool),
         Tool.from_metadata(GET_COMMENTS_TOOL, tool_class=GetCommentsTool),
         Tool.from_metadata(CREATE_COMMENT_TOOL, tool_class=CreateCommentTool),
+        Tool.from_metadata(GET_WORK_ITEM_ATTACHMENT_CONTENT_TOOL, tool_class=GetWorkItemAttachmentContentTool),
     ]
     label: str = ToolSet.AZURE_DEVOPS_WORK_ITEM.value
     settings_config: bool = True

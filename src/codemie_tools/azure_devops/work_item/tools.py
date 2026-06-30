@@ -14,7 +14,9 @@
 
 import json
 import os
-from typing import Type, Optional, List, Dict, Any
+import traceback
+from typing import Type, Optional, List, Dict, Any, Tuple
+from urllib.parse import parse_qs, urlparse
 
 from azure.devops.connection import Connection
 from azure.devops.v7_1.work_item_tracking import TeamContext, Wiql, WorkItemTrackingClient
@@ -33,6 +35,7 @@ from codemie_tools.azure_devops.work_item.models import (
     GetRelationTypesInput,
     GetCommentsInput,
     CreateCommentInput,
+    GetWorkItemAttachmentContentInput,
 )
 from codemie_tools.azure_devops.work_item.tools_vars import (
     SEARCH_WORK_ITEMS_TOOL,
@@ -43,10 +46,12 @@ from codemie_tools.azure_devops.work_item.tools_vars import (
     GET_RELATION_TYPES_TOOL,
     GET_COMMENTS_TOOL,
     CREATE_COMMENT_TOOL,
+    GET_WORK_ITEM_ATTACHMENT_CONTENT_TOOL,
 )
 from codemie_tools.base.codemie_tool import CodeMieTool, logger
 from codemie_tools.base.file_tool_mixin import FileToolMixin
 from codemie_tools.azure_devops.attachment_mixin import AzureDevOpsAttachmentMixin
+from codemie_tools.azure_devops.attachment_content_mixin import AttachmentContentMixin
 
 # Ensure Azure DevOps cache directory is set
 if not os.environ.get("AZURE_DEVOPS_CACHE_DIR", None):
@@ -126,6 +131,18 @@ class BaseAzureDevOpsWorkItemTool(CodeMieTool, AzureDevOpsAttachmentMixin):
             raise ToolException("The 'fields' property is missing from the work_item_json.")
 
         return [{"op": "add", "path": f"/fields/{field}", "value": value} for field, value in params["fields"].items()]
+
+    @staticmethod
+    def _get_attachment_relations(relations) -> List[Dict[str, Any]]:
+        """Return AttachedFile relations as dicts, filtering out all other relation types."""
+        if not relations:
+            return []
+        result = []
+        for r in relations:
+            d = r.as_dict()
+            if d.get("rel") == "AttachedFile":
+                result.append(d)
+        return result
 
 
 class BaseAzureDevOpsFileWorkItemTool(BaseAzureDevOpsWorkItemTool, FileToolMixin):
@@ -285,10 +302,6 @@ class GetWorkItemTool(BaseAzureDevOpsWorkItemTool):
     description: str = GET_WORK_ITEM_TOOL.description
     args_schema: Type[BaseModel] = GetWorkItemInput
 
-    def _is_attachment_relation(self, relation_dict: Dict[str, Any]) -> bool:
-        """Check if a relation is an AttachedFile relation."""
-        return relation_dict.get("rel") == "AttachedFile"
-
     def _get_filename_from_relation(self, relation_dict: Dict[str, Any]) -> Optional[str]:
         """
         Extract filename from relation attributes or URL.
@@ -339,17 +352,9 @@ class GetWorkItemTool(BaseAzureDevOpsWorkItemTool):
         Returns:
             Dict mapping filename to attachment content (bytes)
         """
-        if not relations_data:
-            return {}
-
         attachments = {}
 
-        for relation in relations_data:
-            relation_dict = relation.as_dict()
-
-            if not self._is_attachment_relation(relation_dict):
-                continue
-
+        for relation_dict in self._get_attachment_relations(relations_data):
             attachment_url = relation_dict.get("url")
             if not attachment_url:
                 continue
@@ -565,3 +570,107 @@ class CreateCommentTool(BaseAzureDevOpsWorkItemTool):
         except Exception as e:
             logger.error(f"Error creating comment for work item {work_item_id}: {e}")
             raise ToolException(f"Error creating comment for work item {work_item_id}: {str(e)}")
+
+
+class GetWorkItemAttachmentContentTool(BaseAzureDevOpsWorkItemTool, AttachmentContentMixin):
+    """Tool to retrieve and parse the content of an attachment on an Azure DevOps work item."""
+
+    name: str = GET_WORK_ITEM_ATTACHMENT_CONTENT_TOOL.name
+    description: str = GET_WORK_ITEM_ATTACHMENT_CONTENT_TOOL.description
+    args_schema: Type[BaseModel] = GetWorkItemAttachmentContentInput
+
+    def _find_attachment_in_relations(self, work_item_id: int, attachment_name: str) -> Tuple[str, str, Optional[str]]:
+        """Find attachment URL and note from work item AttachedFile relations by filename.
+
+        Returns:
+            Tuple of (resolved_filename, attachment_url, attachment_note)
+
+        Raises:
+            ToolException: If the attachment is not found or work item has no attachments.
+        """
+        work_item = self._client.get_work_item(
+            id=work_item_id,
+            project=self.config.project,
+            expand="Relations",
+        )
+
+        attachment_relations = self._get_attachment_relations(work_item.relations)
+
+        if not attachment_relations:
+            raise ToolException(
+                f"Work item {work_item_id} has no file attachments. "
+                "Use get_work_item with include_attachments=True to verify attachments exist."
+            )
+
+        attachment_name_lower = attachment_name.lower()
+        for relation_dict in attachment_relations:
+            attributes = relation_dict.get("attributes", {})
+            filename = attributes.get("name", "")
+            if filename.lower() == attachment_name_lower:
+                url = relation_dict.get("url", "")
+                note = attributes.get("comment") or None
+                return filename, url, note
+
+        available = ", ".join(f"'{d.get('attributes', {}).get('name', '?')}'" for d in attachment_relations)
+        raise ToolException(
+            f"Attachment '{attachment_name}' not found on work item {work_item_id}. "
+            f"Available attachments: {available}"
+        )
+
+    def execute(
+        self,
+        work_item_id: int,
+        attachment_url: Optional[str] = None,
+        attachment_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Retrieve and parse the content of a work item attachment.
+
+        Args:
+            work_item_id: The work item ID.
+            attachment_url: Direct URL to the attachment (takes priority when provided).
+            attachment_name: Filename of the attachment for discovery (case-insensitive).
+
+        Returns:
+            Dict with work_item_id, filename, attachment_note, mime_type, size_bytes,
+            content_type, content, note.
+        """
+        if not attachment_url and not attachment_name:
+            raise ToolException("Provide either 'attachment_url' (direct URL) or 'attachment_name' for discovery.")
+
+        try:
+            attachment_note: Optional[str] = None
+
+            if attachment_url:
+                parsed_url = urlparse(attachment_url)
+                qs_filename = parse_qs(parsed_url.query).get("fileName", [None])[0]
+                filename = attachment_name or qs_filename or parsed_url.path.split("/")[-1] or "attachment"
+                resolved_url = attachment_url
+                logger.info(f"Using direct attachment URL for '{filename}' on work item {work_item_id}")
+            else:
+                logger.info(f"Discovering attachment '{attachment_name}' on work item {work_item_id}")
+                filename, resolved_url, attachment_note = self._find_attachment_in_relations(
+                    work_item_id, attachment_name
+                )
+
+            content_bytes = self._download_attachment(resolved_url, filename)
+
+            mime_type = self._detect_mime_type(filename)
+            processed = self._process_content(filename, content_bytes)
+
+            return {
+                "work_item_id": work_item_id,
+                "filename": filename,
+                "attachment_note": attachment_note,
+                "mime_type": mime_type,
+                "size_bytes": len(content_bytes),
+                "content_type": processed["content_type"],
+                "content": processed["content"],
+                "note": processed["note"],
+            }
+
+        except ToolException:
+            raise
+        except Exception as e:
+            error_msg = f"Failed to retrieve attachment content for work item {work_item_id}: {str(e)}"
+            logger.error(f"{error_msg}. Stacktrace: {traceback.format_exc()}")
+            raise ToolException(error_msg)

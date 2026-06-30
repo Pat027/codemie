@@ -270,3 +270,103 @@ CREATE_COMMENT_TOOL = ToolMetadata(
         """.strip(),
     config_class=AzureDevOpsWorkItemConfig,
 )
+
+GET_WORK_ITEM_ATTACHMENT_CONTENT_TOOL = ToolMetadata(
+    name="get_work_item_attachment_content",
+    description="""
+        Retrieve and parse the content of a single named attachment on an Azure DevOps work item.
+        Returns parsed text or structured content depending on the file type, along with
+        attachment metadata and the text note (comment) recorded for the attachment.
+
+        Use this tool for parsed content of a single named attachment. To bulk-download raw bytes
+        for all attachments use get_work_item with include_attachments=true.
+
+        Use this tool to read the actual content of files attached to work items — not just
+        their metadata. Suitable for tasks such as image description, PDF content elicitation,
+        document analysis, or any downstream workflow processing.
+
+        Identification (provide ONE of the following):
+        1. Direct URL (RECOMMENDED when available):
+           - work_item_id + attachment_url: URL from work item relations
+             (contains '/_apis/wit/attachments/')
+        2. Discovery via work item ID + attachment name:
+           - work_item_id + attachment_name: tool fetches work item relations and
+             finds the attachment with matching filename (case-insensitive)
+
+        Arguments:
+        - work_item_id (int): The work item ID whose attachment to retrieve.
+        - attachment_url (str, optional): Direct URL to the attachment. Takes priority when provided.
+        - attachment_name (str, optional): Filename of the attachment (e.g. "report.pdf").
+          Case-insensitive. Required when attachment_url is not provided.
+
+        File-Type Handling:
+        - Text files (txt, md, json, xml, csv, yaml, etc.): decoded text content is returned.
+        - PDF: extracted text (and optionally image text via OCR when LLM is available).
+        - Images (png, jpg, gif, bmp, webp, etc.): image description/text via LLM vision when
+          available; otherwise base64-encoded content with a note.
+        - DOCX (Word): extracted text content from the document.
+        - PPTX (PowerPoint): extracted text from all slides.
+        - XLSX / XLS (Excel): sheet data converted to text.
+        - Other/unknown types: base64-encoded content (if ≤ 50 KB) or metadata-only note.
+
+        Return Format:
+        Returns dict with:
+        - 'work_item_id': ID of the work item
+        - 'filename': Name of the attachment
+        - 'attachment_note': Text note/comment recorded for the attachment (may be null)
+        - 'mime_type': Detected MIME type
+        - 'size_bytes': Size of the file in bytes
+        - 'content_type': How content is represented ('text', 'base64', 'image_description',
+          or 'metadata_only')
+        - 'content': The parsed content (text, base64 string, image description, or null)
+        - 'note': Optional processing note explaining limitations or fallbacks applied
+
+        Note: For large binary files (>50 KB) that cannot be parsed to text, the tool returns
+        content_type='metadata_only' with content=null instead of a base64 blob that would be
+        truncated.
+
+        Examples:
+        - Retrieve PDF attachment by name:
+          work_item_id: 12345
+          attachment_name: "requirements.pdf"
+          Result: {"work_item_id": 12345, "filename": "requirements.pdf",
+                   "attachment_note": "Initial requirements draft",
+                   "mime_type": "application/pdf", "content_type": "text",
+                   "content": "## Section 1\\n\\nThe system shall...", "size_bytes": 45120, "note": null}
+
+        - Retrieve image attachment via direct URL:
+          work_item_id: 42
+          attachment_url: "https://dev.azure.com/Org/Proj/_apis/wit/attachments/abc-123?fileName=arch.png"
+          Result: {"work_item_id": 42, "filename": "arch.png",
+                   "attachment_note": null,
+                   "mime_type": "image/png", "content_type": "image_description",
+                   "content": "The image shows a microservices architecture diagram...",
+                   "size_bytes": 98304, "note": null}
+
+        - Retrieve text file by name:
+          work_item_id: 7
+          attachment_name: "config.yaml"
+          Result: {"work_item_id": 7, "filename": "config.yaml",
+                   "attachment_note": "Production config snapshot",
+                   "mime_type": "text/yaml", "content_type": "text",
+                   "content": "service:\\n  port: 8080\\n  ...", "size_bytes": 1024, "note": null}
+        """,
+    label="Get Work Item Attachment Content",
+    user_description="""
+        Retrieves and parses the actual content of a file attached to a work item — not just its
+        metadata. Also returns the text note/comment recorded for the attachment, which describes
+        what the file contains or why it was attached.
+
+        Supports text extraction from PDFs, Word documents, PowerPoint presentations, Excel sheets,
+        images (via AI vision), and plain text files (txt, json, xml, csv, md, yaml, etc.).
+
+        The attachment can be identified by a direct URL (from work item relations) or by specifying
+        the work item ID and attachment filename.
+
+        Before using it, you need to provide:
+        1. Azure DevOps organization URL
+        2. Project name
+        3. Personal Access Token with Work Items read permissions
+        """.strip(),
+    config_class=AzureDevOpsWorkItemConfig,
+)

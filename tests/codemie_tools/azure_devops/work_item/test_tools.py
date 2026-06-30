@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock, MagicMock, patch
 
 import pytest
+
+import base64
 
 from codemie_tools.azure_devops.work_item.models import AzureDevOpsWorkItemConfig
 from codemie_tools.azure_devops.work_item.tools import (
@@ -24,6 +26,7 @@ from codemie_tools.azure_devops.work_item.tools import (
     GetWorkItemTool,
     GetRelationTypesTool,
     CreateCommentTool,
+    GetWorkItemAttachmentContentTool,
 )
 
 
@@ -199,3 +202,210 @@ class TestGetRelationTypesTool:
         assert isinstance(result, dict)
         assert "Relates" in result
         assert result["Relates"] == "System.LinkTypes.Related"
+
+
+def _make_relation(rel_type: str, name: str, url: str, comment: str = None):
+    """Build a mock work item relation with as_dict() support."""
+    rel = Mock()
+    attrs = {"name": name}
+    if comment:
+        attrs["comment"] = comment
+    rel.as_dict.return_value = {"rel": rel_type, "url": url, "attributes": attrs}
+    return rel
+
+
+class TestGetWorkItemAttachmentContentTool:
+    @pytest.fixture
+    def mock_config(self):
+        return AzureDevOpsWorkItemConfig(
+            organization_url="https://dev.azure.com/org", project="test-project", token="fake-token"
+        )
+
+    @pytest.fixture
+    def tool(self, mock_config):
+        t = GetWorkItemAttachmentContentTool(config=mock_config)
+        t._client = Mock()
+        return t
+
+    # ------------------------------------------------------------------ mixin
+
+    def test_build_base64_response_small_file(self, tool):
+        data = b"small content"
+        result = tool._build_base64_response(data, "note")
+        assert result["content_type"] == "base64"
+        assert result["content"] == base64.b64encode(data).decode()
+        assert result["note"] == "note"
+
+    def test_build_base64_response_large_file_returns_metadata_only(self, tool):
+        data = b"x" * (tool._MAX_BASE64_BYTES + 1)
+        result = tool._build_base64_response(data, "original note")
+        assert result["content_type"] == "metadata_only"
+        assert result["content"] is None
+        assert "too large" in result["note"]
+
+    def test_detect_mime_type_known_extension(self, tool):
+        assert tool._detect_mime_type("report.pdf") == "application/pdf"
+        assert tool._detect_mime_type("image.png") == "image/png"
+
+    def test_detect_mime_type_unknown_returns_octet_stream(self, tool):
+        assert tool._detect_mime_type("file.unknownxyz") == "application/octet-stream"
+
+    def test_is_text_based_text_mime(self, tool):
+        assert tool._is_text_based("text/plain", "file.dat") is True
+
+    def test_is_text_based_known_text_extension(self, tool):
+        assert tool._is_text_based("application/octet-stream", "notes.md") is True
+
+    def test_is_text_based_binary(self, tool):
+        assert tool._is_text_based("application/octet-stream", "binary.exe") is False
+
+    def test_process_content_text_file(self, tool):
+        result = tool._process_content("readme.txt", b"Hello world")
+        assert result["content_type"] == "text"
+        assert result["content"] == "Hello world"
+
+    def test_process_content_unknown_large_returns_metadata_only(self, tool):
+        data = b"x" * (tool._MAX_BASE64_BYTES + 1)
+        result = tool._process_content("blob.bin", data)
+        assert result["content_type"] == "metadata_only"
+        assert result["content"] is None
+
+    def test_process_content_unknown_small_returns_base64(self, tool):
+        data = b"x" * 100
+        result = tool._process_content("blob.bin", data)
+        assert result["content_type"] == "base64"
+
+    # ------------------------------------------------ _find_attachment_in_relations
+
+    def test_find_attachment_success(self, tool):
+        attachment = _make_relation(
+            "AttachedFile",
+            "spec.pdf",
+            "https://dev.azure.com/org/proj/_apis/wit/attachments/abc-123",
+            comment="Initial spec",
+        )
+        work_item = Mock()
+        work_item.relations = [attachment]
+        tool._client.get_work_item.return_value = work_item
+
+        filename, url, note = tool._find_attachment_in_relations(42, "spec.pdf")
+
+        assert filename == "spec.pdf"
+        assert "abc-123" in url
+        assert note == "Initial spec"
+        tool._client.get_work_item.assert_called_once_with(id=42, project="test-project", expand="Relations")
+
+    def test_find_attachment_case_insensitive(self, tool):
+        attachment = _make_relation(
+            "AttachedFile",
+            "SPEC.PDF",
+            "https://dev.azure.com/org/proj/_apis/wit/attachments/abc",
+        )
+        work_item = Mock()
+        work_item.relations = [attachment]
+        tool._client.get_work_item.return_value = work_item
+
+        filename, url, note = tool._find_attachment_in_relations(42, "spec.pdf")
+        assert filename == "SPEC.PDF"
+
+    def test_find_attachment_skips_non_attached_file_relations(self, tool):
+        link_rel = _make_relation("System.LinkTypes.Related", "ignored", "https://example.com/rel")
+        work_item = Mock()
+        work_item.relations = [link_rel]
+        tool._client.get_work_item.return_value = work_item
+
+        from langchain_core.tools import ToolException
+
+        with pytest.raises(ToolException, match="has no file attachments"):
+            tool._find_attachment_in_relations(42, "spec.pdf")
+
+    def test_find_attachment_no_relations_raises(self, tool):
+        from langchain_core.tools import ToolException
+
+        work_item = Mock()
+        work_item.relations = None
+        tool._client.get_work_item.return_value = work_item
+
+        with pytest.raises(ToolException, match="has no file attachments"):
+            tool._find_attachment_in_relations(42, "spec.pdf")
+
+    def test_find_attachment_not_found_lists_available(self, tool):
+        from langchain_core.tools import ToolException
+
+        attachment = _make_relation("AttachedFile", "other.docx", "https://example.com/att")
+        work_item = Mock()
+        work_item.relations = [attachment]
+        tool._client.get_work_item.return_value = work_item
+
+        with pytest.raises(ToolException, match="other.docx"):
+            tool._find_attachment_in_relations(42, "missing.pdf")
+
+    # ----------------------------------------------------------- execute
+
+    def test_execute_with_direct_url_extracts_filename_from_query(self, tool):
+        with patch.object(tool, "_download_attachment", return_value=b"hello world"):
+            result = tool.execute(
+                work_item_id=42,
+                attachment_url="https://dev.azure.com/org/proj/_apis/wit/attachments/abc?fileName=notes.txt",
+            )
+
+        assert result["work_item_id"] == 42
+        assert result["filename"] == "notes.txt"
+        assert result["content_type"] == "text"
+        assert result["content"] == "hello world"
+        assert result["size_bytes"] == 11
+
+    def test_execute_with_direct_url_and_explicit_name(self, tool):
+        with patch.object(tool, "_download_attachment", return_value=b"data"):
+            result = tool.execute(
+                work_item_id=7,
+                attachment_url="https://dev.azure.com/org/proj/_apis/wit/attachments/xyz",
+                attachment_name="override.txt",
+            )
+
+        assert result["filename"] == "override.txt"
+
+    def test_execute_by_name_discovery(self, tool):
+        url = "https://dev.azure.com/org/proj/_apis/wit/attachments/abc-123"
+        with patch.object(tool, "_find_attachment_in_relations", return_value=("spec.pdf", url, "draft spec")):
+            with patch.object(tool, "_download_attachment", return_value=b"PDF content"):
+                result = tool.execute(work_item_id=99, attachment_name="spec.pdf")
+
+        assert result["filename"] == "spec.pdf"
+        assert result["attachment_note"] == "draft spec"
+        assert result["work_item_id"] == 99
+
+    def test_execute_missing_both_url_and_name_raises(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="attachment_url.*attachment_name"):
+            from codemie_tools.azure_devops.work_item.models import GetWorkItemAttachmentContentInput
+
+            GetWorkItemAttachmentContentInput(work_item_id=1)
+
+    def test_execute_download_failure_wraps_in_tool_exception(self, tool):
+        from langchain_core.tools import ToolException
+
+        with patch.object(tool, "_download_attachment", side_effect=Exception("Network timeout")):
+            with pytest.raises(ToolException, match="Failed to retrieve attachment content"):
+                tool.execute(
+                    work_item_id=42,
+                    attachment_url="https://dev.azure.com/org/proj/_apis/wit/attachments/abc",
+                )
+
+    def test_execute_returns_full_response_structure(self, tool):
+        url = "https://dev.azure.com/org/proj/_apis/wit/attachments/abc?fileName=data.json"
+        with patch.object(tool, "_download_attachment", return_value=b'{"key": "value"}'):
+            result = tool.execute(work_item_id=5, attachment_url=url)
+
+        assert set(result.keys()) == {
+            "work_item_id",
+            "filename",
+            "attachment_note",
+            "mime_type",
+            "size_bytes",
+            "content_type",
+            "content",
+            "note",
+        }
+        assert result["attachment_note"] is None
