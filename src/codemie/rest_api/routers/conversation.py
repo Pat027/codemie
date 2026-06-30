@@ -316,8 +316,8 @@ def delete_conversation_by_id(conversation_id: str, user: User = Depends(authent
     Remove a conversation document by provided conversation id.
     Handles both assistant conversations and workflow conversations.
 
-    Note: Workflow executions are NOT deleted when conversation is deleted - they remain
-    as historical records, similar to how assistants are not deleted when their conversations are deleted.
+    Workflow executions linked to this conversation are cascade-deleted in the
+    same transaction so they no longer appear in Workflow Execution History.
     """
     conversation = Conversation.get_by_id(conversation_id)
 
@@ -327,7 +327,7 @@ def delete_conversation_by_id(conversation_id: str, user: User = Depends(authent
     if not conversation:
         logger.info(f"Conversation with given id {conversation_id} is not found")
 
-    # Delete the conversation (workflow executions remain as historical records)
+    # Cascade-delete linked workflow executions, then the conversation itself.
     Conversation.delete_by_id(conversation_id)
     SharedConversation.delete_by_conversation(conversation_id)
 

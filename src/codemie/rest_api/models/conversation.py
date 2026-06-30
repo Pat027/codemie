@@ -36,7 +36,7 @@ from codemie.rest_api.models.base import (
 )
 from codemie.rest_api.models.feedback import MarkEnum
 from codemie.rest_api.security.user import User
-from sqlmodel import Field as SQLField, Session, delete, Column, text
+from sqlmodel import Field as SQLField, Session, delete, select, Column, text
 from sqlalchemy import Boolean
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.mutable import MutableList
@@ -669,6 +669,9 @@ class Conversation(BaseModelWithSQLSupport, Owned, table=True):
     @classmethod
     def delete_by_id(cls, conversation_id: str):
         with Session(cls.get_engine()) as session:
+            from codemie.core.workflow_models.workflow_execution import WorkflowExecution  # noqa: PLC0415 — deferred to break circular import (workflow_execution imports GeneratedMessage from this module)
+
+            WorkflowExecution.delete_by_conversation_ids(session, [conversation_id])
             statement = delete(cls).where(cls.id == conversation_id)
             result = session.exec(statement)
             session.commit()
@@ -680,6 +683,13 @@ class Conversation(BaseModelWithSQLSupport, Owned, table=True):
     @classmethod
     def delete_by_user(cls, user_id: str):
         with Session(cls.get_engine()) as session:
+            # Collect conversation IDs for this user before deleting them so
+            # the workflow-execution cascade can be scoped correctly.
+            conv_ids = [row.id for row in session.exec(select(cls).where(cls.user_id == user_id)).all()]
+            if conv_ids:
+                from codemie.core.workflow_models.workflow_execution import WorkflowExecution  # noqa: PLC0415 — deferred to break circular import (workflow_execution imports GeneratedMessage from this module)
+
+                WorkflowExecution.delete_by_conversation_ids(session, conv_ids)
             statement = delete(cls).where(cls.user_id == user_id)
             result = session.exec(statement)
             session.commit()

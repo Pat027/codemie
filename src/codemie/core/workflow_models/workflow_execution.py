@@ -16,21 +16,16 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlmodel import Session, select
-
-from codemie.core.ability import Owned, Ability, Action
-from codemie.core.models import UserEntity, TokensUsage
-from codemie.rest_api.models.base import (
-    CommonBaseModel,
-    BaseModelWithSQLSupport,
-    PydanticType,
-    PydanticListType,
-)
+from codemie.core.ability import Ability, Action, Owned
+from codemie.core.models import TokensUsage, UserEntity
+from codemie.rest_api.models.base import BaseModelWithSQLSupport, CommonBaseModel, PydanticListType, PydanticType
 from codemie.rest_api.models.conversation import GeneratedMessage
 from codemie.rest_api.security.user import User
-from sqlmodel import Column, Field as SQLField, Index, text
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlmodel import Column
+from sqlmodel import Field as SQLField
+from sqlmodel import Index, Session, select, text
 
 
 class WorkflowExecutionStatusEnum(str, Enum):
@@ -191,45 +186,81 @@ class WorkflowExecution(BaseModelWithSQLSupport, Owned, table=True):
         return cls.get_all_by_fields({"execution_id": execution_id})
 
     @classmethod
-    def delete(cls, execution_config_id: str):
+    def _delete_executions_cascade(cls, session: Session, execution_ids: list[str]) -> None:
+        """Delete child records for the given execution_ids in dependency order.
+
+        Removes grandchild thoughts, then child transitions, then child states.
+        The parent execution rows are intentionally NOT deleted here — each calling
+        method handles the parent delete differently (ORM vs bulk SQL).
+
+        Deletion order: thoughts (grandchild) → transitions (child) → states (child).
+        """
         from sqlalchemy import delete as sql_delete
 
+        if not execution_ids:
+            return
+
+        # Gather state IDs needed to cascade to thoughts (which key off execution_state_id)
+        state_ids = session.exec(
+            select(WorkflowExecutionState.id).where(WorkflowExecutionState.execution_id.in_(execution_ids))
+        ).all()
+
+        # Delete thoughts first (grandchild → child → parent order)
+        if state_ids:
+            session.exec(
+                sql_delete(WorkflowExecutionStateThought).where(
+                    WorkflowExecutionStateThought.execution_state_id.in_(state_ids)
+                )
+            )
+
+        # Delete transitions
+        session.exec(
+            sql_delete(WorkflowExecutionTransition).where(WorkflowExecutionTransition.execution_id.in_(execution_ids))
+        )
+
+        # Delete states
+        session.exec(sql_delete(WorkflowExecutionState).where(WorkflowExecutionState.execution_id.in_(execution_ids)))
+
+    @classmethod
+    def delete(cls, execution_config_id: str):
         with Session(cls.get_engine()) as session:
             execution = session.get(cls, execution_config_id)
             if execution:
-                # Collect state IDs so we can cascade to thoughts (grandchild records)
-                state_ids = [
-                    row.id
-                    for row in session.exec(
-                        select(WorkflowExecutionState).where(
-                            WorkflowExecutionState.execution_id == execution.execution_id
-                        )
-                    ).all()
-                ]
-                # Delete thoughts first (grandchild → child → parent order)
-                if state_ids:
-                    session.exec(
-                        sql_delete(WorkflowExecutionStateThought).where(
-                            WorkflowExecutionStateThought.execution_state_id.in_(state_ids)
-                        )
-                    )
-                # Bulk-delete transitions (child level - linked to execution)
-                session.exec(
-                    sql_delete(WorkflowExecutionTransition).where(
-                        WorkflowExecutionTransition.execution_id == execution.execution_id
-                    )
-                )
-                # Bulk-delete states
-                session.exec(
-                    sql_delete(WorkflowExecutionState).where(
-                        WorkflowExecutionState.execution_id == execution.execution_id
-                    )
-                )
-                # Delete parent execution
+                cls._delete_executions_cascade(session, [execution.execution_id])
+                # Delete parent execution by primary key
                 session.delete(execution)
                 session.commit()
                 return {"status": "deleted"}
             return {"status": "not found"}
+
+    @classmethod
+    def delete_by_conversation_ids(cls, session: Session, conversation_ids: list[str]) -> None:
+        """Delete executions (and children: thoughts → transitions → states → executions)
+        linked to the given conversation_ids, within the caller's session.
+
+        Must be called *before* the parent Conversation rows are deleted so that all
+        deletes commit atomically.  The caller owns the session and the commit boundary.
+
+        Deletion order mirrors WorkflowExecution.delete():
+          thoughts (grandchild) → transitions (child) → states (child) → executions (parent).
+        """
+        from sqlalchemy import delete as sql_delete
+
+        # Gather the business execution_ids for all executions linked to these conversations
+        execution_ids = session.exec(select(cls.execution_id).where(cls.conversation_id.in_(conversation_ids))).all()
+        if not execution_ids:
+            return
+
+        cls._delete_executions_cascade(session, execution_ids)
+
+        # Delete the parent execution rows — scoped to the PKs collected above for
+        # consistency with the child deletes (transitions/states also scope by
+        # execution_id, not conversation_id).  Note: under READ COMMITTED with no
+        # DB-level FK, scoping by PK trades over-delete (old approach: a row inserted
+        # AFTER the SELECT with the same conversation_id would be caught) for an
+        # orphan race (the inserted row is now missed).  Neither is strictly safer;
+        # this form is more consistent with the sibling child-delete pattern.
+        session.exec(sql_delete(cls).where(cls.execution_id.in_(execution_ids)))
 
     def start_progress(self):
         self.overall_status = WorkflowExecutionStatusEnum.IN_PROGRESS

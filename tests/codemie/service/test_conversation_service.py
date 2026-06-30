@@ -556,6 +556,29 @@ def test_upsert_chat_history_appends_variants_for_explicit_history_index(
     assert mock_sync_uploaded_files.call_count == 2
 
 
+@patch("codemie.service.conversation_service.Conversation.update")
+@patch("codemie.core.workflow_models.workflow_execution.WorkflowExecution.delete_by_conversation_ids")
+@patch("codemie.service.conversation_service.Session")
+@patch("codemie.core.workflow_models.workflow_execution.WorkflowExecution.get_engine")
+def test_clear_conversation_history_cascades_to_workflow_executions(
+    mock_get_engine,
+    mock_session_cls,
+    mock_delete_by_conv_ids,
+    mock_update,
+    mock_conversation,
+):
+    mock_update.return_value = True
+    mock_session_instance = MagicMock()
+    mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_session_instance)
+    mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+    result = ConversationService.clear_conversation_history(mock_conversation)
+
+    mock_delete_by_conv_ids.assert_called_once_with(mock_session_instance, ["456"])
+    mock_session_instance.commit.assert_called_once()
+    assert result.history == []
+
+
 @patch("codemie.core.workflow_models.workflow_config.WorkflowConfig.get_by_id")
 def test_build_new_conversation_with_workflow(
     mock_get_by_id,

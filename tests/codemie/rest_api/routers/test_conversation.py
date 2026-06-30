@@ -25,7 +25,7 @@ from codemie.rest_api.models.conversation import (
 from codemie.rest_api.models.conversation_folder import ConversationFolder
 from codemie.rest_api.security.user import User
 import codemie.rest_api.routers.conversation as conversation_router
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from codemie.rest_api.models.assistant import Assistant
 
 
@@ -504,3 +504,146 @@ class TestSearchConversations:
         assert response.status_code == 200
         data = response.json()
         assert data['items'] == []
+
+
+# ---------------------------------------------------------------------------
+# Regression: cascade-delete WorkflowExecution on Conversation.delete_by_id
+# ---------------------------------------------------------------------------
+
+
+class TestCascadeDeleteWorkflowExecutionOnConversationDelete:
+    """Verify that deleting a Conversation also cascade-deletes its linked
+    WorkflowExecution rows (and their children).
+
+    These tests mock the DB session (get_engine) to avoid a live connection.
+    They assert that the cascade helper issues a SELECT for execution_ids scoped
+    to the deleted conversation_id, and then issues DELETE statements for the
+    workflow_executions table with a WHERE clause referencing conversation_id.
+
+    A buggy implementation that issues an unconditional DELETE (no WHERE) or
+    that keys on a wrong column would fail the WHERE-scoping assertions below.
+    Call-count alone cannot catch either defect.
+
+    State model:
+      State 1 — execution linked to the deleted conversation  → MUST be deleted
+      State 2 — execution linked to a different conversation  → MUST NOT be deleted
+      State 3 — execution with conversation_id = NULL ("Run" mode) → MUST NOT be deleted
+    """
+
+    @staticmethod
+    def _compile_stmt(stmt) -> str:
+        """Return the SQL string of a SQLAlchemy statement with literal parameter binds."""
+        return str(stmt.compile(compile_kwargs={"literal_binds": True}))
+
+    @patch("codemie.rest_api.models.conversation.Conversation.get_engine")
+    def test_cascade_select_is_scoped_to_conversation_id(self, mock_get_engine):
+        """The first exec call (SELECT execution_ids) must be scoped to conversation_id.
+
+        Proves the SELECT does not pull ALL executions unconditionally, i.e.
+        state-2 (other conversation) and state-3 (NULL) rows would be excluded.
+        """
+        mock_engine = MagicMock()
+        mock_get_engine.return_value = mock_engine
+
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+
+        # The first exec call (SELECT execution_ids) returns no rows so the
+        # cascade short-circuits; the DELETE conversation is the second call.
+        mock_session.exec.return_value.all.return_value = []
+        mock_session.exec.return_value.rowcount = 0
+
+        target_conv_id = "conv-abc-123"
+
+        with patch("codemie.rest_api.models.conversation.Session", return_value=mock_session):
+            Conversation.delete_by_id(target_conv_id)
+
+        assert (
+            mock_session.exec.call_count >= 2
+        ), "Expected at least 2 session.exec calls: SELECT execution_ids + DELETE conversation"
+
+        # The first call is the SELECT(execution_ids) statement.
+        first_call_stmt = mock_session.exec.call_args_list[0][0][0]
+        compiled = self._compile_stmt(first_call_stmt)
+
+        # SELECT must reference conversation_id in its WHERE clause.
+        assert "conversation_id" in compiled, (
+            f"SELECT statement WHERE clause does not scope to conversation_id.\n" f"Compiled SQL: {compiled}"
+        )
+        # The target conversation_id value must appear in the compiled SQL.
+        assert target_conv_id in compiled, (
+            f"SELECT statement does not filter on the specific conversation_id '{target_conv_id}'.\n"
+            f"Compiled SQL: {compiled}"
+        )
+
+    @patch("codemie.rest_api.models.conversation.Conversation.get_engine")
+    def test_cascade_delete_execution_is_scoped_to_execution_id(self, mock_get_engine):
+        """The DELETE(WorkflowExecution) statement must target workflow_executions with
+        a WHERE scoped to the pre-collected execution PKs (execution_id), not by
+        conversation_id.  Scoping by PK eliminates the over-delete race where a row
+        inserted with the same conversation_id after the SELECT would be removed.
+
+        A buggy implementation that omits the WHERE (deleting all executions)
+        would fail the 'execution_id IN ...' assertion below, proving the delete is
+        PK-scoped rather than unconditional.
+        """
+        mock_engine = MagicMock()
+        mock_get_engine.return_value = mock_engine
+
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+
+        # First exec: SELECT execution_ids → returns one linked execution_id
+        exec_ids_result = MagicMock()
+        exec_ids_result.all.return_value = ["exec-id-001"]
+
+        # Second exec: SELECT state_ids → empty (no states for this execution)
+        state_ids_result = MagicMock()
+        state_ids_result.all.return_value = []
+
+        # Remaining execs: DELETE transitions, DELETE states, DELETE executions,
+        # DELETE conversation — all succeed silently.
+        delete_result = MagicMock()
+        delete_result.rowcount = 1
+
+        mock_session.exec.side_effect = [
+            exec_ids_result,  # SELECT execution_ids  (cascade step 1)
+            state_ids_result,  # SELECT state_ids      (cascade step 2)
+            MagicMock(),  # DELETE transitions    (cascade step 4)
+            MagicMock(),  # DELETE states         (cascade step 5)
+            MagicMock(),  # DELETE executions     (cascade step 6)
+            delete_result,  # DELETE conversation
+        ]
+
+        target_conv_id = "conv-abc-123"
+
+        with patch("codemie.rest_api.models.conversation.Session", return_value=mock_session):
+            result = Conversation.delete_by_id(target_conv_id)
+
+        # Sanity: 6 calls total (2 SELECTs + 4 DELETEs)
+        assert mock_session.exec.call_count == 6, f"Expected 6 session.exec calls; got {mock_session.exec.call_count}"
+        assert result == {"status": "deleted"}
+
+        # Call index 4 is DELETE(WorkflowExecution) — cascade step 6.
+        # (0=SELECT exec_ids, 1=SELECT state_ids, 2=DELETE transitions,
+        #  3=DELETE states, 4=DELETE executions, 5=DELETE conversation)
+        delete_exec_stmt = mock_session.exec.call_args_list[4][0][0]
+        compiled = self._compile_stmt(delete_exec_stmt)
+
+        # The WHERE clause must scope to the pre-collected execution PKs.
+        # An unconditional DELETE (no WHERE) would not contain 'execution_id'.
+        assert "workflow_executions" in compiled, (
+            f"DELETE statement does not target workflow_executions table.\n" f"Compiled SQL: {compiled}"
+        )
+        assert "execution_id" in compiled, (
+            f"DELETE(WorkflowExecution) has no WHERE on execution_id "
+            f"— delete is not PK-scoped; the over-delete race is not prevented.\n"
+            f"Compiled SQL: {compiled}"
+        )
+        assert "exec-id-001" in compiled, (
+            f"DELETE(WorkflowExecution) does not filter on the specific "
+            f"execution_id 'exec-id-001' collected during the SELECT.\n"
+            f"Compiled SQL: {compiled}"
+        )

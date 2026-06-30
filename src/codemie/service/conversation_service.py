@@ -22,7 +22,7 @@ from typing import Any, List, TYPE_CHECKING, Optional
 
 from codemie_tools.base.utils import get_encoding
 from pydantic import BaseModel
-from sqlmodel import select, and_, func, or_, text
+from sqlmodel import select, and_, func, or_, text, Session
 
 from codemie.chains.base import Thought
 from codemie.clients.postgres import get_session
@@ -760,8 +760,19 @@ class ConversationService:
 
     @classmethod
     def clear_conversation_history(cls, conversation: Conversation):
-        conversation.history = []
+        from codemie.core.workflow_models.workflow_execution import WorkflowExecution  # noqa: PLC0415 — deferred to break circular import
 
+        # Two-transaction split is deliberate: WorkflowExecution.delete_by_conversation_ids
+        # uses bulk SQL DELETEs that require their own session, while conversation.update()
+        # (base-model method) opens a separate session internally and has no session-param
+        # override.  In the rare event of a crash between the two commits, executions will
+        # be removed but history will remain — a recoverable state (history can be re-cleared;
+        # no data is permanently lost).
+        with Session(WorkflowExecution.get_engine()) as session:
+            WorkflowExecution.delete_by_conversation_ids(session, [conversation.id])
+            session.commit()
+
+        conversation.history = []
         conversation.update_conversation_assistants()
         conversation.update(refresh=True)
         return conversation
