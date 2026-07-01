@@ -262,6 +262,16 @@ model_list:
       base_model: us.anthropic.claude-sonnet-4-6
       label: "Bedrock Claude Sonnet 4.6"
 
+  - model_name: claude-sonnet-5
+    litellm_params:
+      model: bedrock/us.anthropic.claude-sonnet-5
+      litellm_credential_name: default_aws_bedrock_credential
+      aws_region_name: us-east-2
+    model_info:
+      id: claude-sonnet-5-us-east-2
+      base_model: us.anthropic.claude-sonnet-5
+      label: "Bedrock Claude Sonnet 5"
+
   - model_name: claude-opus-4-5-20251101
     litellm_params:
       model: bedrock/us.anthropic.claude-opus-4-5-20251101-v1:0
