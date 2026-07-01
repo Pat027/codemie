@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -629,3 +630,72 @@ class TestCreateAssistantSlug:
             self._run_create(request, save_side_effect=raise_other_integrity)
 
         assert "Slug conflict" not in (exc_info.value.message or "")
+
+
+class TestAssistantDetailEnrichment:
+    """Guards that the by-id and by-slug lookup endpoints enrich the assistant identically.
+
+    Regression for EPMCDME-13262: the by-slug endpoint used to skip `user_abilities`, so the UI
+    could not show owner actions (Edit/Delete/Publish) on human-readable /{project}/{slug} URLs.
+    Both endpoints now share `_build_assistant_detail_response`, so both must return the abilities.
+    """
+
+    def _build_assistant(self):
+        return Assistant(
+            id="assistant-123",
+            name="Test Assistant",
+            description="Test Description",
+            project="demo",
+            system_prompt="Test Prompt",
+            slug="test-assistant",
+        )
+
+    def _enrichment_patches(self):
+        """Patch the enrichment collaborators shared by both detail endpoints."""
+        return [
+            patch("codemie.rest_api.routers.assistant._check_user_can_access_assistant"),
+            patch("codemie.rest_api.routers.assistant._validate_remote_entities_and_raise"),
+            patch("codemie.rest_api.routers.assistant.ToolsInfoService.get_tools_info", return_value=[]),
+            patch("codemie.rest_api.routers.assistant.Assistant.get_by_ids", return_value=[]),
+            patch("codemie.rest_api.routers.assistant._get_categories_data"),
+            patch("codemie.rest_api.routers.assistant._mask_sensitive_prompt_variables"),
+            patch("codemie.rest_api.routers.assistant.AssistantRepository"),
+            patch(
+                "codemie.rest_api.routers.assistant.GuardrailService.get_entity_guardrail_assignments",
+                return_value=[],
+            ),
+        ]
+
+    @patch("codemie.rest_api.routers.assistant.Ability")
+    @patch("codemie.rest_api.routers.assistant._get_assistant_by_slug_or_raise")
+    def test_slug_response_includes_user_abilities(self, mock_get_by_slug, mock_ability):
+        from codemie.core.ability import Action
+        from codemie.rest_api.routers.assistant import get_assistant_by_slug
+
+        assistant = self._build_assistant()
+        mock_get_by_slug.return_value = assistant
+        mock_ability.return_value.list.return_value = [Action.READ, Action.WRITE, Action.DELETE]
+
+        user = MagicMock(spec=User)
+
+        context_managers = self._enrichment_patches()
+        for cm in context_managers:
+            cm.start()
+        try:
+            response = get_assistant_by_slug(
+                request=MagicMock(),
+                assistant_slug="test-assistant",
+                user=user,
+                project="demo",
+            )
+        finally:
+            for cm in context_managers:
+                cm.stop()
+
+        # Abilities are computed for the resolved assistant and serialized into the response,
+        # so the UI can render owner-only menu actions on the human-readable URL.
+        mock_ability.assert_called_once_with(user)
+        mock_ability.return_value.list.assert_called_once_with(assistant)
+
+        body = json.loads(response.body)
+        assert body["user_abilities"] == ["read", "write", "delete"]

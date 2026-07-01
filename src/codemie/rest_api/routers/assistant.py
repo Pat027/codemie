@@ -258,85 +258,18 @@ def get_assistant_users(
     return result
 
 
-@router.get(
-    "/assistants/id/{assistant_id}",
-    status_code=status.HTTP_200_OK,
-    response_model=Assistant,
-    response_model_by_alias=True,
-)
-def get_assistant_by_id(request: Request, assistant_id: str, user: User = Depends(authenticate)):
+def _build_assistant_detail_response(assistant: Assistant, user: User) -> JSONResponse:
     """
-    Returns saved assistant by id
+    Enrich a single assistant record and build its detail JSON response.
+
+    Shared by the by-id and by-slug lookup endpoints so both return an identically
+    shaped payload. Historically the by-slug endpoint skipped `user_abilities`, which
+    left the UI unable to show owner actions (Edit/Delete/Publish) on human-readable
+    `/{project}/{slug}` URLs; centralizing the enrichment here keeps the two endpoints
+    from drifting apart again.
     """
-    assistant = _get_assistant_by_id_or_raise(assistant_id)
     assistant.user_abilities = Ability(user).list(assistant)
 
-    _check_user_can_access_assistant(user, assistant, "view", Action.READ)
-    _validate_remote_entities_and_raise(assistant)
-
-    # Match the settings_config flag with the correct value from ToolsInfoService
-    tools_info = ToolsInfoService.get_tools_info(user=user)
-    if assistant.toolkits:
-        _enrich_toolkit_settings_config(assistant.toolkits, tools_info)
-
-    assistant.nested_assistants = Assistant.get_by_ids(user, assistant.assistant_ids, parent_assistant=assistant)
-
-    # Enrich toolkits in nested assistants so that user mapping settings can be displayed
-    for nested_assistant in assistant.nested_assistants:
-        if nested_assistant.toolkits:
-            _enrich_toolkit_settings_config(nested_assistant.toolkits, tools_info)
-
-    # Enrich skills with full details (id, name, description)
-    skills_data = []
-    if assistant.skill_ids:
-        from codemie.service.skill_service import SkillService
-
-        skills = SkillService.get_skills_by_ids(assistant.skill_ids, user)
-        skills_data = [skill.to_basic_info().model_dump() for skill in skills]
-
-    _get_categories_data(assistant)
-
-    # Mask sensitive prompt variable default values
-    _mask_sensitive_prompt_variables(assistant)
-
-    # Enrich system_prompt_history from version configurations
-    repository = AssistantRepository()
-    repository.enrich_system_prompt_history(assistant)
-
-    # Enrich with guardrail assignments
-    assistant.guardrail_assignments = GuardrailService.get_entity_guardrail_assignments(
-        user,
-        GuardrailEntity.ASSISTANT,
-        assistant_id,
-    )
-
-    # Convert to dict and add skills
-    response_data = jsonable_encoder(assistant)
-    response_data["skills"] = skills_data
-
-    return JSONResponse(content=response_data, status_code=status.HTTP_200_OK)
-
-
-@router.get(
-    "/assistants/slug/{assistant_slug:path}",
-    status_code=status.HTTP_200_OK,
-    response_model=Assistant,
-    response_model_by_alias=True,
-)
-def get_assistant_by_slug(
-    request: Request,
-    assistant_slug: str,
-    user: User = Depends(authenticate),
-    project: Optional[str] = Query(
-        None,
-        description="Project name to scope the slug lookup. Slugs are unique per-project; "
-        "pass it to resolve human-readable {project}/{slug} URLs deterministically.",
-    ),
-):
-    """
-    Returns saved assistant by slug
-    """
-    assistant = _get_assistant_by_slug_or_raise(assistant_slug, project)
     _check_user_can_access_assistant(user, assistant, "view", Action.READ)
     _validate_remote_entities_and_raise(assistant)
 
@@ -381,6 +314,43 @@ def get_assistant_by_slug(
     response_data["skills"] = skills_data
 
     return JSONResponse(content=response_data, status_code=status.HTTP_200_OK)
+
+
+@router.get(
+    "/assistants/id/{assistant_id}",
+    status_code=status.HTTP_200_OK,
+    response_model=Assistant,
+    response_model_by_alias=True,
+)
+def get_assistant_by_id(request: Request, assistant_id: str, user: User = Depends(authenticate)):
+    """
+    Returns saved assistant by id
+    """
+    assistant = _get_assistant_by_id_or_raise(assistant_id)
+    return _build_assistant_detail_response(assistant, user)
+
+
+@router.get(
+    "/assistants/slug/{assistant_slug:path}",
+    status_code=status.HTTP_200_OK,
+    response_model=Assistant,
+    response_model_by_alias=True,
+)
+def get_assistant_by_slug(
+    request: Request,
+    assistant_slug: str,
+    user: User = Depends(authenticate),
+    project: Optional[str] = Query(
+        None,
+        description="Project name to scope the slug lookup. Slugs are unique per-project; "
+        "pass it to resolve human-readable {project}/{slug} URLs deterministically.",
+    ),
+):
+    """
+    Returns saved assistant by slug
+    """
+    assistant = _get_assistant_by_slug_or_raise(assistant_slug, project)
+    return _build_assistant_detail_response(assistant, user)
 
 
 @router.get(
