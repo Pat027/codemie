@@ -14,7 +14,7 @@
 
 import base64
 import json
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, status, Depends, Query, BackgroundTasks
 
@@ -141,19 +141,41 @@ def get_workflows(
     summary="Get prebuilt workflows",
     description="Retrieves a list of prebuilt workflows available in the system.",
 )
-def get_prebuilt_workflows():
-    """
-    Endpoint to retrieve prebuilt workflows.
+def get_prebuilt_workflows(filters: Optional[str] = None):
+    all_templates = workflow_service.get_prebuilt_workflows()
 
-    Utilizes the `get_prebuilt_workflows` method from the `WorkflowService` to fetch and return
-    a list of prebuilt workflows. This endpoint is useful for clients to discover workflows
-    that are readily available for use without the need for custom creation.
+    parsed_filters: Optional[Dict[str, Any]] = None
+    if filters:
+        try:
+            parsed_filters = json.loads(filters)
+        except json.JSONDecodeError:
+            raise ExtendedHTTPException(
+                code=status.HTTP_400_BAD_REQUEST,
+                message="Invalid filters",
+                details="Filters must be a valid encoded JSON object.",
+                help="Please check the filters and ensure they are in the correct format.",
+            )
 
-    Returns:
-        A list of `WorkflowConfig` objects representing the prebuilt workflows.
-    """
-    prebuilt_workflows = workflow_service.get_prebuilt_workflows()
-    return prebuilt_workflows
+    if parsed_filters:
+        name_filter = parsed_filters.get("name") or parsed_filters.get("search")
+        categories_filter = parsed_filters.get("categories")
+        created_by_filter = parsed_filters.get("created_by")
+        if name_filter:
+            all_templates = [t for t in all_templates if name_filter.lower() in t.name.lower()]
+        if categories_filter:
+            all_templates = [t for t in all_templates if any(c in (t.categories or []) for c in categories_filter)]
+        if created_by_filter:
+            all_templates = [
+                t
+                for t in all_templates
+                if t.created_by
+                and (
+                    getattr(t.created_by, "name", None) == created_by_filter
+                    or getattr(t.created_by, "username", None) == created_by_filter
+                )
+            ]
+
+    return all_templates
 
 
 @router.get(

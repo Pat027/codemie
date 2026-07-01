@@ -521,7 +521,7 @@ class WorkflowService:
             for filename in os.listdir(templates_dir):
                 if not filename.endswith("_template.yaml"):
                     continue
-                with open(os.path.join(templates_dir, filename), 'r') as file:
+                with open(os.path.join(templates_dir, filename), 'r', encoding='utf-8') as file:
                     workflow_config = WorkflowConfigTemplate.from_yaml(file.read())
                     if workflow_config:
                         prebuilt_workflows.append(workflow_config)

@@ -35,6 +35,7 @@ class AssistantScope(str, Enum):
     CREATED_BY_USER = "created_by_user"
     MARKETPLACE = "marketplace"
     ALL = "all"
+    TEMPLATES = "templates"
 
 
 class AssistantRepository:

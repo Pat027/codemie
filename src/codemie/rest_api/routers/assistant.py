@@ -157,6 +157,29 @@ class SystemPromptValidationResponse(BaseModel):
     message: str = "System prompt rendered successfully"
 
 
+def _apply_template_filters(templates, parsed_filters):
+    if not parsed_filters:
+        return templates
+    name_filter = parsed_filters.get("search") or parsed_filters.get("name")
+    categories_filter = parsed_filters.get("categories")
+    created_by_filter = parsed_filters.get("created_by")
+    if name_filter:
+        templates = [t for t in templates if name_filter.lower() in t.name.lower()]
+    if categories_filter:
+        templates = [t for t in templates if any(c in (t.categories or []) for c in categories_filter)]
+    if created_by_filter:
+        templates = [
+            t
+            for t in templates
+            if t.created_by
+            and (
+                getattr(t.created_by, "name", None) == created_by_filter
+                or getattr(t.created_by, "username", None) == created_by_filter
+            )
+        ]
+    return templates
+
+
 @router.get(
     "/assistants",
     status_code=status.HTTP_200_OK,
@@ -182,6 +205,17 @@ def index_assistants(
             message="Invalid filters",
             details="Filters must be a valid encoded JSON object.",
             help="Please check the filters and ensure they are in the correct format. ",
+        )
+
+    if scope == AssistantScope.TEMPLATES:
+        all_templates = _apply_template_filters(PrebuiltAssistant.prebuilt_assistants(user), parsed_filters)
+        total = len(all_templates)
+        paginated = all_templates[page * per_page : (page + 1) * per_page]
+        pages = (total + per_page - 1) // per_page if per_page else 0
+        meta = {"page": page, "per_page": per_page, "total": total, "pages": pages}
+        return JSONResponse(
+            content=jsonable_encoder({"data": paginated, "pagination": meta}),
+            status_code=status.HTTP_200_OK,
         )
 
     repository = AssistantRepository()
@@ -210,6 +244,14 @@ def get_assistant_users(
     """
     Returns list of users who created assistants within the specified scope
     """
+    if scope == AssistantScope.TEMPLATES:
+        all_templates = PrebuiltAssistant.prebuilt_assistants(user)
+        seen = {}
+        for t in all_templates:
+            if t.created_by and t.created_by.username and t.created_by.username not in seen:
+                seen[t.created_by.username] = t.created_by
+        return list(seen.values())
+
     repository = AssistantRepository()
     result = repository.get_users(user=user, scope=scope)
 
