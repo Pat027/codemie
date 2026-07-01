@@ -288,11 +288,17 @@ class ToolkitService:
         if not request:
             return tools
 
-        enable_image_generation = getattr(request, "enable_image_generation", None)
-        if enable_image_generation is None:
-            enable_image_generation = getattr(assistant, "enable_image_generation", None)
+        # Tool exposure should be based on assistant capability.
+        # The request flag may only explicitly disable image generation for this run.
+        assistant_enabled = getattr(assistant, "enable_image_generation", None) is True
+        request_override = getattr(request, "enable_image_generation", None)
 
-        if enable_image_generation is not True:
+        # If assistant doesn't support image generation -> never add.
+        if not assistant_enabled:
+            return tools
+
+        # If request explicitly disables -> don't add (even if assistant supports it).
+        if request_override is False:
             return tools
 
         if any(tool.name == GENERATE_WORKSPACE_IMAGE_TOOL_V2.name for tool in tools):

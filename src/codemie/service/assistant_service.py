@@ -99,11 +99,13 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
         if 'image_generation_model' not in fields_set and conversation.image_generation_model is not None:
             request.image_generation_model = conversation.image_generation_model
 
-        if request.enable_image_generation is not None:
-            assistant.enable_image_generation = request.enable_image_generation
-
-        if request.image_generation_model is not None:
-            assistant.image_generation_model = request.image_generation_model
+        # IMPORTANT:
+        # Do not mutate the Assistant model in-place with conversation/request overrides.
+        # The "enable_image_generation" flag is an assistant capability toggle and must remain
+        # controlled by the assistant's own configuration (especially for sub-assistants).
+        #
+        # Conversation/request overrides should affect *this request execution only* via the request object.
+        # (Tool resolution respects the assistant capability and may optionally honor an explicit request disable.)
 
     @classmethod
     def get_tools_info(cls, user: User, show_for_ui: bool = False):

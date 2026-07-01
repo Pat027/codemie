@@ -1228,7 +1228,93 @@ class TestToolkitService:
     def test_get_tools_adds_workspace_image_tool_when_enabled(
         self, mock_get_workspace_image_tool, mock_assistant, mock_request, mock_user
     ):
+        # Tool exposure is based on assistant capability. The request flag can only disable.
+        mock_assistant.enable_image_generation = True
         mock_request.enable_image_generation = True
+        mock_tool = Mock(spec=BaseTool)
+        mock_tool.name = GENERATE_WORKSPACE_IMAGE_TOOL_V2.name
+        mock_get_workspace_image_tool.return_value = mock_tool
+
+        with patch.object(ToolkitService, 'get_core_tools', return_value=[]):
+            with patch.object(ToolkitService, 'add_context_tools', return_value=[]):
+                with patch.object(ToolkitService, '_get_tools', return_value=[]):
+                    result = ToolkitService.get_tools(
+                        assistant=mock_assistant,
+                        request=mock_request,
+                        user=mock_user,
+                        llm_model="gpt-4",
+                        request_uuid="test-uuid",
+                    )
+
+        assert result == [mock_tool]
+        mock_get_workspace_image_tool.assert_called_once_with(mock_assistant, mock_user, mock_request)
+
+    @patch("codemie.service.tools.toolkit_service.ToolkitSettingService.get_workspace_image_generation_tool")
+    def test_get_tools_does_not_add_workspace_image_tool_when_assistant_disabled(
+        self, mock_get_workspace_image_tool, mock_assistant, mock_request, mock_user
+    ):
+        """
+        Covers branch:
+            if not assistant_enabled: return tools
+
+        Assistant capability flag = False must block image tool even if request asks for it.
+        """
+        mock_assistant.enable_image_generation = False
+        mock_request.enable_image_generation = True
+
+        with patch.object(ToolkitService, 'get_core_tools', return_value=[]):
+            with patch.object(ToolkitService, 'add_context_tools', return_value=[]):
+                with patch.object(ToolkitService, '_get_tools', return_value=[]):
+                    result = ToolkitService.get_tools(
+                        assistant=mock_assistant,
+                        request=mock_request,
+                        user=mock_user,
+                        llm_model="gpt-4",
+                        request_uuid="test-uuid",
+                    )
+
+        assert result == []
+        mock_get_workspace_image_tool.assert_not_called()
+
+    @patch("codemie.service.tools.toolkit_service.ToolkitSettingService.get_workspace_image_generation_tool")
+    def test_get_tools_does_not_add_workspace_image_tool_when_request_explicitly_disables(
+        self, mock_get_workspace_image_tool, mock_assistant, mock_request, mock_user
+    ):
+        """
+        Covers branch:
+            if request_override is False: return tools
+
+        Even when assistant capability flag = True, request can explicitly disable.
+        """
+        mock_assistant.enable_image_generation = True
+        mock_request.enable_image_generation = False
+
+        with patch.object(ToolkitService, 'get_core_tools', return_value=[]):
+            with patch.object(ToolkitService, 'add_context_tools', return_value=[]):
+                with patch.object(ToolkitService, '_get_tools', return_value=[]):
+                    result = ToolkitService.get_tools(
+                        assistant=mock_assistant,
+                        request=mock_request,
+                        user=mock_user,
+                        llm_model="gpt-4",
+                        request_uuid="test-uuid",
+                    )
+
+        assert result == []
+        mock_get_workspace_image_tool.assert_not_called()
+
+    @patch("codemie.service.tools.toolkit_service.ToolkitSettingService.get_workspace_image_generation_tool")
+    def test_get_tools_adds_workspace_image_tool_when_assistant_enabled_and_request_unspecified(
+        self, mock_get_workspace_image_tool, mock_assistant, mock_request, mock_user
+    ):
+        """
+        Covers the intended "sub-assistant fix" behavior:
+        - assistant.enable_image_generation = True enables the capability
+        - request.enable_image_generation = None does not block the tool
+        """
+        mock_assistant.enable_image_generation = True
+        mock_request.enable_image_generation = None
+
         mock_tool = Mock(spec=BaseTool)
         mock_tool.name = GENERATE_WORKSPACE_IMAGE_TOOL_V2.name
         mock_get_workspace_image_tool.return_value = mock_tool

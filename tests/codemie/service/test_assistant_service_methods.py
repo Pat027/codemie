@@ -266,8 +266,11 @@ class TestApplyConversationRuntimeOverrides:
         assert request.llm_model == "conversation-model"
         assert request.enable_image_generation is False
         assert request.image_generation_model == "conversation-image-model"
-        assert assistant.enable_image_generation is False
-        assert assistant.image_generation_model == "conversation-image-model"
+        # Assistant capability flags should not be mutated by conversation/request overrides.
+        # Overrides are applied to the request only (runtime behavior), especially to avoid
+        # leaking parent assistant capabilities into sub-assistants.
+        assert assistant.enable_image_generation is True
+        assert assistant.image_generation_model == "assistant-image-model"
 
     @patch('codemie.service.assistant_service.Conversation.find_by_id')
     def test_keeps_explicit_request_image_generation_overrides(self, mock_find_by_id):
@@ -295,8 +298,9 @@ class TestApplyConversationRuntimeOverrides:
         assert request.llm_model == "request-model"
         assert request.enable_image_generation is True
         assert request.image_generation_model == "request-image-model"
-        assert assistant.enable_image_generation is True
-        assert assistant.image_generation_model == "request-image-model"
+        # Assistant capability flags should not be mutated by request overrides.
+        assert assistant.enable_image_generation is False
+        assert assistant.image_generation_model is None
 
     @patch('codemie.service.assistant_service.Conversation.find_by_id')
     def test_does_not_override_assistant_with_unset_conversation_image_generation(self, mock_find_by_id):
