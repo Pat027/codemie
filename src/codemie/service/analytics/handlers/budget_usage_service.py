@@ -215,7 +215,6 @@ def _compute_spend_delta_safe(
     budget: Any,
     now: datetime,
     subject_label: str,
-    allow_zero: bool = False,
 ) -> tuple | None:
     """Return (daily_spend, cumulative_spend), or None to skip the row."""
     from codemie.service.spend_tracking.spend_collector_service import InvalidSpendSnapshotError
@@ -228,19 +227,12 @@ def _compute_spend_delta_safe(
             f"subject={subject_label}: {exc}"
         )
         return None
-    if daily_spend == Decimal("0") and not allow_zero:
+    if daily_spend == Decimal("0"):
         logger.debug(
             f"Zero daily delta for budget_id={assignment.budget_id!r} subject={subject_label}; skipping insert"
         )
         return None
     return daily_spend, cumulative_spend
-
-
-def _is_reset_transition(prev_row: Any, budget: Any, fresh_spend: Decimal, now: datetime) -> bool:
-    """Return True when fresh_spend represents a reset from a previously non-zero period."""
-    from codemie.service.spend_tracking.spend_collector_service import LiteLLMSpendCollectorService
-
-    return LiteLLMSpendCollectorService._is_reset_with_prior_spend(prev_row, budget, fresh_spend, now)
 
 
 def _collect_spend_rows(
@@ -281,15 +273,7 @@ def _collect_spend_rows(
             unchanged_budget_ids.append(assignment.budget_id)
             continue
         prev_row = existing if existing is not None else prev_day_map.get(assignment.category)
-        delta = _compute_spend_delta_safe(
-            assignment,
-            fresh_spend,
-            prev_row,
-            budget,
-            now,
-            subject_label,
-            allow_zero=_is_reset_transition(prev_row, budget, fresh_spend, now),
-        )
+        delta = _compute_spend_delta_safe(assignment, fresh_spend, prev_row, budget, now, subject_label)
         if delta is None:
             continue
         daily_spend, cumulative_spend = delta

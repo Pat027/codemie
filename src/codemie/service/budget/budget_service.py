@@ -17,8 +17,6 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from decimal import Decimal
 from typing import TYPE_CHECKING, Optional
 from uuid import uuid4
 
@@ -32,11 +30,9 @@ from codemie.configs.budget_config import budget_config
 from codemie.configs.config import PredefinedBudgetConfig
 from codemie.core.exceptions import ExtendedHTTPException, ValidationException
 from codemie.repository.budget_repository import budget_repository
-from codemie.repository.project_spend_tracking_repository import project_spend_tracking_repository
 from codemie.service.budget.budget_enums import AllocationMode, BudgetCategory, BudgetType
 from codemie.service.budget.budget_models import Budget
 from codemie.service.budget.provider_registry import get_active_provider
-from codemie.service.spend_tracking.spend_models import ProjectSpendTracking
 
 if TYPE_CHECKING:
     from codemie.service.budget.provider import BudgetEnforcementProvider, BudgetProviderState, GlobalBudgetState
@@ -1208,35 +1204,6 @@ class BudgetService:
             except Exception as exc:
                 logger.warning(
                     f"Failed to reset budget spending for user {user_id!r} category {category.value!r}: {exc}"
-                )
-                continue
-
-            try:
-                now = datetime.now(timezone.utc)
-                prev_rows = await project_spend_tracking_repository.get_latest_by_budget_ids(
-                    session, [budget_id], db_user.username
-                )
-                prev_row = prev_rows.get(budget_id)
-                marker: list[ProjectSpendTracking] = []
-                if prev_row is not None and prev_row.budget_period_spend > Decimal("0"):
-                    marker.append(
-                        ProjectSpendTracking(
-                            id=uuid4(),
-                            project_name=db_user.username,
-                            budget_id=budget_id,
-                            budget_category=category.value,
-                            spend_subject_type="budget",
-                            spend_date=now,
-                            budget_period_spend=Decimal("0"),
-                            daily_spend=Decimal("0"),
-                            cumulative_spend=prev_row.cumulative_spend,
-                        )
-                    )
-                await project_spend_tracking_repository.insert_budget_entries(session, marker)
-            except Exception as exc:
-                logger.warning(
-                    f"budget_event=reset_marker_write_failed component=budget_service "
-                    f"user_id={user_id!r} category={category.value!r}: {exc}"
                 )
 
         reset_scope = [c.value for c in target_categories]

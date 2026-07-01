@@ -142,9 +142,7 @@ class LiteLLMSpendCollectorService:
                 effective_cumulative = self._quantize_spend(
                     snapshot.cumulative_spend if snapshot.cumulative_spend is not None else cumulative_spend
                 )
-                if daily_spend == Decimal("0") and not self._is_reset_with_prior_spend(
-                    prev_row, budget, self._quantize_spend(snapshot.spend), target_snapshot_at
-                ):
+                if daily_spend == Decimal("0"):
                     logger.debug(
                         f"Member '{snapshot.user_id}' project '{snapshot.project_name}' "
                         f"budget_id={snapshot.budget_id!r} has zero delta; skipping snapshot"
@@ -200,9 +198,7 @@ class LiteLLMSpendCollectorService:
                 effective_cumulative = self._quantize_spend(
                     snapshot.cumulative_spend if snapshot.cumulative_spend is not None else cumulative_spend
                 )
-                if daily_spend == Decimal("0") and not self._is_reset_with_prior_spend(
-                    prev_row, budget, self._quantize_spend(snapshot.spend), target_snapshot_at
-                ):
+                if daily_spend == Decimal("0"):
                     logger.debug(
                         f"Project '{snapshot.project_name}' budget_id={snapshot.budget_id!r} "
                         f"has zero delta; skipping snapshot"
@@ -242,9 +238,7 @@ class LiteLLMSpendCollectorService:
                 effective_cumulative = self._quantize_spend(
                     snapshot.cumulative_spend if snapshot.cumulative_spend is not None else cumulative_spend
                 )
-                if daily_spend == Decimal("0") and not self._is_reset_with_prior_spend(
-                    prev_row, budget, self._quantize_spend(snapshot.spend), target_snapshot_at
-                ):
+                if daily_spend == Decimal("0"):
                     logger.debug(
                         f"Member '{snapshot.user_id}' project '{snapshot.project_name}' "
                         f"budget_id={snapshot.budget_id!r} has zero delta; skipping snapshot"
@@ -335,9 +329,7 @@ class LiteLLMSpendCollectorService:
                     f"daily_delta={daily_spend}"
                 )
 
-                if daily_spend == Decimal("0") and not self._is_reset_with_prior_spend(
-                    prev_row, budget, current_budget_period_spend, target_snapshot_at
-                ):
+                if daily_spend == Decimal("0"):
                     logger.debug(
                         f"Budget project '{project_name}' budget_id={entry.budget_id!r} "
                         f"has zero delta; skipping snapshot"
@@ -467,23 +459,6 @@ class LiteLLMSpendCollectorService:
             )
 
         return daily_spend, cumulative_spend
-
-    @staticmethod
-    def _is_reset_with_prior_spend(
-        prev_row: ProjectSpendTracking | None,
-        budget: Budget | None,
-        current_spend: Decimal,
-        snapshot_at: datetime,
-    ) -> bool:
-        """Return True when a reset was detected and the prior period had non-zero spend."""
-        if prev_row is None:
-            return False
-        had_prior = LiteLLMSpendCollectorService._quantize_spend(prev_row.budget_period_spend) > Decimal("0")
-        if not had_prior:
-            return False
-        return LiteLLMSpendCollectorService._did_budget_reset(
-            prev_row, budget, snapshot_at
-        ) or current_spend < LiteLLMSpendCollectorService._quantize_spend(prev_row.budget_period_spend)
 
     @staticmethod
     def _parse_budget_duration_to_delta(duration: str | None) -> timedelta | None:

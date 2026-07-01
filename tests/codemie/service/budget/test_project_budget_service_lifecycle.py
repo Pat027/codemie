@@ -42,7 +42,7 @@ async def test_reset_project_budget_uses_provider_reset_when_provider_budget_ref
     )
     updated_budget = SimpleNamespace(**budget.__dict__)
     assignment = SimpleNamespace(project_name="proj-a", budget_category="cli")
-    allocation = SimpleNamespace(id="alloc-1", user_id="user-1", project_budget_id="proj-budget-1")
+    allocation = SimpleNamespace(id="alloc-1", user_id="user-1")
     provider = SimpleNamespace(
         reset_project_budget_spend=AsyncMock(
             return_value=BudgetProviderState(
@@ -77,22 +77,6 @@ async def test_reset_project_budget_uses_provider_reset_when_provider_budget_ref
             new=AsyncMock(),
         ) as mock_update_metadata,
         patch.object(service, "_persist_child_budget_provider_state", new=AsyncMock()),
-        patch(
-            "codemie.service.budget.project_budget_service.project_spend_tracking_repository.get_latest_before_by_project_budget_ids",
-            new=AsyncMock(return_value={}),
-        ),
-        patch(
-            "codemie.service.budget.project_budget_service.project_spend_tracking_repository.get_latest_before_by_member_budget_ids",
-            new=AsyncMock(return_value={}),
-        ),
-        patch(
-            "codemie.service.budget.project_budget_service.project_spend_tracking_repository.insert_project_budget_entries",
-            new=AsyncMock(),
-        ),
-        patch(
-            "codemie.service.budget.project_budget_service.project_spend_tracking_repository.insert_member_budget_entries",
-            new=AsyncMock(),
-        ),
     ):
         await service.reset_project_budget(session=session, budget_id="proj-budget-1", actor_id="actor-1")
 
