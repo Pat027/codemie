@@ -19,9 +19,10 @@ Revises: r7s8t9u0v1w2
 Create Date: 2026-06-25 00:00:00.000000
 
 Backfills a slug for existing assistants (derived from their name), resolves any
-duplicate (project, slug) pairs by suffixing, then adds a partial unique index so
-slugs are unique within a project. NULL slugs are exempt from the constraint, so
-assistants whose name has no slug-eligible characters stay addressable by GUID.
+duplicate (project, slug) pairs by nullifying the losers (keeping the earliest),
+then adds a partial unique index so slugs are unique within a project. NULL slugs
+are exempt from the constraint, so assistants whose name has no slug-eligible
+characters stay addressable by GUID.
 """
 
 from typing import Sequence, Union
@@ -63,7 +64,13 @@ def upgrade() -> None:
         """
     )
 
-    # 2. Resolve duplicate (project, slug) pairs (pre-existing or just backfilled):
+    # 2. Nullify any remaining empty-string slugs. After step 1, rows whose name
+    #    produces no slug-eligible characters still carry slug = ''. The index
+    #    condition (slug IS NOT NULL) includes empty strings, so they must be
+    #    cleared before the index is created.
+    op.execute("UPDATE assistants SET slug = NULL WHERE slug = ''")
+
+    # 3. Resolve duplicate (project, slug) pairs (pre-existing or just backfilled):
     #    keep the earliest assistant's slug, suffix the rest with a deterministic,
     #    slug-safe fragment of their id so the new unique index can be created.
     op.execute(
@@ -75,7 +82,7 @@ def upgrade() -> None:
                        ORDER BY created_date NULLS FIRST, id
                    ) AS rn
             FROM assistants
-            WHERE slug IS NOT NULL AND slug <> ''
+            WHERE slug IS NOT NULL
         )
         UPDATE assistants a
         SET slug = a.slug || '-' || substr(md5(a.id::text), 1, 12)
@@ -84,7 +91,7 @@ def upgrade() -> None:
         """
     )
 
-    # 3. Enforce per-project slug uniqueness. NULL slugs are excluded.
+    # 4. Enforce per-project slug uniqueness. NULL slugs are excluded.
     op.create_index(
         "uq_assistants_project_slug",
         "assistants",
@@ -95,5 +102,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop the unique index. Backfilled slugs are intentionally kept."""
+    """Drop the unique index."""
     op.drop_index("uq_assistants_project_slug", table_name="assistants")
