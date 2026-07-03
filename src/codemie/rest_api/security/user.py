@@ -47,6 +47,7 @@ class User(BaseModel):
     is_maintainer: bool = Field(default=False)
     project_limit: int | None = Field(default=None)  # NULL = unlimited (admins); set from DB when flag ON
     auth_token: str | None = Field(None, exclude=True)
+    tenant_id: str | None = Field(None, exclude=True)
 
     @model_validator(mode='after')
     def resolve_is_admin(self) -> 'User':

@@ -582,6 +582,11 @@ async def lifespan(app: FastAPI):
 
     initialize_mcp_auth()
 
+    if config.JWKS_VALIDATION_ENABLED:
+        from codemie.rest_api.security.jwks.runtime import jwks_warmup
+
+        await jwks_warmup()
+
     # Initialize enterprise services
     _initialize_enterprise_services(app)
 

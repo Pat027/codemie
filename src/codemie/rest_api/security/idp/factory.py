@@ -76,13 +76,30 @@ class IdpFactory:
             BaseIdp instance. Falls back to LocalIdp if provider not registered.
         """
         if not provider_type:
-            provider_type = getattr(config, "IDP_PROVIDER", IdentityProvider.LOCAL)
+            provider_type = str(getattr(config, "IDP_PROVIDER", IdentityProvider.LOCAL))
 
-        idp_class = cls._idp_registry.get(provider_type.lower())
-        if not idp_class:
-            idp_class = LocalIdp
+        idp_class = cls._idp_registry.get(provider_type.lower()) or LocalIdp
+        instance = idp_class()
 
-        return idp_class()
+        if config.JWKS_VALIDATION_ENABLED and not isinstance(instance, LocalIdp):
+            from codemie.configs.logger import logger
+            from codemie.rest_api.security.idp.jwks_validating import JwksValidatingIdp
+            from codemie.rest_api.security.jwks.runtime import get_global_validator
+
+            # A misconfigured JWKS runtime (empty/invalid JWKS_TRUSTED_ISSUERS,
+            # missing enterprise package) raises ValueError/RuntimeError/ImportError.
+            # Fail closed instead of propagating: the wrapper is built with a
+            # None validator so authenticate() returns the documented 401, while
+            # cookie-only paths (e.g. GET /user/log_out) keep working.
+            try:
+                validator = get_global_validator()
+            except (ValueError, RuntimeError, ImportError) as e:
+                logger.error(f"JWKS validation is enabled but the runtime could not be built: {e}")
+                validator = None
+
+            instance = JwksValidatingIdp(inner=instance, validator=validator)
+
+        return instance
 
 
 def get_idp_provider(provider_type: str | None = None) -> BaseIdp:

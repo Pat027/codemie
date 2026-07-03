@@ -172,7 +172,12 @@ class Config(BaseSettings):
         KZ_USERS_INDEX,
     ]
 
-    IDP_PROVIDER: Literal["keycloak", "local", "oidc", "entraid-oidc"] = "local"
+    IDP_PROVIDER: Literal[
+        "keycloak",
+        "local",
+        "oidc",
+        "entraid-oidc",
+    ] = "local"
     KEYCLOAK_LOGOUT_URL: str = ""
     ADMIN_USER_ID: str = ""
     ADMIN_ROLE_NAME: str = "admin"
@@ -211,6 +216,20 @@ class Config(BaseSettings):
     JWT_PRIVATE_KEY_PATH: str = ".keys/jwt_private.pem"
     JWT_PUBLIC_KEY_PATH: str = ".keys/jwt_public.pem"
     JWT_ISSUER: str = "codemie-local"  # Issuer claim for local JWTs
+
+    # ===========================================
+    # JWKS signature validation (Serrala integration)
+    # ===========================================
+    # Opt-in defence-in-depth: cryptographically verify inbound bearer JWTs
+    # against the configured trusted issuers' JWKS endpoints before any IDP
+    # claim extraction. Enable with JWKS_VALIDATION_ENABLED=true.
+    JWKS_VALIDATION_ENABLED: bool = False
+    # JSON list of {issuer, audience, jwks_uri?, discovery_url?} dicts.
+    # Either jwks_uri or discovery_url must be set per entry.
+    JWKS_TRUSTED_ISSUERS: str = ""
+    JWKS_CACHE_TTL_SECONDS: int = 300
+    JWKS_HTTP_TIMEOUT_SECONDS: float = 3.0
+    JWKS_LEEWAY_SECONDS: int = 30
 
     # ===========================================
     # Cookie-Based Authentication (Local Auth)
