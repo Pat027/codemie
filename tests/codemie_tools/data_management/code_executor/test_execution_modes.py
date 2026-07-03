@@ -38,11 +38,11 @@ class TestExecutionModeSelection(unittest.TestCase):
         self.mock_file_repo = MagicMock()
 
     @patch.dict('os.environ', {}, clear=True)
-    def test_default_execution_mode_is_local(self):
-        """Test that default execution mode is LOCAL when no env override is set."""
+    def test_default_execution_mode_is_sandbox(self):
+        """Test that default execution mode is SANDBOX when no env override is set."""
         tool = CodeExecutorTool(user_id="test_user", file_repository=self.mock_file_repo)
 
-        assert tool.config.execution_mode == ExecutionMode.LOCAL
+        assert tool.config.execution_mode == ExecutionMode.SANDBOX
 
     @patch.dict('os.environ', {'CODE_EXECUTOR_EXECUTION_MODE': 'sandbox'})
     def test_execution_mode_from_environment(self):
@@ -53,24 +53,15 @@ class TestExecutionModeSelection(unittest.TestCase):
         assert tool.config.execution_mode == ExecutionMode.SANDBOX
 
     @patch.dict('os.environ', {'CODE_EXECUTOR_EXECUTION_MODE': 'local'})
-    def test_execution_mode_explicit_parameter_overrides_env(self):
-        """Test that explicit execution_mode parameter overrides environment."""
-        tool = CodeExecutorTool(
-            user_id="test_user", execution_mode=ExecutionMode.SANDBOX, file_repository=self.mock_file_repo
-        )
+    def test_execution_mode_local_env_is_rejected(self):
+        """Test that local execution mode from environment is rejected."""
+        with self.assertRaises(ValueError):
+            CodeExecutorTool(user_id="test_user", file_repository=self.mock_file_repo)
 
-        # Explicit parameter should take precedence
-        assert tool.config.execution_mode == ExecutionMode.SANDBOX
-        assert tool._mode_override is True
-
-    def test_execution_mode_explicit_parameter(self):
-        """Test execution mode with explicit parameter."""
-        tool = CodeExecutorTool(
-            user_id="test_user", execution_mode=ExecutionMode.LOCAL, file_repository=self.mock_file_repo
-        )
-
-        assert tool.config.execution_mode == ExecutionMode.LOCAL
-        assert tool._mode_override is True
+    def test_execution_mode_explicit_parameter_local_is_rejected(self):
+        """Test explicit local execution mode is rejected."""
+        with self.assertRaises(ValueError):
+            CodeExecutorTool(user_id="test_user", execution_mode="local", file_repository=self.mock_file_repo)
 
     @patch.dict('os.environ', {'CODE_EXECUTOR_EXECUTION_MODE': 'sandbox'})
     def test_execution_mode_none_parameter_uses_env(self):
@@ -159,11 +150,9 @@ class TestCodeExecutorToolSchemaInitialization(unittest.TestCase):
     def setUp(self) -> None:
         self.mock_file_repo = MagicMock()
 
-    def test_tool_initializes_schema_for_local_mode(self):
-        """Test that tool initializes correct schema for LOCAL mode."""
-        tool = CodeExecutorTool(
-            user_id="test_user", execution_mode=ExecutionMode.LOCAL, file_repository=self.mock_file_repo
-        )
+    def test_tool_initializes_schema_for_default_sandbox_mode(self):
+        """Test that tool initializes correct schema for sandbox mode by default."""
+        tool = CodeExecutorTool(user_id="test_user", file_repository=self.mock_file_repo)
 
         assert tool.args_schema is not None
         assert "code" in tool.args_schema.model_fields
@@ -205,20 +194,6 @@ class TestExecutionModeRouting(unittest.TestCase):
     def setUp(self) -> None:
         self.mock_file_repo = MagicMock()
 
-    def test_local_mode_routes_to_execute_local(self):
-        """Test that LOCAL mode routes to _execute_local."""
-        tool = CodeExecutorTool(
-            user_id="test_user",
-            execution_mode=ExecutionMode.LOCAL,
-            file_repository=self.mock_file_repo,
-        )
-
-        with patch.object(tool, '_execute_local', return_value="Local execution result") as mock_execute_local:
-            result = tool.execute(code="print('hello')")
-
-            mock_execute_local.assert_called_once_with("print('hello')", None)
-        assert result == "Local execution result"
-
     @patch('codemie_tools.data_management.code_executor.code_executor_tool.SandboxSessionManager')
     def test_sandbox_mode_routes_to_execute_sandbox(self, mock_manager_class):
         """Test that SANDBOX mode routes to _execute_sandbox."""
@@ -247,32 +222,9 @@ class TestExecutionModeRouting(unittest.TestCase):
             mock_session.run.assert_called_once()
             assert "Sandbox execution result" in result
 
-    def test_mode_logging_with_explicit_parameter(self):
-        """Test that execution mode is logged with reason."""
-        tool = CodeExecutorTool(
-            user_id="test_user", execution_mode=ExecutionMode.LOCAL, file_repository=self.mock_file_repo
-        )
-
-        with patch('codemie_tools.data_management.code_executor.code_executor_tool.logger') as mock_logger:
-            tool.execute(code="print('test')")
-
-            # Check that debug logging was called with reason
-            debug_calls = mock_logger.debug.call_args_list
-            assert any("LOCAL mode" in str(call) for call in debug_calls)
-
 
 class TestSchemaFieldDescriptions(unittest.TestCase):
     """Test suite for detailed schema field descriptions."""
-
-    def test_local_schema_mentions_matplotlib(self):
-        """Test that LOCAL schema mentions matplotlib usage."""
-        schema = get_code_executor_input_schema(
-            execution_mode=ExecutionMode.LOCAL, blocked_modules=None, file_names=None
-        )
-
-        field_info = schema.model_fields["code"]
-        description = field_info.description
-        assert "matplotlib" in description.lower()
 
     def test_sandbox_schema_mentions_pre_installed_libraries(self):
         """Test that SANDBOX schema mentions pre-installed libraries."""
@@ -320,23 +272,17 @@ class TestExecutionModeConfiguration(unittest.TestCase):
 
     def test_tool_respects_config_execution_mode(self):
         """Test that tool respects config's execution_mode."""
-        config = CodeExecutorConfig(execution_mode=ExecutionMode.LOCAL)
+        config = CodeExecutorConfig(execution_mode=ExecutionMode.SANDBOX)
         tool = CodeExecutorTool(user_id="test_user", file_repository=self.mock_file_repo)
         tool.config = config
 
-        assert tool.config.execution_mode == ExecutionMode.LOCAL
+        assert tool.config.execution_mode == ExecutionMode.SANDBOX
 
     @patch('codemie_tools.data_management.code_executor.code_executor_tool.SandboxSessionManager')
     def test_security_policy_only_initialized_for_both_modes(self, mock_manager):
-        """Test that security policy is only initialized for SANDBOX mode."""
+        """Test that security policy is initialized for sandbox mode."""
         # Test SANDBOX mode
         tool_sandbox = CodeExecutorTool(
             user_id="test_user", execution_mode=ExecutionMode.SANDBOX, file_repository=self.mock_file_repo
         )
         assert tool_sandbox.security_policy is not None
-
-        # Test LOCAL mode
-        tool_local = CodeExecutorTool(
-            user_id="test_user", execution_mode=ExecutionMode.LOCAL, file_repository=self.mock_file_repo
-        )
-        assert tool_local.security_policy is not None

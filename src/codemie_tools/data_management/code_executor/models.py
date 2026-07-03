@@ -34,7 +34,6 @@ class ExecutionMode(str, Enum):
     """Execution mode for code execution."""
 
     SANDBOX = "sandbox"
-    LOCAL = "local"
 
 
 class SandboxMode(str, Enum):
@@ -65,7 +64,7 @@ class CodeExecutorConfig(CodeMieToolConfig):
     )
 
     docker_image: str = Field(
-        default="epamairun/codemie-python:2.2.13-1",
+        default="epamairun/codemie-python:2.37.0",
         description="Docker image for Python execution environment",
     )
 
@@ -140,10 +139,10 @@ class CodeExecutorConfig(CodeMieToolConfig):
         gt=0,
     )
 
-    security_threshold: Optional[SecurityIssueSeverity] = Field(
+    security_threshold: SecurityIssueSeverity = Field(
         default=SecurityIssueSeverity.LOW,
         description="Security policy severity threshold. "
-        "If None, no restrictions are applied (empty policy). "
+        "Required; must be one of SAFE, LOW, MEDIUM, HIGH. "
         "Defaults to LOW for balanced security. "
         "SAFE (0): blocks nothing (most permissive). "
         "LOW (1): allows read operations like requests.get(). "
@@ -159,10 +158,9 @@ class CodeExecutorConfig(CodeMieToolConfig):
     )
 
     execution_mode: ExecutionMode = Field(
-        default=ExecutionMode.LOCAL,
-        description="Execution mode: 'sandbox' for isolated Kubernetes pod execution, "
-        "'local' for embedded kernel execution. "
-        "Note: 'local' mode has limited security and resource controls.",
+        default=ExecutionMode.SANDBOX,
+        description="Execution mode: 'sandbox' for isolated Kubernetes pod execution. "
+        "Sandbox is the only supported execution mode.",
     )
 
     sandbox_mode: SandboxMode = Field(
@@ -207,10 +205,8 @@ class CodeExecutorConfig(CodeMieToolConfig):
             v_lower = v.lower()
             if v_lower == "sandbox":
                 return ExecutionMode.SANDBOX
-            elif v_lower == "local":
-                return ExecutionMode.LOCAL
             else:
-                raise ValueError(f"Invalid execution_mode: {v}. Must be 'sandbox' or 'local'")
+                raise ValueError(f"Invalid execution_mode: {v}. Only 'sandbox' is supported")
 
         raise ValueError(f"Invalid execution_mode type: {type(v)}")
 
@@ -239,9 +235,8 @@ class CodeExecutorConfig(CodeMieToolConfig):
     @classmethod
     def validate_security_threshold(cls, v) -> Optional[SecurityIssueSeverity]:
         """Validate and convert security threshold value."""
-        # Allow None (no restrictions)
         if v is None or (isinstance(v, str) and v == ""):
-            return None
+            raise ValueError("Invalid security_threshold: value must be one of SAFE, LOW, MEDIUM, HIGH")
 
         # If already an enum, return it
         if isinstance(v, SecurityIssueSeverity):
@@ -277,7 +272,7 @@ class CodeExecutorConfig(CodeMieToolConfig):
         Create configuration from environment variables with fallback to defaults.
 
         Environment Variables:
-            CODE_EXECUTOR_EXECUTION_MODE: Execution mode (sandbox/local, default: sandbox)
+            CODE_EXECUTOR_EXECUTION_MODE: Execution mode (sandbox only, default: sandbox)
             CODE_EXECUTOR_KUBECONFIG_PATH: Path to kubeconfig file (optional, takes priority over ENV)
             CODE_EXECUTOR_WORKDIR_BASE: Base working directory
             CODE_EXECUTOR_NAMESPACE: Kubernetes namespace
@@ -312,11 +307,11 @@ class CodeExecutorConfig(CodeMieToolConfig):
             return value.lower() in ("true", "1", "yes")
 
         return cls(
-            execution_mode=os.getenv("CODE_EXECUTOR_EXECUTION_MODE", "local"),
+            execution_mode=os.getenv("CODE_EXECUTOR_EXECUTION_MODE", "sandbox"),
             workdir_base=os.getenv("CODE_EXECUTOR_WORKDIR_BASE", "/home/codemie"),
             namespace=os.getenv("CODE_EXECUTOR_NAMESPACE", "codemie-runtime"),
             runtime_class_name=os.getenv("CODE_EXECUTOR_RUNTIME_CLASS_NAME", "gvisor"),
-            docker_image=os.getenv("CODE_EXECUTOR_DOCKER_IMAGE", "epamairun/codemie-python:2.2.9-1"),
+            docker_image=os.getenv("CODE_EXECUTOR_DOCKER_IMAGE", "epamairun/codemie-python:2.37.0"),
             execution_timeout=float(os.getenv("CODE_EXECUTOR_EXECUTION_TIMEOUT", "30.0")),
             session_timeout=float(os.getenv("CODE_EXECUTOR_SESSION_TIMEOUT", "300.0")),
             default_timeout=float(os.getenv("CODE_EXECUTOR_DEFAULT_TIMEOUT", "30.0")),
@@ -337,14 +332,3 @@ class CodeExecutorConfig(CodeMieToolConfig):
             kubeconfig_path=os.getenv("CODE_EXECUTOR_KUBECONFIG_PATH", ""),
             sandbox_mode=os.getenv("CODE_EXECUTOR_SANDBOX_MODE", "sandbox-shared"),
         )
-
-    @classmethod
-    def warn_if_local_execution(cls) -> None:
-        if cls.from_env().execution_mode == ExecutionMode.LOCAL:
-            logger.warning(
-                "\n" + "-" * 80 + "\n"
-                "SECURITY WARNING: Workspace script execution is running in LOCAL mode\n"
-                "(CODE_EXECUTOR_EXECUTION_MODE=local). Scripts uploaded by authenticated\n"
-                "users will be executed directly on this pod with full OS access.\n"
-                "Set CODE_EXECUTOR_EXECUTION_MODE=sandbox for isolated execution.\n" + "-" * 80
-            )

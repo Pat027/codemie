@@ -81,19 +81,36 @@ class FileSystemToolkit(BaseToolkit):
         """
         return os.getenv("FILE_SYSTEM_TOOLS_ENABLED", "false").lower() == "true"
 
+    @staticmethod
+    def _is_code_executor_enabled() -> bool:
+        """
+        Check if the Code Executor tool should be enabled.
+
+        Disabled by default; an operator must opt in explicitly.
+
+        Returns:
+            bool: True if CODE_EXECUTOR_ENABLED env var is set to "true"
+        """
+        return os.getenv("CODE_EXECUTOR_ENABLED", "false").lower() == "true"
+
     @classmethod
     def get_tools_ui_info(cls, is_admin: bool = False):
+        code_executor_enabled = cls._is_code_executor_enabled()
+
         # Only show all tools if user is admin AND environment variable is enabled
         if is_admin and cls._is_file_system_tools_enabled():
-            return FileSystemToolkitUI().model_dump()
+            toolkit = FileSystemToolkitUI()
+            if not code_executor_enabled:
+                toolkit.tools = [tool for tool in toolkit.tools if tool.name != CODE_EXECUTOR_TOOL.name]
+            return toolkit.model_dump()
 
         # Otherwise, return only safe tools
+        tools = [Tool.from_metadata(GENERATE_IMAGE_TOOL)]
+        if code_executor_enabled:
+            tools.append(Tool.from_metadata(CODE_EXECUTOR_TOOL))
         return ToolKit(
             toolkit=ToolSet.FILE_SYSTEM,
-            tools=[
-                Tool.from_metadata(GENERATE_IMAGE_TOOL),
-                Tool.from_metadata(CODE_EXECUTOR_TOOL),
-            ],
+            tools=tools,
         ).model_dump()
 
     def get_tools(self) -> list:
@@ -103,12 +120,16 @@ class FileSystemToolkit(BaseToolkit):
                 file_repository=self.file_repository,
                 user_id=self.user_id or "",
             ),
-            CodeExecutorTool(
-                file_repository=self.file_repository,
-                user_id=self.user_id,
-                input_files=self.input_files,
-            ),
         ]
+
+        if self._is_code_executor_enabled():
+            tools.append(
+                CodeExecutorTool(
+                    file_repository=self.file_repository,
+                    user_id=self.user_id,
+                    input_files=self.input_files,
+                )
+            )
 
         # Only add file system tools if user is admin AND environment variable is enabled
         if self._is_file_system_tools_enabled():

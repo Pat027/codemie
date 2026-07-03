@@ -108,7 +108,6 @@ from external.deployment_scripts.preconfigured_workflows import create_preconfig
 from external.deployment_scripts.preconfigured_katas import import_preconfigured_katas
 from codemie.clients.postgres import alembic_upgrade_enterprise_postgres, alembic_upgrade_postgres
 from codemie.service.budget.startup_reconciliation_service import budget_startup_reconciliation_service
-from codemie_tools.data_management.code_executor.models import CodeExecutorConfig
 
 # Rate limiting imports (EPMCDME-10160)
 from slowapi.middleware import SlowAPIMiddleware
@@ -668,8 +667,6 @@ async def lifespan(app: FastAPI):
     _setup_leaderboard_scheduler(app)
     _setup_stale_datasource_scheduler(app)
     _schedule_budget_reconciliation(app, tasks)
-
-    CodeExecutorConfig.warn_if_local_execution()
 
     yield
 

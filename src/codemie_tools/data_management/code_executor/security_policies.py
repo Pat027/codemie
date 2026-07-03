@@ -20,11 +20,15 @@ code execution environments.
 """
 
 import logging
+import re
 from pathlib import Path
 from typing import Optional, Dict, Any
 
 import yaml
+from llm_sandbox.language_handlers.python_handler import PythonHandler
 from llm_sandbox.security import SecurityPolicy, SecurityPattern, RestrictedModule, SecurityIssueSeverity
+
+from codemie_tools.data_management.code_executor.ast_security_checker import check_code_with_ast
 
 logger = logging.getLogger(__name__)
 
@@ -267,3 +271,71 @@ def get_restricted_module_names(
 
     # Return sorted list for consistent output
     return sorted(restricted_names)
+
+
+def check_security_policy(policy: SecurityPolicy, code: str) -> tuple[bool, list[SecurityPattern]]:
+    """Run the security policy check against Python code.
+
+    Uses a two-layer approach:
+    1. AST-based analysis (NEW) - detects bypass techniques like __import__,
+       string concatenation, chr() construction
+    2. Regex-based analysis (EXISTING) - detects patterns in filtered code
+
+    The AST layer catches techniques that evade regex detection.
+
+    Args:
+        policy: The :class:`SecurityPolicy` to evaluate.
+        code: Raw Python source code to check.
+
+    Returns:
+        A ``(is_safe, violations)`` tuple consistent with
+        ``SandboxSession.is_safe()``.
+    """
+
+    threshold = policy.severity_threshold or SecurityIssueSeverity.SAFE
+
+    # Layer 1: AST-based check (catches bypasses)
+    ast_is_safe, ast_violations = check_code_with_ast(code, threshold)
+    if not ast_is_safe:
+        logger.info(f"AST security check failed: {len(ast_violations)} violation(s)")
+        return False, ast_violations
+
+    # Layer 2: Regex-based check (existing logic)
+    handler = PythonHandler(logger=logger)
+
+    # Expand restricted modules into regex patterns (same as _add_restricted_module_patterns)
+    patterns: list[SecurityPattern] = list(policy.patterns or [])
+    for module in policy.restricted_modules or []:
+        patterns.append(
+            SecurityPattern(
+                pattern=handler.get_import_patterns(module.name),
+                description=module.description,
+                severity=module.severity,
+            )
+        )
+
+    if not patterns:
+        return True, []
+
+    # Filter comments before pattern matching (same as filter_comments in language handler)
+    filtered_code = handler.filter_comments(code)
+
+    # Check each pattern (same as _check_pattern_violations)
+    violations: list[SecurityPattern] = []
+
+    for pattern_obj in patterns:
+        if not pattern_obj.pattern:
+            continue
+        try:
+            matched = bool(re.search(pattern_obj.pattern, filtered_code))
+        except re.error as exc:
+            logger.error(f"Invalid regex pattern '{pattern_obj.pattern}': {exc}")
+            continue
+
+        if matched:
+            violations.append(pattern_obj)
+            # Early exit on critical violation (same as _should_fail_on_violation)
+            if SecurityIssueSeverity.SAFE < threshold <= pattern_obj.severity:
+                return False, violations
+
+    return len(violations) == 0, violations

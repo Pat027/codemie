@@ -215,6 +215,7 @@ class ToolkitService:
         """
         from codemie.configs.customer_config import customer_config
         from codemie_tools.base.models import Tool
+        from codemie_tools.data_management.file_system.toolkit import FileSystemToolkit
 
         if not request:
             return selected_toolkits
@@ -253,8 +254,11 @@ class ToolkitService:
 
         # Code Interpreter feature flag
         # Only add if explicitly requested in the API request AND customer config allows it
-        enable_code_interpreter = request.enable_code_interpreter is True and customer_config.is_feature_enabled(
-            "dynamicCodeInterpreter"
+        # AND the Code Executor is enabled by the operator (disabled by default).
+        enable_code_interpreter = (
+            request.enable_code_interpreter is True
+            and customer_config.is_feature_enabled("dynamicCodeInterpreter")
+            and FileSystemToolkit._is_code_executor_enabled()
         )
 
         if (

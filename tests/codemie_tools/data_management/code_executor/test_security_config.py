@@ -74,9 +74,9 @@ class TestSecurityThresholdConfig(unittest.TestCase):
         assert "SAFE, LOW, MEDIUM, HIGH" in str(exc_info.value)
 
     def test_security_threshold_validator_accepts_empty(self):
-        """Test that empty threshold value is accepted as None (unrestricted)."""
-        config = CodeExecutorConfig(security_threshold="")
-        assert config.security_threshold is None
+        """Test that empty threshold value is rejected."""
+        with pytest.raises(ValueError):
+            CodeExecutorConfig(security_threshold="")
 
 
 class TestSecurityPolicyThreshold(unittest.TestCase):

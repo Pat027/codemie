@@ -34,12 +34,10 @@ class TestExecutionMode(unittest.TestCase):
     def test_execution_mode_values(self):
         """Test ExecutionMode enum values."""
         assert ExecutionMode.SANDBOX.value == "sandbox"
-        assert ExecutionMode.LOCAL.value == "local"
 
     def test_execution_mode_is_string_enum(self):
         """Test that ExecutionMode inherits from str."""
         assert isinstance(ExecutionMode.SANDBOX, str)
-        assert isinstance(ExecutionMode.LOCAL, str)
 
 
 class TestCodeExecutorConfigDefaults(unittest.TestCase):
@@ -52,7 +50,7 @@ class TestCodeExecutorConfigDefaults(unittest.TestCase):
         assert config.workdir_base == "/home/codemie"
         assert config.namespace == "codemie-runtime"
         assert config.runtime_class_name == "gvisor"
-        assert config.docker_image == "epamairun/codemie-python:2.2.13-1"
+        assert config.docker_image == "epamairun/codemie-python:2.37.0"
         assert config.execution_timeout == 30.0
         assert config.session_timeout == 300.0
         assert config.default_timeout == 30.0
@@ -67,7 +65,7 @@ class TestCodeExecutorConfigDefaults(unittest.TestCase):
         assert config.fs_group == 1001
         assert config.security_threshold == SecurityIssueSeverity.LOW
         assert config.yaml_policy_path == ""
-        assert config.execution_mode == ExecutionMode.LOCAL
+        assert config.execution_mode == ExecutionMode.SANDBOX
         assert config.verbose is False
         assert config.keep_template is True
         assert config.skip_environment_setup is False
@@ -142,18 +140,10 @@ class TestCodeExecutorConfigExecutionModeValidator(unittest.TestCase):
         config = CodeExecutorConfig(execution_mode="sandbox")
         assert config.execution_mode == ExecutionMode.SANDBOX
 
-    def test_execution_mode_from_string_local(self):
-        """Test execution_mode validation with 'local' string."""
-        config = CodeExecutorConfig(execution_mode="local")
-        assert config.execution_mode == ExecutionMode.LOCAL
-
     def test_execution_mode_case_insensitive(self):
         """Test that execution_mode is case insensitive."""
         config = CodeExecutorConfig(execution_mode="SANDBOX")
         assert config.execution_mode == ExecutionMode.SANDBOX
-
-        config = CodeExecutorConfig(execution_mode="Local")
-        assert config.execution_mode == ExecutionMode.LOCAL
 
     def test_execution_mode_from_enum(self):
         """Test execution_mode validation with enum value."""
@@ -166,7 +156,7 @@ class TestCodeExecutorConfigExecutionModeValidator(unittest.TestCase):
             CodeExecutorConfig(execution_mode="invalid")
 
         assert "Invalid execution_mode" in str(exc_info.value)
-        assert "Must be 'sandbox' or 'local'" in str(exc_info.value)
+        assert "Only 'sandbox' is supported" in str(exc_info.value)
 
     def test_execution_mode_empty_defaults_to_sandbox(self):
         """Test that empty execution_mode defaults to SANDBOX."""
@@ -177,6 +167,14 @@ class TestCodeExecutorConfigExecutionModeValidator(unittest.TestCase):
         """Test that None execution_mode defaults to SANDBOX."""
         config = CodeExecutorConfig(execution_mode=None)
         assert config.execution_mode == ExecutionMode.SANDBOX
+
+    def test_execution_mode_from_string_local_is_rejected(self):
+        """Test that local execution mode is no longer supported."""
+        with pytest.raises(ValueError) as exc_info:
+            CodeExecutorConfig(execution_mode="local")
+
+        assert "Invalid execution_mode" in str(exc_info.value)
+        assert "sandbox" in str(exc_info.value).lower()
 
 
 class TestCodeExecutorConfigSecurityThresholdValidator(unittest.TestCase):
@@ -242,14 +240,18 @@ class TestCodeExecutorConfigSecurityThresholdValidator(unittest.TestCase):
         assert "Invalid security_threshold" in str(exc_info.value)
 
     def test_security_threshold_none_for_unrestricted(self):
-        """Test that None security_threshold means no restrictions."""
-        config = CodeExecutorConfig(security_threshold=None)
-        assert config.security_threshold is None
+        """Test that None security_threshold is no longer accepted."""
+        with pytest.raises(ValueError) as exc_info:
+            CodeExecutorConfig(security_threshold=None)
+
+        assert "security_threshold" in str(exc_info.value)
 
     def test_security_threshold_empty_string_for_unrestricted(self):
-        """Test that empty string security_threshold means no restrictions."""
-        config = CodeExecutorConfig(security_threshold="")
-        assert config.security_threshold is None
+        """Test that empty string security_threshold is no longer accepted."""
+        with pytest.raises(ValueError) as exc_info:
+            CodeExecutorConfig(security_threshold="")
+
+        assert "security_threshold" in str(exc_info.value)
 
 
 class TestCodeExecutorConfigFromEnv(unittest.TestCase):
@@ -260,9 +262,17 @@ class TestCodeExecutorConfigFromEnv(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             config = CodeExecutorConfig.from_env()
 
-            assert config.execution_mode == ExecutionMode.LOCAL
+            assert config.execution_mode == ExecutionMode.SANDBOX
             assert config.workdir_base == "/home/codemie"
             assert config.namespace == "codemie-runtime"
+
+    def test_from_env_with_local_execution_mode_is_rejected(self):
+        """Test from_env rejects deprecated local execution mode."""
+        with patch.dict(os.environ, {"CODE_EXECUTOR_EXECUTION_MODE": "local"}, clear=True):
+            with pytest.raises(ValueError) as exc_info:
+                CodeExecutorConfig.from_env()
+
+        assert "Invalid execution_mode" in str(exc_info.value)
 
     def test_from_env_execution_mode(self):
         """Test from_env with CODE_EXECUTOR_EXECUTION_MODE."""
@@ -460,19 +470,15 @@ class TestCodeExecutorConfigCustomValues(unittest.TestCase):
         assert config.fs_group == 2000
 
 
-class TestWarnIfLocalExecution(unittest.TestCase):
-    @patch("codemie_tools.data_management.code_executor.models.logger")
-    @patch.dict(os.environ, {"CODE_EXECUTOR_EXECUTION_MODE": "local"})
-    def test_warns_in_local_mode(self, mock_logger):
-        CodeExecutorConfig.warn_if_local_execution()
-        mock_logger.warning.assert_called_once()
-        assert "LOCAL" in mock_logger.warning.call_args[0][0]
-
-    @patch("codemie_tools.data_management.code_executor.models.logger")
+class TestSandboxOnlyRuntimeValidation(unittest.TestCase):
     @patch.dict(os.environ, {"CODE_EXECUTOR_EXECUTION_MODE": "sandbox"})
-    def test_no_warning_in_sandbox_mode(self, mock_logger):
-        CodeExecutorConfig.warn_if_local_execution()
-        mock_logger.warning.assert_not_called()
+    def test_from_env_accepts_sandbox_mode(self):
+        CodeExecutorConfig.from_env()
+
+    @patch.dict(os.environ, {"CODE_EXECUTOR_EXECUTION_MODE": "local"})
+    def test_from_env_rejects_local_mode(self):
+        with pytest.raises(ValueError):
+            CodeExecutorConfig.from_env()
 
 
 class TestSandboxMode(unittest.TestCase):

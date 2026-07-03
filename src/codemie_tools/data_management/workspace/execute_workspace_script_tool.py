@@ -18,9 +18,6 @@ import hashlib
 import json
 import logging
 import mimetypes
-import os
-import subprocess
-import tempfile
 from pathlib import Path
 from typing import Any, Optional, Type
 
@@ -42,10 +39,6 @@ from codemie_tools.data_management.code_executor.file_export_service import (
     FileExportService,
 )
 from codemie_tools.data_management.code_executor.llm_sandbox import is_sandbox_system_file_path
-from codemie_tools.data_management.code_executor.local_execution_engine import (
-    LocalExecutionEngine,
-    _MATPLOTLIB_CAPTURE_SETUP,
-)
 from codemie_tools.data_management.code_executor.models import ExecutionMode, SandboxMode
 from codemie_tools.data_management.workspace.tools_vars import (
     EXECUTE_WORKSPACE_SCRIPT_TOOL,
@@ -64,144 +57,6 @@ class ExecuteWorkspaceScriptInput(BaseModel):
         default=None,
         description="Optional list of workspace-relative files to export from execution results.",
     )
-
-
-class WorkspaceLocalScriptExecutionEngine(LocalExecutionEngine):
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self.last_execution_files: list[FileObject] = []
-
-    @staticmethod
-    def _validate_relative_path(file_path: str) -> Path:
-        relative_path = Path(file_path)
-        if relative_path.is_absolute() or ".." in relative_path.parts:
-            raise ToolException(f"Invalid script or file path: {file_path}")
-        return relative_path
-
-    @staticmethod
-    def _build_script_wrapper(script_path: str) -> str:
-        return (
-            "import runpy, sys, os\n"
-            "sys.path.insert(0, os.getcwd())\n"
-            f"runpy.run_path(r'{script_path}', run_name='__main__')\n"
-        )
-
-    @staticmethod
-    def _hash_content(content: bytes) -> str:
-        return hashlib.sha256(content).hexdigest()
-
-    def _build_input_file_hashes(self, input_files: list[FileObject] | None) -> dict[str, str]:
-        input_file_hashes: dict[str, str] = {}
-
-        for file_obj in input_files or []:
-            content = file_obj.bytes_content()
-            if content is None:
-                continue
-            relative_path = self._validate_relative_path(file_obj.name).as_posix()
-            input_file_hashes[relative_path] = self._hash_content(content)
-
-        return input_file_hashes
-
-    def _collect_changed_files(self, work_dir: str, input_files: list[FileObject] | None) -> list[FileObject]:
-        input_file_hashes = self._build_input_file_hashes(input_files)
-        work_path = Path(work_dir).resolve()
-
-        for full_path in sorted(work_path.rglob("*")):
-            if not full_path.is_file():
-                continue
-
-            relative_path = full_path.relative_to(work_path).as_posix()
-            if "__pycache__" in full_path.parts or _is_system_output_path(relative_path):
-                continue
-            content = full_path.read_bytes()
-            if input_file_hashes.get(relative_path) == self._hash_content(content):
-                continue
-            mime_type, _ = mimetypes.guess_type(relative_path)
-
-            self.last_execution_files.append(
-                FileObject(
-                    name=relative_path,
-                    path=relative_path,
-                    mime_type=mime_type or "application/octet-stream",
-                    owner=self.user_id,
-                    content=content,
-                )
-            )
-
-        return self.last_execution_files
-
-    def execute_script(
-        self,
-        script_path: str,
-        export_files: list[str] | None,
-        input_files: list[FileObject] | None = None,
-    ) -> str:
-        validated_script_path = self._validate_relative_path(script_path)
-        tmp_path = None
-        self.last_execution_files = []
-
-        try:
-            with tempfile.TemporaryDirectory(delete=True) as work_dir:
-                logger.info(f"Script execution temp dir (not deleted): {work_dir}")
-                work_path = Path(work_dir).resolve()
-                for file_obj in input_files or []:
-                    content = file_obj.bytes_content()
-                    if content is None:
-                        continue
-                    safe_name = self._validate_relative_path(file_obj.name)
-                    dest = work_path / safe_name
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    if not dest.resolve().is_relative_to(work_path):
-                        continue
-                    with open(dest, "wb") as file_handle:
-                        file_handle.write(content)
-
-                script_full_path = work_path / validated_script_path
-                if not script_full_path.exists() or not script_full_path.is_file():
-                    raise ToolException(f"Script file '{script_path}' was not found in the execution workspace")
-
-                script_code = script_full_path.read_text(encoding="utf-8", errors="replace")
-                self._validate_code_security(script_code)
-                code_to_run = self._build_script_wrapper(validated_script_path.as_posix())
-                full_code = (
-                    _MATPLOTLIB_CAPTURE_SETUP + "\n" + code_to_run if "matplotlib" in script_code else code_to_run
-                )
-
-                with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as tmp:
-                    tmp.write(full_code)
-                    tmp_path = tmp.name
-
-                result = subprocess.run(
-                    [os.sys.executable, tmp_path],
-                    capture_output=True,
-                    text=True,
-                    timeout=self.config.execution_timeout,
-                    cwd=work_dir,
-                )
-
-                if result.returncode != 0:
-                    raise ToolException(f"Code execution failed:\n{result.stderr}")
-
-                output_text = result.stdout.strip() if result.stdout else "Code executed successfully with no output."
-                if result.stderr and result.stderr.strip():
-                    output_text += f"\n\nSTDERR:\n{result.stderr.strip()}"
-                self._collect_changed_files(work_dir, input_files)
-
-                exported_urls: list[str] | None = None
-                if export_files:
-                    exported_urls = self._export_created_files(export_files, work_dir)
-                if exported_urls:
-                    output_text += "\n\nExported files:\n" + "\n".join(f"- {url}" for url in exported_urls)
-
-                return output_text
-        except subprocess.TimeoutExpired:
-            raise ToolException(
-                f"Code execution timed out after {self.config.execution_timeout} seconds. "
-                "This may indicate an infinite loop or a resource-intensive operation."
-            )
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                os.unlink(tmp_path)
 
 
 class WorkspaceScriptRunner(CodeExecutorTool):
@@ -235,9 +90,6 @@ class WorkspaceScriptRunner(CodeExecutorTool):
     def execute_script(self, script_path: str, export_files: Optional[list[str]] = None) -> str:
         self.last_execution_files = []
         validated_script_path = self._validate_script_path(script_path)
-
-        if self.config.execution_mode == ExecutionMode.LOCAL:
-            return self._execute_local_script(validated_script_path, export_files)
 
         return self._execute_sandbox_script(validated_script_path, export_files)
 
@@ -389,18 +241,6 @@ class WorkspaceScriptRunner(CodeExecutorTool):
         if urls:
             text += ", ".join(urls)
         return text
-
-    def _execute_local_script(self, script_path: str, export_files: Optional[list[str]] = None) -> str:
-        engine = WorkspaceLocalScriptExecutionEngine(
-            self.config, self.file_repository, self.user_id, self.security_policy
-        )
-        result = engine.execute_script(
-            script_path,
-            export_files=export_files,
-            input_files=self.input_files,
-        )
-        self.last_execution_files = engine.last_execution_files
-        return result
 
 
 def _default_workspace_service() -> Any:
