@@ -124,6 +124,10 @@ class Config(BaseSettings):
         Path(__file__).absolute().parents[3] / "config/leaderboard/framework_metadata.yaml"
     )
     AUTHORIZED_APPS_CONFIG_DIR: Path = Path(__file__).absolute().parents[3] / "config/authorized_applications"
+    # Domains permitted to host authorized-application public_key_url JWKS/keys.
+    # A URL host matches if it equals a listed domain or is a subdomain of one.
+    # Empty list => reject all URL-based keys (only local public_key_path allowed).
+    AUTHORIZED_APPS_ALLOWED_KEY_DOMAINS: list[str] = []
     INDEX_DUMPS_DIR: Path = Path(__file__).absolute().parents[3] / "config/index-dumps"
     ALEMBIC_MIGRATIONS_DIR: Path = Path(__file__).absolute().parents[2] / "external/alembic"
     ALEMBIC_INI_PATH: Path = Path(__file__).absolute().parents[2] / "external/alembic/alembic.ini"

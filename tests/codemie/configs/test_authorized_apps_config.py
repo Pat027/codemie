@@ -16,14 +16,62 @@ import pytest
 import yaml
 from unittest.mock import patch
 
-from codemie.configs.authorized_apps_config import AuthorizedApplicationsConfig, AuthorizedApplication
+from codemie.configs.authorized_apps_config import (
+    AuthorizedApplicationsConfig,
+    AuthorizedApplication,
+    validate_public_key_url,
+)
+from codemie.configs.config import config
+
+# Hostnames below use the .example TLD, reserved by RFC 2606 for documentation and testing,
+# so tests don't depend on any real organization's domain.
+_ALLOWED_DOMAIN = "trusted.example"
+_DISALLOWED_DOMAIN = "other.example"
+
+
+@pytest.fixture(autouse=True)
+def allowed_key_domains(monkeypatch):
+    monkeypatch.setattr(config, "AUTHORIZED_APPS_ALLOWED_KEY_DOMAINS", [_ALLOWED_DOMAIN])
+
+
+@pytest.mark.parametrize(
+    "test_case,url,allowed_domains,expect_error",
+    [
+        ("exact_host_allowed", f"https://{_ALLOWED_DOMAIN}/key.pem", [_ALLOWED_DOMAIN], False),
+        ("subdomain_allowed", f"https://jwks.{_ALLOWED_DOMAIN}/.well-known/jwks.json", [_ALLOWED_DOMAIN], False),
+        ("nested_subdomain_allowed", f"https://a.b.{_ALLOWED_DOMAIN}/key.pem", [_ALLOWED_DOMAIN], False),
+        ("disallowed_domain", f"https://{_DISALLOWED_DOMAIN}/key.pem", [_ALLOWED_DOMAIN], True),
+        (
+            "lookalike_domain_rejected",
+            f"https://{_ALLOWED_DOMAIN}.{_DISALLOWED_DOMAIN}/key.pem",
+            [_ALLOWED_DOMAIN],
+            True,
+        ),
+        ("suffix_without_dot_rejected", f"https://not{_ALLOWED_DOMAIN}/key.pem", [_ALLOWED_DOMAIN], True),
+        ("http_scheme_rejected", f"http://{_ALLOWED_DOMAIN}/key.pem", [_ALLOWED_DOMAIN], True),
+        ("ip_literal_rejected", "https://1.2.3.4/key.pem", [_ALLOWED_DOMAIN], True),
+        ("empty_allowlist_rejects_all", f"https://{_ALLOWED_DOMAIN}/key.pem", [], True),
+        ("malformed_url_rejected", "not-a-url", [_ALLOWED_DOMAIN], True),
+        ("case_insensitive_domain_allowed", f"https://{_ALLOWED_DOMAIN.upper()}/key.pem", [_ALLOWED_DOMAIN], False),
+    ],
+)
+def test_validate_public_key_url(test_case, url, allowed_domains, expect_error):
+    if expect_error:
+        with pytest.raises(ValueError):
+            validate_public_key_url(url, allowed_domains)
+    else:
+        validate_public_key_url(url, allowed_domains)
 
 
 @pytest.fixture
 def mock_config_data():
     return {
         "authorized_applications": [
-            {"name": "test-app", "public_key_url": "http://key.com/key.pem", "allowed_resources": ["datasource"]},
+            {
+                "name": "test-app",
+                "public_key_url": f"https://key.{_ALLOWED_DOMAIN}/key.pem",
+                "allowed_resources": ["datasource"],
+            },
             {"name": "test-app-2", "public_key_path": "/key.pem", "allowed_resources": ["datasource"]},
         ]
     }
@@ -36,7 +84,7 @@ def mock_config_data():
             "key_url_present",
             {
                 "name": "test-app",
-                "public_key_url": "http://public_keys.com/key.pem",
+                "public_key_url": f"https://public-keys.{_ALLOWED_DOMAIN}/key.pem",
                 "public_key_path": None,
                 "allowed_resources": ["datasource"],
             },
@@ -56,7 +104,7 @@ def mock_config_data():
             "url_path_present",
             {
                 "name": "test-app",
-                "public_key_url": "http://public_keys.com/key.pem",
+                "public_key_url": f"https://public-keys.{_ALLOWED_DOMAIN}/key.pem",
                 "public_key_path": "/apps-key.pem",
                 "allowed_resources": ["datasource"],
             },
@@ -65,6 +113,26 @@ def mock_config_data():
         (
             "url_path_missing",
             {"name": "test-app", "public_key_url": None, "public_key_path": None, "allowed_resources": ["datasource"]},
+            True,
+        ),
+        (
+            "url_domain_not_allowed",
+            {
+                "name": "test-app",
+                "public_key_url": f"https://{_DISALLOWED_DOMAIN}/key.pem",
+                "public_key_path": None,
+                "allowed_resources": ["datasource"],
+            },
+            True,
+        ),
+        (
+            "url_scheme_not_https",
+            {
+                "name": "test-app",
+                "public_key_url": f"http://public-keys.{_ALLOWED_DOMAIN}/key.pem",
+                "public_key_path": None,
+                "allowed_resources": ["datasource"],
+            },
             True,
         ),
     ],
@@ -80,13 +148,28 @@ def test_authorized_app_validations(test_case, params, expect_error):
 
 @patch("requests.get")
 def test_authorized_app_public_key_url(mock_get_key, mock_config_data):
-    app = AuthorizedApplication(
-        name="test-app", public_key_url="http://key.com/key.pem", allowed_resources=["datasource"]
-    )
+    url = f"https://key.{_ALLOWED_DOMAIN}/key.pem"
+    app = AuthorizedApplication(name="test-app", public_key_url=url, allowed_resources=["datasource"])
     mock_get_key.return_value.content = b"public_key_content"
 
     assert app.get_public_key(x_request_id="test-request-id") == b"public_key_content"
-    mock_get_key.assert_called_once_with("http://key.com/key.pem", params={"request_id": "test-request-id"})
+    mock_get_key.assert_called_once_with(url, params={"request_id": "test-request-id"}, timeout=10)
+
+
+@patch("requests.get")
+def test_get_public_key_rechecks_domain_at_fetch_time(mock_get_key):
+    """Defense in depth: even a bypassed-validation instance must not be fetched from a disallowed domain."""
+    app = AuthorizedApplication.model_construct(
+        name="test-app",
+        public_key_url=f"https://{_DISALLOWED_DOMAIN}/key.pem",
+        public_key_path=None,
+        allowed_resources=["datasource"],
+    )
+
+    with pytest.raises(ValueError):
+        app.get_public_key(x_request_id="test-request-id")
+
+    mock_get_key.assert_not_called()
 
 
 @patch("pathlib.Path.read_bytes")
@@ -105,7 +188,7 @@ def test_authorized_apps_config(mock_load_data, mock_config_data):
     assert len(config.applications) == 2
     assert isinstance(config.applications[0], AuthorizedApplication)
     assert config.applications[0].name == "test-app"
-    assert config.applications[0].public_key_url == "http://key.com/key.pem"
+    assert config.applications[0].public_key_url == f"https://key.{_ALLOWED_DOMAIN}/key.pem"
     assert config.applications[0].allowed_resources == ["datasource"]
 
 

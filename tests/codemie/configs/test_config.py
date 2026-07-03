@@ -45,3 +45,14 @@ def test_budget_reset_reconciliation_schedule_validation_runs_when_job_enabled()
             LITELLM_BUDGET_RESET_RECONCILIATION_ENABLED=True,
             LITELLM_BUDGET_RESET_RECONCILIATION_SCHEDULE="not a valid cron",
         )
+
+
+def test_authorized_apps_allowed_key_domains_default():
+    config = Config()
+    assert config.AUTHORIZED_APPS_ALLOWED_KEY_DOMAINS == []
+
+
+def test_authorized_apps_allowed_key_domains_env_override(monkeypatch):
+    monkeypatch.setenv("AUTHORIZED_APPS_ALLOWED_KEY_DOMAINS", '["trusted.example", "keys.trusted.example"]')
+    config = Config()
+    assert config.AUTHORIZED_APPS_ALLOWED_KEY_DOMAINS == ["trusted.example", "keys.trusted.example"]

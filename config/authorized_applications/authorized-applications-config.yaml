@@ -1,7 +1,10 @@
 # An example config with authorized applications to create permissions for
+# public_key_url must use https and its host must be within AUTHORIZED_APPS_ALLOWED_KEY_DOMAINS
+# (see codemie.configs.config.Config.AUTHORIZED_APPS_ALLOWED_KEY_DOMAINS), otherwise the app fails
+# to load.
 authorized_applications: []
-  # - name: test_app 
-  #   public_key_url: <some_url>
+  # - name: test_app
+  #   public_key_url: https://test-app.trusted.example/.well-known/jwks.json
   #   # public_key_path: ./key.pem
-  #   allowed_resources: 
+  #   allowed_resources:
   #     - datasource

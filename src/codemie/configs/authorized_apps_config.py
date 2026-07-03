@@ -12,14 +12,50 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ipaddress
 import yaml
 import requests
 from pathlib import Path
 from pydantic import BaseModel, Field, model_validator
 from typing import Optional, Self
+from urllib.parse import urlsplit
 
 from codemie.configs.config import config
 from codemie.rest_api.models.permission import ResourceType
+
+
+def validate_public_key_url(url: str, allowed_domains: list[str]) -> None:
+    """Raise ValueError unless url is an https URL whose host is within allowed_domains.
+
+    A host matches an allowed domain if it equals the domain or is a subdomain of it.
+    An empty allowed_domains list rejects every URL (fail-closed).
+    """
+    parsed_url = urlsplit(url)
+    if parsed_url.scheme.lower() != "https":
+        raise ValueError(f"public_key_url must use https: {url}")
+
+    hostname = parsed_url.hostname
+    if not hostname:
+        raise ValueError(f"public_key_url must have a valid host: {url}")
+
+    try:
+        ascii_hostname = hostname.encode("idna").decode("ascii").lower()
+    except UnicodeError as exc:
+        raise ValueError(f"public_key_url has an invalid host: {url}") from exc
+
+    try:
+        ipaddress.ip_address(ascii_hostname)
+    except ValueError:
+        pass
+    else:
+        raise ValueError(f"public_key_url host must not be an IP literal: {url}")
+
+    for domain in allowed_domains:
+        normalized_domain = domain.lower()
+        if ascii_hostname == normalized_domain or ascii_hostname.endswith(f".{normalized_domain}"):
+            return
+
+    raise ValueError(f"public_key_url host '{ascii_hostname}' is not in the allowed domains list")
 
 
 class AuthorizedApplication(BaseModel):
@@ -35,13 +71,17 @@ class AuthorizedApplication(BaseModel):
         if not bool(self.public_key_url) ^ bool(self.public_key_path):
             raise ValueError("Either public_key_url or public_key_path must be present")
 
+        if self.public_key_url:
+            validate_public_key_url(self.public_key_url, config.AUTHORIZED_APPS_ALLOWED_KEY_DOMAINS)
+
         return self
 
     def get_public_key(self, x_request_id: str) -> bytes:
         """Returns the public key as bytes from either URL or local path."""
         try:
             if self.public_key_url:
-                response = requests.get(self.public_key_url, params={"request_id": x_request_id})
+                validate_public_key_url(self.public_key_url, config.AUTHORIZED_APPS_ALLOWED_KEY_DOMAINS)
+                response = requests.get(self.public_key_url, params={"request_id": x_request_id}, timeout=10)
                 response.raise_for_status()
                 return response.content
             elif self.public_key_path:
