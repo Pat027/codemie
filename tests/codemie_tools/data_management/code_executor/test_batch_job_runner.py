@@ -138,7 +138,9 @@ class TestBatchJobRunnerHappyPath(unittest.TestCase):
         assert container["command"][1] == "-c"
         assert ".ready" in container["command"][2]
         assert ".pulled" in container["command"][2]
-        sec = manifest["spec"]["template"]["spec"]["securityContext"]
+        pod_spec = manifest["spec"]["template"]["spec"]
+        assert pod_spec["runtimeClassName"] == "gvisor"
+        sec = pod_spec["securityContext"]
         assert sec["runAsUser"] == 1001 and sec["runAsGroup"] == 1001 and sec["fsGroup"] == 1001
 
         # Job deleted in finally with grace_period_seconds=0

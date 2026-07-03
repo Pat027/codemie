@@ -51,6 +51,7 @@ class TestCodeExecutorConfigDefaults(unittest.TestCase):
 
         assert config.workdir_base == "/home/codemie"
         assert config.namespace == "codemie-runtime"
+        assert config.runtime_class_name == "gvisor"
         assert config.docker_image == "epamairun/codemie-python:2.2.13-1"
         assert config.execution_timeout == 30.0
         assert config.session_timeout == 300.0
@@ -280,6 +281,18 @@ class TestCodeExecutorConfigFromEnv(unittest.TestCase):
         with patch.dict(os.environ, {"CODE_EXECUTOR_NAMESPACE": "custom-namespace"}):
             config = CodeExecutorConfig.from_env()
             assert config.namespace == "custom-namespace"
+
+    def test_from_env_runtime_class_name_default(self):
+        """Test from_env uses gvisor as default runtimeClassName."""
+        with patch.dict(os.environ, {}, clear=True):
+            config = CodeExecutorConfig.from_env()
+            assert config.runtime_class_name == "gvisor"
+
+    def test_from_env_runtime_class_name_override(self):
+        """Test from_env with CODE_EXECUTOR_RUNTIME_CLASS_NAME."""
+        with patch.dict(os.environ, {"CODE_EXECUTOR_RUNTIME_CLASS_NAME": "kata-containers"}):
+            config = CodeExecutorConfig.from_env()
+            assert config.runtime_class_name == "kata-containers"
 
     def test_from_env_docker_image(self):
         """Test from_env with CODE_EXECUTOR_DOCKER_IMAGE."""

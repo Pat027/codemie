@@ -59,6 +59,11 @@ class CodeExecutorConfig(CodeMieToolConfig):
         description="Kubernetes namespace for executor pods",
     )
 
+    runtime_class_name: str = Field(
+        default="gvisor",
+        description="Kubernetes runtimeClassName for executor pods",
+    )
+
     docker_image: str = Field(
         default="epamairun/codemie-python:2.2.13-1",
         description="Docker image for Python execution environment",
@@ -276,6 +281,7 @@ class CodeExecutorConfig(CodeMieToolConfig):
             CODE_EXECUTOR_KUBECONFIG_PATH: Path to kubeconfig file (optional, takes priority over ENV)
             CODE_EXECUTOR_WORKDIR_BASE: Base working directory
             CODE_EXECUTOR_NAMESPACE: Kubernetes namespace
+            CODE_EXECUTOR_RUNTIME_CLASS_NAME: Kubernetes runtimeClassName (default: gvisor)
             CODE_EXECUTOR_DOCKER_IMAGE: Docker image
             CODE_EXECUTOR_EXECUTION_TIMEOUT: Execution timeout in seconds
             CODE_EXECUTOR_SESSION_TIMEOUT: Session timeout in seconds
@@ -309,6 +315,7 @@ class CodeExecutorConfig(CodeMieToolConfig):
             execution_mode=os.getenv("CODE_EXECUTOR_EXECUTION_MODE", "local"),
             workdir_base=os.getenv("CODE_EXECUTOR_WORKDIR_BASE", "/home/codemie"),
             namespace=os.getenv("CODE_EXECUTOR_NAMESPACE", "codemie-runtime"),
+            runtime_class_name=os.getenv("CODE_EXECUTOR_RUNTIME_CLASS_NAME", "gvisor"),
             docker_image=os.getenv("CODE_EXECUTOR_DOCKER_IMAGE", "epamairun/codemie-python:2.2.9-1"),
             execution_timeout=float(os.getenv("CODE_EXECUTOR_EXECUTION_TIMEOUT", "30.0")),
             session_timeout=float(os.getenv("CODE_EXECUTOR_SESSION_TIMEOUT", "300.0")),

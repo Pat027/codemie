@@ -198,6 +198,7 @@ class BatchJobRunner:
                     },
                     "spec": {
                         "restartPolicy": "Never",
+                        "runtimeClassName": cfg.runtime_class_name,
                         "automountServiceAccountToken": False,
                         "hostNetwork": False,
                         "hostPID": False,
