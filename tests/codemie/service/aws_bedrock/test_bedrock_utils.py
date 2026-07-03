@@ -334,7 +334,7 @@ class TestGetAwsClientForService:
         )
 
         assert result == mock_client_instance
-        mock_config.assert_called_once_with(region_name="us-east-1")
+        mock_config.assert_called_once_with(region_name="us-east-1", read_timeout=60000)
         mock_boto_client.assert_called_once_with(
             "bedrock",
             aws_access_key_id="test-key",

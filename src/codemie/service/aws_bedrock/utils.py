@@ -31,7 +31,7 @@ from codemie.service.aws_bedrock.exceptions import (
     SettingNotFoundException,
 )
 from codemie.service.settings.settings import SettingsService
-from codemie.configs import logger
+from codemie.configs import config, logger
 
 MAX_RETRIES = 3
 BASE_DELAY = 0.5  # in seconds, higher than this and we experience api timeouts
@@ -176,6 +176,7 @@ def get_aws_client_for_service(
     # Build config parameters dynamically
     config_params: dict = {
         "region_name": region,
+        "read_timeout": config.AWS_BEDROCK_READ_TIMEOUT,
     }
 
     if max_retry_attempts is not None:
