@@ -137,7 +137,7 @@ states:
     task: "Validate input data meets requirements"
     next:
       condition:
-        expression: "validation_passed == true"
+        expression: "validation_passed == True"
         then: process-data
         otherwise: report-validation-error
 ```
@@ -510,6 +510,18 @@ next:
     default: unknown-error-handler
 ```
 
+**Use Python-Compatible Boolean Literals**
+
+`condition.expression` and `switch.cases[].condition` are evaluated as Python expressions, not YAML. Boolean literals must be `True`/`False`, never lowercase `true`/`false`. A lowercase literal raises a Python syntax error at evaluation time, and the condition silently falls through to `otherwise`/`default`.
+
+```yaml
+# Correct - Python-compatible
+expression: "validation_passed == True"
+
+# Incorrect - YAML-style literal fails evaluation and always routes to otherwise
+expression: "validation_passed == true"
+```
+
 #### Validate Data Between States
 
 Add validation states between critical operations.
@@ -531,7 +543,7 @@ states:
       Return: {valid: true/false, errors: [...]}
     next:
       condition:
-        expression: "valid == true"
+        expression: "valid == True"
         then: process-data
         otherwise: handle-invalid-data
 ```
@@ -644,7 +656,7 @@ states:
       Return: {valid: true/false, sanitized_input: {...}}
     next:
       condition:
-        expression: "valid == true"
+        expression: "valid == True"
         then: process-input
         otherwise: reject-input
 ```

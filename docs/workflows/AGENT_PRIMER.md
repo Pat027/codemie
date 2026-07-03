@@ -181,7 +181,7 @@ states:
   - id: validate
     next:
       condition:
-        expression: "valid == true"
+        expression: "valid == True"
         then: continue
         otherwise: handle-error
 ```
@@ -219,6 +219,7 @@ states:
 ❌ **Context Bloat**: Storing large datasets in context
 ❌ **Missing Error Paths**: No `otherwise` or `default` branches
 ❌ **Hardcoded Values**: Use context variables instead of literals
+❌ **YAML-Style Booleans in Expressions**: `condition.expression` is evaluated as a Python expression, not YAML — boolean literals must be `True`/`False`, never lowercase `true`/`false` (e.g. `expression: "valid == True"`, not `"valid == true"`)
 
 ## Documentation Quick Reference
 
@@ -267,6 +268,7 @@ Create complete, valid YAML following the structure above:
 ### Step 4: Validate and Document
 Ensure quality:
 - Validate YAML syntax and schema compliance
+- Check every `condition.expression` and `switch.cases[].condition` for Python-compatible syntax — boolean literals must be `True`/`False`, not YAML-style `true`/`false`
 - Check for circular dependencies
 - Verify all ID references exist
 - Add inline comments for complex logic

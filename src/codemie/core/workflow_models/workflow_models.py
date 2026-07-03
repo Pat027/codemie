@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import ast
 import httpx
 import requests
 from enum import Enum
@@ -21,7 +22,7 @@ from typing import List, Optional, Literal
 
 from langgraph.types import default_retry_on
 from pydantic import BaseModel, Field
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 
 from codemie_tools.base.errors import InvalidCredentialsError, TruncatedOutputError
 
@@ -128,9 +129,41 @@ class CustomWorkflowNode(BaseModel):
         return values
 
 
+def _validate_python_expression_syntax(expression: str) -> str:
+    """Ensure a workflow condition expression is valid, Python-compatible syntax.
+
+    Condition expressions are evaluated at runtime as Python (elsewhere, via a
+    restricted/sandboxed evaluator), not parsed as YAML. This function only
+    parses the expression with ast.parse (no execution) to validate syntax and
+    boolean-literal style. YAML-style boolean literals (true/false) parse as
+    undefined names rather than booleans, so the condition silently falls
+    through to 'otherwise'/'default' instead of raising a visible error. Catch
+    that here at config-validation time.
+    """
+    try:
+        tree = ast.parse(expression, mode="eval")
+    except SyntaxError as e:
+        raise ValueError(f"Invalid Python syntax in expression {expression!r}: {e.msg}") from e
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id in ("true", "false"):
+            correct = "True" if node.id == "true" else "False"
+            raise ValueError(
+                f"Invalid boolean literal '{node.id}' in expression {expression!r}. "
+                f"Use Python-compatible '{correct}' instead of YAML-style '{node.id}'."
+            )
+
+    return expression
+
+
 class WorkflowStateSwitchCondition(BaseModel):
     condition: str
     state_id: str
+
+    @field_validator("condition")
+    @classmethod
+    def validate_condition_syntax(cls, value: str) -> str:
+        return _validate_python_expression_syntax(value)
 
 
 class WorkflowStateSwitch(BaseModel):
@@ -142,6 +175,11 @@ class WorkflowStateCondition(BaseModel):
     expression: str
     then: str
     otherwise: str
+
+    @field_validator("expression")
+    @classmethod
+    def validate_expression_syntax(cls, value: str) -> str:
+        return _validate_python_expression_syntax(value)
 
 
 class WorkflowNextState(BaseModel):

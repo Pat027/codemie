@@ -637,7 +637,7 @@ states:
       }
     next:
       condition:
-        expression: "requires_approval == true"
+        expression: "requires_approval == True"
         then: manual-approval
         otherwise: auto-apply
 

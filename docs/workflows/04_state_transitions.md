@@ -42,6 +42,7 @@ Conditional transitions allow branching based on the execution result from the p
 - **String methods**: `in` operator, `.startswith()`, `.endswith()`, `.contains()`
 - **Variable references**: Use variable names directly (no `{{}}` needed in expressions)
 - **Special variable**: `keys` - automatically available, contains all keys from the result dictionary
+- **Boolean literals**: `expression` is evaluated as Python, not YAML — use `True`/`False`, never lowercase `true`/`false` (e.g. `"valid == True"`, not `"valid == true"`); a lowercase literal is a Python syntax error and silently sends execution to `otherwise`
 
 #### Examples:
 ```yaml
@@ -62,6 +63,12 @@ condition:
   expression: "count > 10 and status == 'active'"
   then: process-state
   otherwise: skip-state
+
+# Boolean literal comparison (Python-style, not YAML-style)
+condition:
+  expression: "validation_passed == True"
+  then: process-data
+  otherwise: report-validation-error
 
 # Check if key exists
 condition:
