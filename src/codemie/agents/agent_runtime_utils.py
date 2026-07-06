@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+from dataclasses import dataclass, field
 from typing import Any, Sequence
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
@@ -80,39 +81,116 @@ def filter_history(history: list[Any], *, supports_rich_history: bool) -> list[A
             continue
         if isinstance(item, AIMessage) and getattr(item, "tool_calls", None):
             filtered_history.append(item)
-    return _sanitize_rich_history_for_llm(filtered_history)
+    return sanitize_rich_history_for_llm(filtered_history)
 
 
-def _sanitize_rich_history_for_llm(history: list[BaseMessage]) -> list[BaseMessage]:
-    sanitized_history: list[BaseMessage] = []
-    pending_tool_call_ids: set[str] = set()
+def sanitize_rich_history_for_llm(history: list[BaseMessage]) -> list[BaseMessage]:
+    """
+    Ensure the history passed to LLM providers is structurally valid for tool replay.
 
+    Rules (current behavior):
+    - Keep an assistant tool-call message only if every referenced tool call has a matching ToolMessage.
+    - Drop any ToolMessage that does not match a pending assistant tool call.
+    - If a tool-call block is interrupted (or left incomplete at end-of-history), drop the whole block.
+    """
+
+    sanitizer = _RichHistoryToolReplaySanitizer()
     for item in history:
-        if isinstance(item, AIMessage) and getattr(item, "tool_calls", None):
-            pending_tool_call_ids = {
-                str(tool_call_id) for tool_call in item.tool_calls if (tool_call_id := tool_call.get("id"))
-            }
-            sanitized_history.append(item)
-            continue
+        sanitizer.process(item)
+    sanitizer.finalize()
+    return sanitizer.sanitized_history
 
-        if isinstance(item, ToolMessage):
-            tool_call_id = getattr(item, "tool_call_id", None)
-            if tool_call_id and tool_call_id in pending_tool_call_ids:
-                pending_tool_call_ids.discard(tool_call_id)
-                sanitized_history.append(item)
-                continue
 
-            logger.info(
-                "Dropping orphan tool replay message before LLM invocation. "
-                f"ToolName={item.name or item.additional_kwargs.get('name') or 'tool'}, "
-                f"ToolCallId={tool_call_id}"
-            )
-            continue
+@dataclass(slots=True)
+class _RichHistoryToolReplaySanitizer:
+    sanitized_history: list[BaseMessage] = field(default_factory=list)
+    pending_ai_message: AIMessage | None = None
+    pending_tool_call_ids: set[str] = field(default_factory=set)
+    pending_tool_messages: list[ToolMessage] = field(default_factory=list)
 
-        pending_tool_call_ids = set()
-        sanitized_history.append(item)
+    def process(self, item: BaseMessage) -> None:
+        if self._handle_ai_tool_call(item):
+            return
+        if self._handle_tool_message(item):
+            return
+        self._handle_regular_message(item)
 
-    return sanitized_history
+    def finalize(self) -> None:
+        self._drop_pending_assistant_block(reason="end_of_history")
+
+    def _handle_ai_tool_call(self, item: BaseMessage) -> bool:
+        if not (isinstance(item, AIMessage) and getattr(item, "tool_calls", None)):
+            return False
+
+        if self.pending_ai_message is not None:
+            self._drop_pending_assistant_block(reason="consecutive_assistant_tool_calls")
+
+        self.pending_ai_message = item
+        self.pending_tool_call_ids = {
+            str(tool_call_id) for tool_call in item.tool_calls if (tool_call_id := tool_call.get("id"))
+        }
+        self.pending_tool_messages = []
+
+        if not self.pending_tool_call_ids:
+            # No (valid) IDs to match against; keep message as-is (legacy behavior).
+            self.sanitized_history.append(item)
+            self.pending_ai_message = None
+
+        return True
+
+    def _handle_tool_message(self, item: BaseMessage) -> bool:
+        if not isinstance(item, ToolMessage):
+            return False
+
+        tool_call_id = getattr(item, "tool_call_id", None)
+        if self._is_expected_tool_message(tool_call_id):
+            self.pending_tool_call_ids.discard(tool_call_id)
+            self.pending_tool_messages.append(item)
+            self._flush_completed_assistant_block()
+            return True
+
+        self._log_dropped_orphan_tool_message(item, tool_call_id)
+        return True
+
+    def _handle_regular_message(self, item: BaseMessage) -> None:
+        if self.pending_ai_message is not None:
+            self._drop_pending_assistant_block(reason=f"interrupted_by_{type(item).__name__}")
+        self.sanitized_history.append(item)
+
+    def _is_expected_tool_message(self, tool_call_id: str | None) -> bool:
+        return bool(self.pending_ai_message is not None and tool_call_id and tool_call_id in self.pending_tool_call_ids)
+
+    def _log_dropped_orphan_tool_message(self, item: ToolMessage, tool_call_id: str | None) -> None:
+        logger.info(
+            "Dropping orphan tool replay message before LLM invocation. "
+            f"ToolName={item.name or item.additional_kwargs.get('name') or 'tool'}, "
+            f"ToolCallId={tool_call_id}"
+        )
+
+    def _drop_pending_assistant_block(self, reason: str) -> None:
+        if self.pending_ai_message is None:
+            return
+
+        dropped_ids = sorted(self.pending_tool_call_ids)
+        logger.warning(
+            "Dropping malformed assistant tool-call replay block before LLM invocation. "
+            f"Reason={reason}, ToolCallIds={dropped_ids}"
+        )
+        self.pending_ai_message = None
+        self.pending_tool_call_ids = set()
+        self.pending_tool_messages = []
+
+    def _flush_completed_assistant_block(self) -> None:
+        if self.pending_ai_message is None:
+            return
+        if self.pending_tool_call_ids:
+            return
+
+        self.sanitized_history.append(self.pending_ai_message)
+        self.sanitized_history.extend(self.pending_tool_messages)
+        self.pending_ai_message = None
+        self.pending_tool_call_ids = set()
+        self.pending_tool_messages = []
 
 
 def serialize_messages(messages: list[Any]) -> str:

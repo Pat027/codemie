@@ -166,6 +166,14 @@ def _append_pending_handoffs(
     for queued_handoffs in pending_parallel_handoffs.values():
         for queued_handoff in queued_handoffs:
             _append_unique_message(filtered_messages, queued_handoff)
+            _append_unique_message(
+                filtered_messages,
+                ToolMessage(
+                    content="",
+                    name=queued_handoff.tool_calls[0]["name"],
+                    tool_call_id=queued_handoff.tool_calls[0]["id"],
+                ),
+            )
 
     for queued_handoffs in pending_single_handoffs.values():
         for tool_name, tool_call_id in queued_handoffs:

@@ -19,6 +19,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
+from codemie.agents.agent_runtime_utils import sanitize_rich_history_for_llm
 from codemie.configs import config
 from codemie.configs.llm_config import ModelCategory
 from codemie.configs.logger import logger
@@ -65,6 +66,7 @@ class ConversationHistoryCompactionService:
             request_id=request_id,
             original_tokens=history_tokens,
         )
+        compacted_messages = sanitize_rich_history_for_llm(compacted_messages)
         if compacted_messages == messages:
             return messages
 
@@ -98,6 +100,7 @@ class ConversationHistoryCompactionService:
                     request_id=request_id,
                 )
             )
+            compacted_messages = sanitize_rich_history_for_llm(compacted_messages)
             if compacted_messages == messages:
                 return {}
 
@@ -130,6 +133,7 @@ class ConversationHistoryCompactionService:
             request_id=request_id,
             original_tokens=history_tokens,
         )
+        compacted_messages = sanitize_rich_history_for_llm(compacted_messages)
         if compacted_messages == messages:
             return messages
 

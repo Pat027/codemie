@@ -272,6 +272,40 @@ class TestLangGraphMultiAssistantHandoffs:
             ToolMessage(content="Final analyst answer", name="transfer_to_analyst", tool_call_id="call-123"),
         ]
 
+    def test_strip_handoff_back_messages_pre_model_hook_keeps_parallel_handoffs_structurally_valid_when_pending(self):
+        parallel_parent_handoff = ToolMessage(
+            content="Analyze this repository",
+            name="transfer_to_analyst",
+            tool_call_id="call-123",
+            additional_kwargs={METADATA_KEY_PARALLEL_SUBAGENT_PARENT_HANDOFF: True},
+            response_metadata={METADATA_KEY_HANDOFF_DESTINATION: "analyst"},
+        )
+
+        result = _strip_handoff_back_messages_pre_model_hook(
+            {
+                "messages": [
+                    HumanMessage(content="User request"),
+                    parallel_parent_handoff,
+                ]
+            }
+        )
+
+        assert result["llm_input_messages"] == [
+            HumanMessage(content="User request"),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "transfer_to_analyst",
+                        "args": {"task": "Analyze this repository"},
+                        "id": "call-123",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            ToolMessage(content="", name="transfer_to_analyst", tool_call_id="call-123"),
+        ]
+
     def test_strip_handoff_back_messages_pre_model_hook_hides_single_parent_handoff(self):
         single_parent_handoff = ToolMessage(
             content="Analyze this repository",

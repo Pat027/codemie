@@ -356,3 +356,43 @@ def test_filter_history_drops_orphan_tool_messages_when_rich_history_enabled():
         ToolMessage(content="tool output", tool_call_id="tool-call-1", name="search_tool"),
         AIMessage(content="Done"),
     ]
+
+
+def test_filter_history_drops_trailing_unmatched_assistant_tool_call_when_rich_history_enabled():
+    history = [
+        HumanMessage(content="Hello"),
+        AIMessage(content="", tool_calls=[{"id": "tool-call-1", "name": "search_tool", "args": {"query": "test"}}]),
+    ]
+
+    with patch.object(AIToolsAgent, "_is_conversation_replay_v2_enabled", return_value=True):
+        filtered = AIToolsAgent._filter_history(history)
+
+    assert filtered == [HumanMessage(content="Hello")]
+
+
+def test_filter_history_drops_earlier_consecutive_unmatched_assistant_tool_call_when_rich_history_enabled():
+    first_call = AIMessage(
+        content="",
+        tool_calls=[{"id": "tool-call-1", "name": "search_tool", "args": {"query": "first"}}],
+    )
+    second_call = AIMessage(
+        content="",
+        tool_calls=[{"id": "tool-call-2", "name": "skill_tool", "args": {"skill": "epam-simple-deck"}}],
+    )
+    history = [
+        HumanMessage(content="Hello"),
+        first_call,
+        second_call,
+        ToolMessage(content="skill output", tool_call_id="tool-call-2", name="skill_tool"),
+        AIMessage(content="Done"),
+    ]
+
+    with patch.object(AIToolsAgent, "_is_conversation_replay_v2_enabled", return_value=True):
+        filtered = AIToolsAgent._filter_history(history)
+
+    assert filtered == [
+        HumanMessage(content="Hello"),
+        second_call,
+        ToolMessage(content="skill output", tool_call_id="tool-call-2", name="skill_tool"),
+        AIMessage(content="Done"),
+    ]
