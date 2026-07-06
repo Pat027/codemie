@@ -44,6 +44,41 @@ Only commit, push, branch, or create MRs when the user explicitly asks for git o
 
 Evidence: the current agent entrypoint requires explicit git operations at `AGENTS.md:82`.
 
+## Inline MR Comments via glab
+
+`glab mr note` = general comment only. For diff-anchored inline comments use the discussions API.
+
+**Step 1 — get SHAs** (latest version = index 0):
+```bash
+glab api "projects/epm-cdme%2Fcodemie/merge_requests/<MR_ID>/versions" \
+  | python3 -c "import sys,json; v=json.load(sys.stdin)[0]; print(v['base_commit_sha'], v['head_commit_sha'], v['start_commit_sha'])"
+```
+
+**Step 2 — find line number**: from diff hunk `@@ -OLD +NEW_START @@`, count non-`-` lines to target.
+
+**Step 3 — post** (must use `--input` + `Content-Type`; `--field "position[...]"` silently drops nested objects):
+```bash
+cat > /tmp/comment.json << 'EOF'
+{
+  "body": "comment text",
+  "position": {
+    "base_sha": "<base>", "head_sha": "<head>", "start_sha": "<start>",
+    "new_path": "src/path/to/file.py", "old_path": "src/path/to/file.py",
+    "position_type": "text", "new_line": 123
+  }
+}
+EOF
+glab api "projects/epm-cdme%2Fcodemie/merge_requests/<MR_ID>/discussions" \
+  --method POST -H "Content-Type: application/json" --input /tmp/comment.json
+```
+
+For added lines (`+`): set `new_line` only. Removed lines (`-`): set `old_line` only. Context: set both.
+
+If response `notes[0].position` is `null` — position not resolved, fell back to general comment. Delete with:
+```bash
+glab api "projects/epm-cdme%2Fcodemie/merge_requests/<MR_ID>/notes/<NOTE_ID>" --method DELETE
+```
+
 ## Troubleshooting
 
 | Issue | Fix |
@@ -52,3 +87,4 @@ Evidence: the current agent entrypoint requires explicit git operations at `AGEN
 | Branch created from the wrong base | Stop and ask before rebasing or recreating branches |
 | Existing unrelated changes | Preserve them; do not revert user work |
 | Commit hook changes files | Review and stage only intended files before retrying |
+| Inline comment posts as general note | Use `--input` + `-H "Content-Type: application/json"`; check `notes[0].position` in response |
