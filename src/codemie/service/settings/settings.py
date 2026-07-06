@@ -381,6 +381,12 @@ class SettingsService(BaseSettingsService):
 
         cls.check_webhook_unique(request)
 
+        if request.credential_type == CredentialTypes.GOOGLE_OAUTH and request.oauth_state:
+            from codemie.service.google_oauth.settings_service import GoogleOAuthSettingsService
+
+            oauth_service = GoogleOAuthSettingsService()
+            request.credential_values = oauth_service.populate_credentials_from_flow(request.oauth_state, user_id)
+
         prepared_creds = cls._prepare_cred_values(request.credential_type, request.credential_values)
         prepared_creds = cls._filter_empty_sensitive_fields(prepared_creds)
 
@@ -454,15 +460,47 @@ class SettingsService(BaseSettingsService):
 
         user_setting = Settings.get_by_id(id_=credential_id)
 
+        if request.credential_type == CredentialTypes.GOOGLE_OAUTH and request.oauth_state:
+            from codemie.service.google_oauth.settings_service import GoogleOAuthSettingsService
+
+            oauth_service = GoogleOAuthSettingsService()
+            new_credentials = oauth_service.populate_credentials_from_flow(
+                request.oauth_state,
+                user_id or user_setting.user_id,
+                existing_credentials=user_setting.credential_values,
+            )
+
+            # Revoke old credentials if email changed
+            oauth_service.revoke_old_credentials_if_email_changed(
+                user_id or user_setting.user_id,
+                credential_id,
+                user_setting.credential_values,
+                new_credentials,
+            )
+
+            request.credential_values = new_credentials
+
         prepared_creds = cls._prepare_cred_values(request.credential_type, request.credential_values)
 
         prepared_creds = cls._filter_empty_sensitive_fields(prepared_creds)
 
         # Remove credentials that are no longer in the prepared credentials
         prepared_cred_keys = [cred.key for cred in prepared_creds]
-        user_setting.credential_values = [
-            cred for cred in user_setting.credential_values if cred.key in prepared_cred_keys
-        ]
+
+        # For GOOGLE_OAUTH, preserve OAuth token credentials even if not in update request
+        if request.credential_type == CredentialTypes.GOOGLE_OAUTH:
+            from codemie.service.google_oauth.settings_service import GoogleOAuthSettingsService
+
+            preserved_keys = GoogleOAuthSettingsService.get_preserved_credential_keys(
+                user_setting.credential_values, prepared_cred_keys
+            )
+            user_setting.credential_values = [
+                cred for cred in user_setting.credential_values if cred.key in preserved_keys
+            ]
+        else:
+            user_setting.credential_values = [
+                cred for cred in user_setting.credential_values if cred.key in prepared_cred_keys
+            ]
 
         # Create a dictionary for existing credentials to quickly find and update keys
         existing_creds_dict = {cred.key: cred for cred in user_setting.credential_values}
@@ -493,6 +531,16 @@ class SettingsService(BaseSettingsService):
     @classmethod
     def delete_setting(cls, credential_id: str, user_id: Optional[str] = None) -> None:
         setting = Settings.get_by_id(id_=credential_id)
+
+        if setting.credential_type == CredentialTypes.GOOGLE_OAUTH:
+            try:
+                from codemie.service.google_oauth.token_manager import GoogleOAuthTokenManager
+
+                token_manager = GoogleOAuthTokenManager()
+                token_manager.revoke_token(credential_id)
+            except Exception as exc:
+                logger.warning(f"Failed to revoke Google OAuth token for setting {credential_id}: {exc}")
+
         Settings.delete_setting(credential_id)
         cls._clear_litellm_user_credentials_cache_if_needed(
             credential_type=setting.credential_type,

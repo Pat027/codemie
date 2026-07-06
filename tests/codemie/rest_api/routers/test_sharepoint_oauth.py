@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 import codemie.rest_api.routers.sharepoint_oauth as sharepoint_oauth
 from codemie.core.exceptions import ExtendedHTTPException
 from codemie.rest_api.security.user import User
+from codemie.utils.oauth_html_utils import html_error_page
 
 _TEST_USER = User(
     id="test_user_id",
@@ -68,7 +69,7 @@ def enable_pkce(monkeypatch):
 
 
 def test_html_page_escapes_xss():
-    page = sharepoint_oauth._html_page(False, "<script>alert('xss')</script>")
+    page = html_error_page("<script>alert('xss')</script>")
     assert "<script>" not in page
     assert "&lt;script&gt;" in page
 

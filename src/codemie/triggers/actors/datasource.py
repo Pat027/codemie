@@ -343,6 +343,7 @@ def reindex_google(payload: GoogleReindexTask):
         request_uuid=str(uuid4()),
         index_info=payload.index_info,
         embedding_model=payload.index_info.embeddings_model,
+        setting_id=payload.index_info.setting_id,
     )
 
     datasource_concurrency_manager.run(datasource_processor.reprocess, datasource_processor.index)
@@ -901,6 +902,7 @@ def _resume_google_doc(index_info: IndexInfo, user: User, request_uuid: str) -> 
         request_uuid=request_uuid,
         index_info=index_info,
         embedding_model=index_info.embeddings_model,
+        setting_id=index_info.setting_id,
     ).resume()
 
 

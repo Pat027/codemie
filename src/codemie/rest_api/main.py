@@ -93,6 +93,7 @@ from codemie.rest_api.routers import (
     dynamic_config,
 )
 from codemie.rest_api.routers import sharepoint_oauth
+from codemie.rest_api.routers import google_oauth
 
 # User management routers (EPMCDME-10160)
 from codemie.rest_api.routers import local_auth_router
@@ -789,6 +790,7 @@ if is_litellm_enabled() and config.LLM_PROXY_BUDGET_CHECK_ENABLED:
 app.include_router(project_budget_router.router)
 app.include_router(project_budget_router.group_router)
 app.include_router(sharepoint_oauth.router)
+app.include_router(google_oauth.router)
 app.include_router(user_preferences_router.router)
 
 # User management routers (EPMCDME-10160)

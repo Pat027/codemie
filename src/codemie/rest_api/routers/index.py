@@ -132,11 +132,13 @@ from codemie.service.guardrail.guardrail_service import GuardrailService
 from codemie.service.request_summary_manager import request_summary_manager
 from codemie.rest_api.models.settings import SharePointCredentials
 from codemie.service.settings.settings import SettingsService, Settings
+from codemie_tools.base.models import CredentialTypes
 from codemie.service.tools.tool_execution_service import ToolExecutionService
 from codemie.service.index.index_encrypted_settings_service import (
     IndexEncryptedSettingsService,
     IndexEncryptedSettingsError,
 )
+from codemie.service.google_oauth.token_manager import GoogleOAuthTokenManager
 
 from codemie.service.datasource.file_datasource_service import FileDatasourceService
 from codemie.use_cases.datasource.update_file_datasource_use_case import UpdateFileDatasourceUseCase
@@ -1245,12 +1247,57 @@ def index_knowledge_base_google_doc(
     request: IndexKnowledgeBaseGoogleRequest,
     raw_request: Request,
     background_tasks: BackgroundTasks,
-):
+) -> BaseResponse:
     _index_unique_check(request.project_name, request.name)
+    _kb_demo_user_check(raw_request.state.user)
+
+    user = raw_request.state.user
+
+    if request.setting_id is None:
+        raise ExtendedHTTPException(
+            code=status.HTTP_400_BAD_REQUEST,
+            message="setting_id is required",
+            details="A Google OAuth integration setting_id must be provided to create a Google Docs datasource.",
+            help="Please provide a valid setting_id referencing a Google OAuth integration.",
+        )
+
+    settings = Settings.find_by_id(request.setting_id)
+    if settings is None or settings.user_id != user.id:
+        raise ExtendedHTTPException(
+            code=status.HTTP_404_NOT_FOUND,
+            message="Integration not found or access denied",
+            details=f"No Google OAuth integration with id '{request.setting_id}' was found for the current user.",
+            help="Please verify the setting_id and ensure the integration belongs to your account.",
+        )
+
+    if settings.credential_type != CredentialTypes.GOOGLE_OAUTH:
+        raise ExtendedHTTPException(
+            code=status.HTTP_400_BAD_REQUEST,
+            message="Invalid credential type for Google Docs integration",
+            details=(
+                f"The setting '{request.setting_id}' has credential type '{settings.credential_type}', "
+                "but a Google OAuth credential is required."
+            ),
+            help="Please provide a setting_id that references a Google OAuth integration.",
+        )
+
+    token_manager = GoogleOAuthTokenManager()
+    try:
+        access_token = token_manager.get_valid_access_token(request.setting_id)
+    except ExtendedHTTPException:
+        raise
+    except Exception as e:
+        raise ExtendedHTTPException(
+            code=status.HTTP_400_BAD_REQUEST,
+            message="Failed to fetch Google OAuth credentials",
+            details=str(e),
+            help="Please ensure your Google OAuth integration is properly configured and authorized.",
+        ) from e
 
     try:
         GoogleDocDatasourceProcessor.check_google_doc(
-            product_id=GoogleDocDatasourceProcessor._parse_google_doc_id(request.googleDoc)
+            product_id=GoogleDocDatasourceProcessor._parse_google_doc_id(request.googleDoc),
+            access_token=access_token,
         )
     except Exception as e:
         raise ExtendedHTTPException(
@@ -1262,7 +1309,7 @@ def index_knowledge_base_google_doc(
 
     datasource_processor = GoogleDocDatasourceProcessor(
         datasource_name=request.name,
-        user=raw_request.state.user,
+        user=user,
         project_name=request.project_name,
         google_doc=request.googleDoc,
         description=request.description,
@@ -1271,6 +1318,7 @@ def index_knowledge_base_google_doc(
         embedding_model=request.embedding_model,
         guardrail_assignments=request.guardrail_assignments,
         cron_expression=request.cron_expression,
+        setting_id=request.setting_id,
     )
 
     datasource_processor.schedule(background_tasks)
@@ -1303,6 +1351,7 @@ def reindex_knowledge_base_google(
         description="",
         request_uuid=raw_request.state.uuid,
         index_info=index_info,
+        setting_id=index_info.setting_id,
     )
 
     datasource_processor.schedule(background_tasks, datasource_processor.reprocess)
@@ -1364,6 +1413,7 @@ def update_knowledge_base_google(
             request_uuid=raw_request.state.uuid,
             index_info=index_info,
             cron_expression=request.cron_expression if cron_expression_provided else None,
+            setting_id=index_info.setting_id,
         )
 
         datasource_processor.schedule(background_tasks, datasource_processor.reprocess)

@@ -99,6 +99,7 @@ class CredentialTypes(str, Enum):
     LITE_LLM = "LiteLLM"
     SHAREPOINT = "SharePoint"
     XWIKI = "XWiki"
+    GOOGLE_OAUTH = "GoogleOAuth"
 
     # Project settings
     DIAL = "DIAL"

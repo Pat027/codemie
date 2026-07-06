@@ -1,38 +1,42 @@
 # Copyright 2026 EPAM Systems, Inc. (“EPAM”)
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
+# Licensed under the Apache License, Version 2.0 (the “License”);
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
+# distributed under the License is distributed on an “AS IS” BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
 import re
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from googleapiclient.discovery import build
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import Resource, build
+from googleapiclient.errors import HttpError
+
+from codemie.configs import logger
+from codemie.datasource.exceptions import ConnectionException, UnauthorizedException
 
 
 class AssistantKBGoogleDocToJsonParser:
-    """
-    This is temporary pipeline we use to parse Google Doc with Assistant KB to JSON.
-    Final solution idea is that we will have a complete knowledge management system with a database
-    and a web interface.
-
-    For now we agreed with client to use Google Doc as a source of truth for Assistant KB.
-    """
-
     reference_regex: str = r"(\d+(\.\d+)*)\."
     chapter_title_regex: str = r"(\d+\.\d+.\d+)\."
     prompt_instruction_splitter: str = "Prompt Instruction:"
 
-    def __init__(self, document_id: str) -> None:
+    def __init__(self, document_id: str, access_token: Optional[str] = None) -> None:
         self.document_id: str = document_id
+        self.access_token: Optional[str] = access_token
+
+    def _build_service(self) -> Resource:
+        if not self.access_token:
+            raise ValueError("access_token is required for Google Docs API access")
+        creds = Credentials(token=self.access_token)
+        return build("docs", "v1", credentials=creds)
 
     def is_title(self, text: str, style: str) -> bool:
         return bool("heading" in style and re.match(self.reference_regex, text))
@@ -53,11 +57,17 @@ class AssistantKBGoogleDocToJsonParser:
         )
 
     def get_document(self, service, document_id: str) -> Dict[str, Any]:
-        return service.documents().get(documentId=document_id).execute()
+        try:
+            return service.documents().get(documentId=document_id).execute()
+        except HttpError as ex:
+            self._handle_google_api_error(ex, document_id, operation="fetch document")
 
-    def check_document_accessible(self) -> None:
-        service = build("docs", "v1")
-        service.documents().get(documentId=self.document_id, fields="documentId").execute()
+    def check_document_accessible(self):
+        service = self._build_service()
+        try:
+            service.documents().get(documentId=self.document_id, fields="documentId").execute()
+        except HttpError as ex:
+            self._handle_google_api_error(ex, self.document_id, operation="check document access")
 
     def get_elements(self, document: Dict[str, Any]) -> List[Dict[str, Any]]:
         return document.get("body", {}).get("content", [])
@@ -183,8 +193,7 @@ class AssistantKBGoogleDocToJsonParser:
         return titles
 
     def parse_doc(self) -> Tuple[List, str]:
-        service = build("docs", "v1")
-
+        service = self._build_service()
         document = self.get_document(service, self.document_id)
         elements = self.get_elements(document)
         articles = self.get_articles(elements)
@@ -193,3 +202,38 @@ class AssistantKBGoogleDocToJsonParser:
         document_id: str = document.get("documentId", "")
 
         return articles, chapters, document_id
+
+    def _handle_google_api_error(self, ex: HttpError, document_id: str, operation: str) -> None:
+        status_code = ex.resp.status
+        error_details = ex.error_details if hasattr(ex, 'error_details') else str(ex)
+
+        logger.error(
+            f"Google Docs API error during {operation}. "
+            f"DocumentID={document_id}. "
+            f"HTTPStatus={status_code}. "
+            f"ErrorDetails={error_details}"
+        )
+
+        datasource_type = "Google Docs"
+
+        if status_code == 403:
+            raise UnauthorizedException(
+                "Google Docs: Access denied. You don't have permission to access this document. "
+                "Please check that the document is shared with your Google account or verify your OAuth credentials."
+            ) from ex
+        elif status_code == 404:
+            raise ConnectionException(
+                datasource_type, f"Document not found. The document '{document_id}' does not exist or has been deleted."
+            ) from ex
+        elif status_code == 401:
+            raise UnauthorizedException(
+                "Google Docs: Authentication failed. Your credentials are invalid or expired. "
+                "Please re-authenticate your Google account."
+            ) from ex
+        elif status_code >= 500:
+            raise ConnectionException(
+                datasource_type,
+                f"Google Docs service is temporarily unavailable (HTTP {status_code}). Please try again later.",
+            ) from ex
+        else:
+            raise ConnectionException(datasource_type, f"API request failed (HTTP {status_code})") from ex

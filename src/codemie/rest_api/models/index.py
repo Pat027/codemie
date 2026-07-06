@@ -1325,6 +1325,7 @@ class IndexKnowledgeBaseSharePointRequest(CronExpressionValidatorMixin, IndexKno
 
 class IndexKnowledgeBaseGoogleRequest(CronExpressionValidatorMixin, IndexKnowledgeBaseRequest):
     googleDoc: str
+    setting_id: Optional[str] = None
     embedding_model: Optional[str] = None
     cron_expression: Optional[str] = None
 

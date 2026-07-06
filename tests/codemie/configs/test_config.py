@@ -47,6 +47,14 @@ def test_budget_reset_reconciliation_schedule_validation_runs_when_job_enabled()
         )
 
 
+def test_google_oauth_config_present():
+    from codemie.configs.config import config
+
+    assert hasattr(config, 'GOOGLE_OAUTH_CLIENT_ID')
+    assert hasattr(config, 'GOOGLE_OAUTH_CLIENT_SECRET')
+    assert hasattr(config, 'google_oauth_redirect_uri')  # computed field is lowercase
+
+
 def test_authorized_apps_allowed_key_domains_default():
     config = Config()
     assert config.AUTHORIZED_APPS_ALLOWED_KEY_DOMAINS == []

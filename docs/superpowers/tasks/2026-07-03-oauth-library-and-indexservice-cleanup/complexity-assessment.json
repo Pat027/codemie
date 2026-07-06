@@ -1,0 +1,14 @@
+{
+  "size": "L",
+  "total": 20,
+  "dimensions": {
+    "scope": 3,
+    "complexity": 3,
+    "uncertainty": 3,
+    "risk": 5,
+    "coupling": 3,
+    "duration": 3
+  },
+  "routing": "PROCEED",
+  "rationale": "Security-critical OAuth/PKCE code path being replaced; async/sync transport mismatch between httpx.AsyncClient (current) and google.auth.transport.requests.Request (library default, synchronous) risks event-loop blocking; no dedicated test file exists for GoogleOAuthSettingsService; behavioral differences between manual PKCE and Flow must be explicitly validated. Auth red flag bumped Technical Risk from L (4) to XL (5). Three components touched: google_oauth_settings_service.py, google_oauth.py router, index_service.py. Borderline score 20 leaned to L per guide rule. Task 2 (IndexService cleanup) is trivially XS and does not inflate the combined score."
+}

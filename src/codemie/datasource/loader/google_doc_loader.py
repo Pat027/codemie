@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, List, Tuple, Iterator
+from typing import Any, List, Optional, Tuple, Iterator
 
 from langchain_core.documents import Document
 from langchain_core.document_loaders import BaseLoader
@@ -22,8 +22,9 @@ from codemie.datasource.loader.util import AssistantKBGoogleDocToJsonParser
 
 
 class GoogleDocLoader(BaseLoader, BaseDatasourceLoader):
-    def __init__(self, *, product_id: str) -> None:
-        self.kb_document_parser = AssistantKBGoogleDocToJsonParser(product_id)
+    def __init__(self, *, product_id: str, access_token: Optional[str] = None) -> None:
+        self.access_token = access_token
+        self.kb_document_parser = AssistantKBGoogleDocToJsonParser(product_id, access_token=access_token)
 
     def lazy_load(self) -> Iterator[Document]:
         """Implements this method just for a base class, not really used."""

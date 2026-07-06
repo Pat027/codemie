@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "task": "Replace manual httpx-based OAuth 2.0 PKCE implementation with google-auth-oauthlib Flow API, and remove the unused IndexService.create_google_doc_datasource dead-code method.",
+  "generated": "2026-07-03T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 3, "label": "M" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 20,
+  "size": "L",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "technical_risk",
+      "reason": "Security-critical OAuth/PKCE code path being replaced; async/sync transport mismatch between httpx.AsyncClient (current) and google.auth.transport.requests.Request (library default, synchronous) risks event-loop blocking; no dedicated test file exists for GoogleOAuthSettingsService; behavioral differences between the manual PKCE implementation and Flow (state handling, error shapes) must be explicitly validated. Auth red flag bumped this from L (4) to XL (5)."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "Three components touched: google_oauth_settings_service.py (primary, 536 lines), google_oauth.py router, and index_service.py (dead code deletion). Spans Service and API layers."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from L (4) to XL (5): affects authentication and authorization (OAuth 2.0 PKCE token exchange and refresh flow is security-critical)",
+    "Borderline score 20 (top of M range) leaned higher to L because Technical Risk is XL (5) per guide borderline rule"
+  ],
+  "split_recommendation": null
+}

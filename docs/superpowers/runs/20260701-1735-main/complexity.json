@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "source": "heuristic",
+  "total_score": 24,
+  "size": "medium",
+  "routing": "brainstorming",
+  "scores": {
+    "scope": 6,
+    "file_count": 4,
+    "integration": 4,
+    "risk": 6,
+    "unknowns": 2,
+    "coordination": 2
+  },
+  "red_flags": [
+    "security: OAuth token storage, CSRF protection, secrets management",
+    "integration: Google Docs API, datasource integration",
+    "auth: Per-user OAuth 2.0 implementation"
+  ],
+  "heuristic_signals": {
+    "affected_file_estimate": 388,
+    "keyword_signals": {
+      "security": true,
+      "auth": true,
+      "migration": false,
+      "breaking": false,
+      "provider": true,
+      "integration": true,
+      "refactor": false
+    },
+    "goal_word_count": 30
+  },
+  "reasoning": "Heuristic classification: Security (OAuth, CSRF, tokens), auth (per-user OAuth), and integration (Google API, datasource) keywords present. Score 24 routes to brainstorming for design exploration before implementation."
+}

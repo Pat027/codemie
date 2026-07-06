@@ -1,0 +1,38 @@
+{
+  "run_id": "20260701-1735-main",
+  "mode": "autonomous",
+  "started_at": "2026-07-01T17:35:00Z",
+  "task_input": "Implement backend for Google OAuth 2.0 authorization to replace the current auth method for the Google Docs datasource.\n\nJira Ticket: https://jiraeu.epam.com/browse/EPMCDME-13222 (read with Brianna)\nOAuth Flow: https://developers.google.com/identity/protocols/oauth2/web-server (read it too, it includes stuff you need + libs)\n\nContext\n\nTokens: Fully managed backend-side — access token, refresh token, expiry, and refresh logic. Frontend never sees tokens.\nFrontend: Being implemented in parallel. Plan is here C:\\Users\\kostiantyn_pshenych1\\Documents\\cdme\\codemie-ui-next\\docs\\superpowers\\plans\\2026-07-01-google-docs-oauth.md\nReference: A similar OAuth flow exists for the SharePoint datasource. Plus there is a gcp tool already uses google api library. Analyze it and reuse what's genuinely useful.\n\nRequirements\n\nEndpoints to initiate auth, handle Google's callback, check auth status, and disconnect.\nSecure token storage, automatic refresh, and proper handling of revoked/expired tokens.\nCSRF protection on the OAuth flow (state parameter), correct scopes for Google Docs, safe redirect URI handling.\nFollow existing project conventions (structure, config, secrets management, logging, testing).\nProper error handling and clear error responses to the frontend.\n\nAsk before coding if unclear",
+  "branch": "EPMCDME-13222_google-docs-oauth",
+  "work_item": {
+    "canonical_path": "docs/superpowers/work-items/EPMCDME-13222.md",
+    "run_mirror": "docs/superpowers/runs/20260701-1735-main/work-item.md",
+    "event_ledger": "docs/superpowers/runs/20260701-1735-main/work-item-events.jsonl"
+  },
+  "current_phase": 7,
+  "status": "running",
+  "branch_guard": {
+    "current_branch": "EPMCDME-13222_google-docs-oauth",
+    "base_branch": "main",
+    "target_branch": "EPMCDME-13222_google-docs-oauth",
+    "working_tree": "proceed-dirty",
+    "upstream": "in-sync",
+    "target_branch_exists": true,
+    "base_refreshed": true,
+    "decision": "stash"
+  },
+  "escalate_on": ["security", "breaking-change"],
+  "phases": {
+    "0": {"status": "completed", "started_at": "2026-07-01T17:35:00Z", "completed_at": "2026-07-01T17:35:30Z"},
+    "1": {"status": "completed", "started_at": "2026-07-01T17:35:30Z", "completed_at": "2026-07-01T17:36:30Z"},
+    "2": {"status": "completed", "started_at": "2026-07-01T17:36:45Z", "completed_at": "2026-07-01T17:37:30Z"},
+    "3": {"status": "completed", "started_at": "2026-07-01T17:37:30Z", "completed_at": "2026-07-01T17:38:00Z"},
+    "4": {"status": "completed", "started_at": "2026-07-01T17:38:00Z", "completed_at": "2026-07-01T17:45:30Z"},
+    "5": {"status": "completed", "started_at": "2026-07-01T17:46:30Z", "completed_at": "2026-07-01T18:10:00Z"},
+    "6": {"status": "completed", "started_at": "2026-07-01T18:15:00Z", "completed_at": "2026-07-02T01:30:00Z"},
+    "7": {"status": "pending"},
+    "8": {"status": "pending"},
+    "9": {"status": "pending"},
+    "10": {"status": "pending"}
+  }
+}

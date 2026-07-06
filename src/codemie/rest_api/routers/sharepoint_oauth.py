@@ -14,7 +14,6 @@
 
 """SharePoint OAuth2 endpoints: Authorization Code + PKCE (oauth_codemie) and Device Code (oauth_custom)."""
 
-import html
 from typing import Optional
 
 import httpx
@@ -26,6 +25,7 @@ from codemie.configs import config, logger
 from codemie.core.exceptions import ExtendedHTTPException
 from codemie.rest_api.security.authentication import authenticate
 from codemie.rest_api.security.user import User
+from codemie.utils.oauth_html_utils import html_error_page, html_success_page
 from codemie.service.sharepoint_pkce_service import SharePointPKCEService
 
 _pkce_service = SharePointPKCEService()
@@ -46,19 +46,6 @@ router = APIRouter(
 def _require_pkce_enabled() -> None:
     if not config.SHAREPOINT_PKCE_ENABLED:
         raise ExtendedHTTPException(503, "SharePoint PKCE flow is disabled")
-
-
-def _html_page(success: bool, message: str) -> str:
-    escaped = html.escape(message)
-    if success:
-        body = "<h2>Authentication Complete</h2>" f"<p>{escaped}</p>" "<p>You can close this window.</p>"
-    else:
-        body = (
-            "<h2>Authentication Failed</h2>"
-            f"<p>{escaped}</p>"
-            "<p>You can close this window and return to the application.</p>"
-        )
-    return f"<!DOCTYPE html><html><head><meta charset='UTF-8'></head><body>{body}</body></html>"
 
 
 class InitiatePKCERequest(BaseModel):
@@ -84,13 +71,14 @@ async def pkce_callback(
 ) -> HTMLResponse:
     if not config.SHAREPOINT_PKCE_ENABLED:
         return HTMLResponse(
-            content=_html_page(False, "SharePoint PKCE flow is disabled."),
+            content=html_error_page("SharePoint PKCE flow is disabled."),
             status_code=503,
             headers=_CALLBACK_SECURITY_HEADERS,
         )
     result = await _pkce_service.handle_callback(code, state, error)
+    content = html_success_page(result.message) if result.success else html_error_page(result.message)
     return HTMLResponse(
-        content=_html_page(result.success, result.message),
+        content=content,
         status_code=result.status_code,
         headers=_CALLBACK_SECURITY_HEADERS,
     )

@@ -1,0 +1,181 @@
+{
+  "decision": "request-changes",
+  "rationale": "14 blocking findings across security, API contract deviations, and error handling gaps. Diff is oversized (1571 lines across 21 files) limiting single-pass review coverage. Spec deviations: missing /status polling endpoint, initiate response shape mismatch, disconnect revokes wrong token, no rate limiting, missing has_authorization method. Security: silent exception swallowing masks auth failures, Redis connection errors unguarded, empty config defaults allow misconfigured deployments.",
+  "confidence": "low",
+  "risk_flags": ["security"],
+  "business_review": [
+    {"kind": "spec", "item": "POST /v1/google-docs/oauth/initiate returns {auth_url, state}", "status": "partial", "notes": "Returns authorization_url but state not returned; discarded as _state"},
+    {"kind": "spec", "item": "GET /v1/google-docs/oauth/status/{state} polling endpoint", "status": "fail", "notes": "Implemented as GET /status with no state param; returns DB check not Redis polling"},
+    {"kind": "spec", "item": "POST /v1/google-docs/oauth/disconnect revokes refresh_token", "status": "partial", "notes": "Implemented as DELETE; revokes access_token instead of refresh_token"},
+    {"kind": "spec", "item": "Tokens encrypted at rest using EncryptionFactory", "status": "pass", "notes": "Both tokens encrypted in store_token()"},
+    {"kind": "spec", "item": "One token set per user (PK on user_id)", "status": "pass", "notes": "GoogleOAuthToken uses user_id as PK with upsert"},
+    {"kind": "spec", "item": "Token refresh on expiry", "status": "pass", "notes": "get_valid_token checks expires_at, calls _refresh_token"},
+    {"kind": "spec", "item": "GoogleDocLoader accepts access_token", "status": "pass", "notes": "Constructor accepts Optional[str] access_token"},
+    {"kind": "spec", "item": "GoogleDocDatasourceProcessor fetches token and raises on auth errors", "status": "partial", "notes": "Fetches token but catches all exceptions with fallback to default auth instead of raising"},
+    {"kind": "spec", "item": "Datasource creation checks authorization (401 if missing)", "status": "fail", "notes": "index_knowledge_base_google_doc has no authorization check; has_authorization method missing"},
+    {"kind": "spec", "item": "Rate limiting on /initiate (10 req/min per user)", "status": "fail", "notes": "No rate limiting applied"},
+    {"kind": "spec", "item": "Callback fetches user email from Google", "status": "fail", "notes": "handle_callback passes email='' literal; no userinfo call"},
+    {"kind": "spec", "item": "has_authorization(user_id) method", "status": "fail", "notes": "Method does not exist in GoogleOAuthTokenService"}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "All commits follow EPMCDME-13222 prefix pattern"},
+    {"kind": "code-quality", "status": "pass", "notes": "Ruff checks passed across all modified files"},
+    {"kind": "security", "status": "fail", "notes": "Silent exception swallowing masks authorization failures; Redis connection errors propagate as 500 with stack traces; empty string config defaults allow misconfigured deployments"}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/codemie/datasource/google_doc/google_doc_datasource_processor.py",
+      "line": 95,
+      "title": "Silent auth failure fallback masks user token expiry",
+      "problem": "Bare except Exception in _init_loader and check_google_doc catches GoogleOAuthRefreshError (stale credentials) and silently falls back to default service-account auth instead of surfacing the authorization error to the user",
+      "impact": "User whose OAuth token expired will unknowingly access documents via shared service account rather than being told their credentials need re-authorization; bypasses per-user access control",
+      "recommendation": "Catch GoogleOAuthTokenError for expected no-token case with fallback; re-raise GoogleOAuthRefreshError so caller knows credentials are stale"
+    },
+    {
+      "id": "CR-002",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/codemie/service/google_oauth_service.py",
+      "line": 70,
+      "title": "Redis connection error unguarded in initiate_oauth",
+      "problem": "create_redis_client() and setex() called without try/except; ConnectionError propagates as unhandled 500 with internal stack trace exposed",
+      "impact": "When Redis unavailable, /initiate returns 500 with full traceback including file paths and library versions; information disclosure",
+      "recommendation": "Wrap Redis operations in try/except, raise HTTPException(503, 'Service temporarily unavailable') on ConnectionError"
+    },
+    {
+      "id": "CR-003",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/codemie/configs/config.py",
+      "line": 386,
+      "title": "Empty string OAuth config defaults silently degrade",
+      "problem": "GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET default to empty string, not None; code checking truthiness treats misconfigured deployment as 'OAuth not configured' rather than failing fast",
+      "impact": "Production deployment with missing env vars will silently degrade OAuth flow instead of raising startup error; hard to diagnose",
+      "recommendation": "Add @model_validator to check both are non-empty or log warning/raise at startup"
+    },
+    {
+      "id": "CR-004",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/routers/google_docs_oauth.py",
+      "line": 77,
+      "title": "Missing /status polling endpoint per spec",
+      "problem": "Spec requires GET /v1/google-docs/oauth/status/{state} that reads Redis result and validates state ownership; implemented endpoint has no state param and checks DB only",
+      "impact": "Frontend cannot poll OAuth completion; spec's pending/success/error flow and 403 state-ownership guard entirely absent",
+      "recommendation": "Implement GET /v1/google-docs/oauth/status/{state} per spec: read codemie:google_oauth:result:{state} from Redis, validate user owns state, return 202/200/400"
+    },
+    {
+      "id": "CR-005",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/service/google_oauth_service.py",
+      "line": 116,
+      "title": "Callback never writes result to Redis for polling",
+      "problem": "handle_callback does not write codemie:google_oauth:result:{state} (TTL 300s) after token storage; polling endpoint has no data source",
+      "impact": "Frontend polling /status will never find completion result; OAuth flow appears stuck",
+      "recommendation": "After store_token succeeds, write result to Redis: self._redis.setex(f'oauth_result:{state}', 300, json.dumps({'email': email}))"
+    },
+    {
+      "id": "CR-006",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/routers/google_docs_oauth.py",
+      "line": 77,
+      "title": "Initiate response discards state token",
+      "problem": "State token generated and stored in Redis but not returned to caller (_state variable discarded); spec requires state in response for frontend to poll with",
+      "impact": "Frontend cannot correlate /initiate call with /status polling; cannot implement polling flow",
+      "recommendation": "Return InitiateResponse(authorization_url=auth_url, state=state) with state field added to model"
+    },
+    {
+      "id": "CR-007",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/routers/google_docs_oauth.py",
+      "line": 187,
+      "title": "Disconnect revokes access_token instead of refresh_token",
+      "problem": "Spec Step 1 says revoke refresh_token; implementation fetches and revokes access_token; also uses DELETE not POST as spec requires",
+      "impact": "Access token revoked but refresh token remains valid; user could still refresh and regain access after disconnect",
+      "recommendation": "Revoke refresh_token: decrypted_refresh = encryption_service.decrypt(token.refresh_token); revoke decrypted_refresh"
+    },
+    {
+      "id": "CR-008",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "src/codemie/service/google_oauth_token_service.py",
+      "line": 77,
+      "title": "Missing has_authorization method for upfront checks",
+      "problem": "Spec defines has_authorization(user_id) for datasource creation endpoint to return 401 before allowing datasource creation; method does not exist",
+      "impact": "No way to check authorization upfront; users can create datasources then get cryptic errors at index time",
+      "recommendation": "Add has_authorization(user_id) -> bool: return self.repository.get_by_user_id(user_id) is not None"
+    },
+    {
+      "id": "CR-009",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/service/google_oauth_service.py",
+      "line": 110,
+      "title": "Missing guard for None refresh_token after code exchange",
+      "problem": "credentials.refresh_token is None if Google omits it (prompt!=consent first-time flow); stored encrypted as None; next refresh call fails with decrypt error",
+      "impact": "OAuth flow succeeds but tokens cannot refresh; appears broken after 1 hour when access token expires",
+      "recommendation": "After fetch_token: if not credentials.refresh_token: raise GoogleOAuthTokenError('No refresh token; ensure prompt=consent')"
+    },
+    {
+      "id": "CR-010",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/datasource/loader/google_doc_loader.py",
+      "line": 27,
+      "title": "Empty string access_token builds invalid OAuth credentials",
+      "problem": "access_token checked with 'is not None'; empty string passes check, creates Credentials(token=''), API call fails with 401",
+      "impact": "Token fetch that returns empty string (decrypt error?) silently fails at Google API call instead of being caught early",
+      "recommendation": "Change to 'if access_token:' (truthiness check) to guard empty string"
+    },
+    {
+      "id": "CR-011",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/models/google_oauth.py",
+      "line": 30,
+      "title": "Encrypted token may exceed DB column length",
+      "problem": "access_token max_length=2048; encrypted token with AES-GCM/Fernet overhead may exceed limit on long Google tokens",
+      "impact": "DB insert raises DataError truncating ciphertext; token storage silently fails; OAuth flow broken",
+      "recommendation": "Increase Field(max_length=4096) or use Text column for access_token and refresh_token"
+    },
+    {
+      "id": "CR-012",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/core/exceptions.py",
+      "line": 178,
+      "title": "GoogleOAuthRefreshError uses HTTP 401 instead of 502",
+      "problem": "Spec requires 502 for transient token refresh failures (network errors) vs 401 for expired authorization; both collapsed into single 401 exception",
+      "impact": "Frontend cannot distinguish 'retry later' (502) from 're-authorize' (401); poor UX on transient failures",
+      "recommendation": "Use code=502 for GoogleOAuthRefreshError; or split into AuthorizationExpired (401) vs TokenRefreshFailed (502)"
+    },
+    {
+      "id": "CR-013",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/routers/index.py",
+      "line": 1244,
+      "title": "Datasource creation has no authorization check",
+      "problem": "index_knowledge_base_google_doc endpoint not modified; spec requires upfront authorization check with 401 if user not authorized",
+      "impact": "Users can create Google Docs datasources before connecting OAuth; datasource fails at index time with unclear error",
+      "recommendation": "Add check before datasource creation: if not token_service.has_authorization(user.id): raise ExtendedHTTPException(401, 'Google Docs authorization required')"
+    },
+    {
+      "id": "CR-014",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/routers/google_docs_oauth.py",
+      "line": 64,
+      "title": "No rate limiting on /initiate endpoint",
+      "problem": "Spec requires 10 requests/minute per user; no rate limiting decorator or middleware applied",
+      "impact": "User can spam /initiate generating unlimited Redis state keys and authorization URLs; abuse vector",
+      "recommendation": "Add rate limiting: @limiter.limit('10/minute') decorator on initiate_oauth"
+    }
+  ]
+}

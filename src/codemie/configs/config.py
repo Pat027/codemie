@@ -18,7 +18,7 @@ from typing import Literal, Self
 
 from apscheduler.triggers.cron import CronTrigger
 from dotenv import find_dotenv, load_dotenv
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, computed_field, model_validator
 from pydantic_settings import SettingsConfigDict, BaseSettings
 
 
@@ -398,6 +398,10 @@ class Config(BaseSettings):
     A2A_AGENT_REQUEST_TIMEOUT: float = 30.0
     A2A_PROVIDER_ORGANIZATION: str = ""
     A2A_PROVIDER_URL: str = ""
+
+    # Google OAuth Configuration
+    GOOGLE_OAUTH_CLIENT_ID: str = Field(default="", description="OAuth 2.0 Client ID from Google Cloud Console")
+    GOOGLE_OAUTH_CLIENT_SECRET: str = Field(default="", description="OAuth 2.0 Client Secret from Google Cloud Console")
 
     # SharePoint OAuth (delegated auth via Authorization Code + PKCE)
     # Requires Redis. Disabled by default to avoid breaking OSS deployments without Redis.
@@ -855,6 +859,12 @@ class Config(BaseSettings):
                     f"{self.STALE_DATASOURCE_SCHEDULE!r} ({exc})"
                 ) from exc
         return self
+
+    @computed_field
+    @property
+    def google_oauth_redirect_uri(self) -> str:
+        """Computed redirect URI for Google OAuth."""
+        return f"{self.CALLBACK_API_BASE_URL}/v1/google-oauth/callback"
 
     @property
     def verbose(self) -> bool:

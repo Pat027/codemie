@@ -223,6 +223,7 @@ class SettingRequest(BaseModel):
     credential_type: CredentialTypes
     credential_values: List[CredentialValues]
     is_global: Optional[bool] = False
+    oauth_state: Optional[str] = None
 
 
 class TestSettingRequest(BaseModel):

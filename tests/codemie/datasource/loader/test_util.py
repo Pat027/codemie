@@ -15,13 +15,16 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
+from googleapiclient.errors import HttpError
+
+from codemie.datasource.exceptions import ConnectionException, UnauthorizedException
 from codemie.datasource.loader.util import AssistantKBGoogleDocToJsonParser
 
 
 class TestAssistantKBGoogleDocToJsonParser:
     @pytest.fixture
     def mock_parser(self):
-        return AssistantKBGoogleDocToJsonParser(document_id="test_id1")
+        return AssistantKBGoogleDocToJsonParser(document_id="test_id1", access_token="test_token")
 
     @pytest.fixture
     def mock_elements(self):
@@ -68,8 +71,75 @@ class TestAssistantKBGoogleDocToJsonParser:
 
     def test_check_document_accessible_raises_on_api_error(self, mock_parser):
         mock_service = MagicMock()
-        mock_service.documents.return_value.get.return_value.execute.side_effect = Exception("403 Access denied")
+        mock_resp = MagicMock()
+        mock_resp.status = 403
+        http_error = HttpError(resp=mock_resp, content=b"Access denied")
+        mock_service.documents.return_value.get.return_value.execute.side_effect = http_error
 
         with patch("codemie.datasource.loader.util.build", return_value=mock_service):
-            with pytest.raises(Exception, match="403 Access denied"):
+            with pytest.raises(UnauthorizedException, match="Access denied.*don't have permission"):
                 mock_parser.check_document_accessible()
+
+
+class TestHandleGoogleApiError:
+    @pytest.fixture
+    def mock_parser(self):
+        return AssistantKBGoogleDocToJsonParser(document_id="test_doc_id", access_token="test_token")
+
+    def test_handle_403_raises_unauthorized_exception(self, mock_parser):
+        mock_resp = MagicMock()
+        mock_resp.status = 403
+        http_error = HttpError(resp=mock_resp, content=b"Forbidden")
+
+        with pytest.raises(UnauthorizedException, match="Access denied.*don't have permission"):
+            mock_parser._handle_google_api_error(http_error, "test_doc_id", "fetch document")
+
+    def test_handle_401_raises_unauthorized_exception(self, mock_parser):
+        mock_resp = MagicMock()
+        mock_resp.status = 401
+        http_error = HttpError(resp=mock_resp, content=b"Unauthorized")
+
+        with pytest.raises(UnauthorizedException, match="Authentication failed.*credentials are invalid"):
+            mock_parser._handle_google_api_error(http_error, "test_doc_id", "fetch document")
+
+    def test_handle_404_raises_connection_exception(self, mock_parser):
+        mock_resp = MagicMock()
+        mock_resp.status = 404
+        http_error = HttpError(resp=mock_resp, content=b"Not found")
+
+        with pytest.raises(ConnectionException, match="Document not found.*test_doc_id.*does not exist"):
+            mock_parser._handle_google_api_error(http_error, "test_doc_id", "fetch document")
+
+    def test_handle_500_raises_connection_exception(self, mock_parser):
+        mock_resp = MagicMock()
+        mock_resp.status = 500
+        http_error = HttpError(resp=mock_resp, content=b"Internal server error")
+
+        with pytest.raises(ConnectionException, match="temporarily unavailable.*try again later"):
+            mock_parser._handle_google_api_error(http_error, "test_doc_id", "fetch document")
+
+    def test_handle_503_raises_connection_exception(self, mock_parser):
+        mock_resp = MagicMock()
+        mock_resp.status = 503
+        http_error = HttpError(resp=mock_resp, content=b"Service unavailable")
+
+        with pytest.raises(ConnectionException, match="temporarily unavailable.*try again later"):
+            mock_parser._handle_google_api_error(http_error, "test_doc_id", "fetch document")
+
+    def test_handle_other_status_raises_connection_exception(self, mock_parser):
+        mock_resp = MagicMock()
+        mock_resp.status = 429
+        http_error = HttpError(resp=mock_resp, content=b"Too many requests")
+
+        with pytest.raises(ConnectionException, match="API request failed \\(HTTP 429\\)"):
+            mock_parser._handle_google_api_error(http_error, "test_doc_id", "fetch document")
+
+    def test_get_document_wraps_http_error(self, mock_parser):
+        mock_service = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status = 403
+        http_error = HttpError(resp=mock_resp, content=b"Forbidden")
+        mock_service.documents.return_value.get.return_value.execute.side_effect = http_error
+
+        with pytest.raises(UnauthorizedException):
+            mock_parser.get_document(mock_service, "test_doc_id")
