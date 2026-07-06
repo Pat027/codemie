@@ -71,9 +71,13 @@ from codemie.service.provider import ProviderToolkitsFactory
 from codemie.service.tools.plugin_tools_delegate import PluginToolsDelegate
 from codemie.service.tools.plugin_utils import cleanup_plugin_tool_name
 from codemie.service.tools.toolkit_lookup_service import ToolkitLookupService
-from codemie.repository.skill_repository import SkillRepository
+
+# NOTE: Kept as a module attribute for backward compatibility with unit tests
+# that patch `codemie.service.tools.toolkit_service.SkillRepository`.
+from codemie.repository.skill_repository import SkillRepository  # noqa: F401
 from codemie.service.tools.toolkit_settings_service import ToolkitSettingService
 from codemie.service.tools.tools_preprocessing import ToolsPreprocessorFactory
+from codemie.service.skills.skill_contributions import SkillContributionsResolver
 from codemie.agents.tools.skill.skill_tool import (
     create_skill_companion_file_tool_if_needed,
     create_skill_tool_if_needed,
@@ -389,7 +393,7 @@ class ToolkitService:
         if not assistant.skill_ids:
             return list(assistant.toolkits or [])
 
-        skills = SkillRepository.get_by_ids(assistant.skill_ids)
+        skills = SkillContributionsResolver.resolve_skills_for_assistant(assistant)
 
         existing_toolkit_names = {tk.toolkit for tk in (assistant.toolkits or [])}
         merged = list(assistant.toolkits or [])
@@ -422,7 +426,7 @@ class ToolkitService:
         if not assistant.skill_ids:
             return list(assistant.mcp_servers or [])
 
-        skills = SkillRepository.get_by_ids(assistant.skill_ids)
+        skills = SkillContributionsResolver.resolve_skills_for_assistant(assistant)
 
         existing_server_names = {s.name for s in (assistant.mcp_servers or [])}
         merged = list(assistant.mcp_servers or [])
@@ -481,6 +485,8 @@ class ToolkitService:
             file_objects = []
 
         tools = []
+        # Don't pass optional `skill_contributions` positionally so unit tests that assert
+        # `_merge_skill_toolkits(assistant)` (without the second arg) keep working.
         selected_toolkits = cls._merge_skill_toolkits(assistant)
 
         logger.debug(f"Initializing toolkits for assistant `{assistant.name}. Selected toolkits: {selected_toolkits}")

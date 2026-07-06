@@ -105,12 +105,19 @@ from codemie.service.assistant.assistant_health_check_service import AssistantHe
 from codemie.service.tools.plugin_tools_info_service import PluginToolsInfoService, PluginToolsInfoServiceError
 from codemie.service.llm_service.llm_service import llm_service
 
+from codemie.service.subagents.builtin_subagents_registry import BuiltinSubagentsRegistry
+
 
 router = APIRouter(
     tags=["Assistant"],
     prefix="/v1",
     dependencies=[],
 )
+
+
+class BuiltinSubagentListItem(BaseModel):
+    id: str
+    display_name: str
 
 
 class ReactionRequest(BaseModel):
@@ -499,6 +506,20 @@ def get_tools(request: Request, user: User = Depends(authenticate)):
 def get_hedgeable_tools(request: Request, user: User = Depends(authenticate)):
     """Returns tools that support request hedging (extend CodeMieHedgeTool)."""
     return ToolsInfoService.get_hedgeable_tools_info(user=user)
+
+
+@router.get(
+    "/assistants/builtin_subagents",
+    status_code=status.HTTP_200_OK,
+    response_model=list[BuiltinSubagentListItem],
+    response_model_by_alias=True,
+)
+def list_builtin_subagents(user: User = Depends(authenticate)):
+    """Return available builtin subagents catalog."""
+    return [
+        BuiltinSubagentListItem(id=item.id.value, display_name=item.display_name)
+        for item in BuiltinSubagentsRegistry.list_available()
+    ]
 
 
 @router.get(
@@ -913,6 +934,7 @@ async def ask_virtual_assistant(
         mcp_servers=mcp_servers,
         skill_ids=request.skill_ids,
         assistant_ids=request.assistant_ids,
+        enabled_builtin_subagents=request.enabled_builtin_subagents,
         agent_mode=request.agent_mode,
         plan_prompt=request.plan_prompt,
         smart_tool_selection_enabled=request.smart_tool_selection_enabled,

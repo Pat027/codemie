@@ -14,6 +14,7 @@
 
 import base64
 import binascii
+import mimetypes
 import posixpath
 import re
 
@@ -58,6 +59,30 @@ class SkillFileStorage:
             return {path: path[len(prefix) :] for path in paths}
 
         return {path: path for path in paths}
+
+    @staticmethod
+    def _encode_companion_file_record(
+        path: str,
+        raw_content: bytes,
+    ) -> dict[str, str | int]:
+        """Serialize companion file bytes into the storage format used by skill bundles."""
+        normalized_path = SkillFileStorage._normalize_companion_file_path(path)
+        mime_type = mimetypes.guess_type(normalized_path)[0] or "application/octet-stream"
+
+        try:
+            content = raw_content.decode("utf-8")
+            encoding = "text"
+        except UnicodeDecodeError:
+            content = base64.b64encode(raw_content).decode("ascii")
+            encoding = "base64"
+
+        return {
+            "path": normalized_path,
+            "mime_type": mime_type,
+            "encoding": encoding,
+            "size_bytes": len(raw_content),
+            "content": content,
+        }
 
     @staticmethod
     def _decode_companion_file_payload(

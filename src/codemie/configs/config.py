@@ -114,6 +114,8 @@ class Config(BaseSettings):
     ASSISTANT_CATEGORIES_CONFIG_DIR: Path = Path(__file__).absolute().parents[3] / "config/categories"
     KATA_TAGS_CONFIG_PATH: Path = Path(__file__).absolute().parents[3] / "config/categories/kata-tags.yaml"
     KATA_ROLES_CONFIG_PATH: Path = Path(__file__).absolute().parents[3] / "config/categories/kata-roles.yaml"
+    SUBAGENTS_CONFIG_DIR: Path = Path(__file__).absolute().parents[3] / "config/subagents"
+    BUILTIN_SUBAGENTS_CONFIG_PATH: Path = SUBAGENTS_CONFIG_DIR / "subagents.yaml"
     KATAS_SOURCE_DIR: Path = Path(__file__).absolute().parents[3] / "config/katas"
     KATAS_REPO_URL: str = "https://github.com/codemie-ai/codemie-katas.git"
     KATAS_MAX_FILE_SIZE: int = 1 * 1024 * 1024  # 1 MB per file

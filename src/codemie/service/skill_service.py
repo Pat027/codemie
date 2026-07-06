@@ -252,7 +252,7 @@ class SkillService:
 
                     bundle_records.append(
                         SkillCompanionFilePayload.model_validate(
-                            SkillService._encode_companion_file_record(relative_path, raw_content)
+                            SkillFileStorage._encode_companion_file_record(relative_path, raw_content)
                         )
                     )
         except zipfile.BadZipFile as exc:
@@ -497,6 +497,7 @@ class SkillService:
             "toolkits": request.toolkits,
             "mcp_servers": request.mcp_servers,
             "companion_files": [],
+            "enabled_builtin_subagents": request.enabled_builtin_subagents,
             "created_by": CreatedByUser(
                 id=user.id,
                 name=user.name or user.username,
@@ -593,6 +594,9 @@ class SkillService:
             updates["toolkits"] = request.toolkits
         if request.mcp_servers is not None:
             updates["mcp_servers"] = request.mcp_servers
+
+        if request.enabled_builtin_subagents is not None:
+            updates["enabled_builtin_subagents"] = request.enabled_builtin_subagents
 
         return updates
 

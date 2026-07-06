@@ -50,6 +50,7 @@ from codemie.service.llm_service.llm_service import llm_service
 from codemie.service.llm_service.utils import set_llm_context
 from codemie.service.tools.tools_info_service import ToolsInfoService
 from codemie.service.tools.toolkit_service import ToolkitService
+from codemie.service.skills.skill_contributions import SkillContributionsResolver
 
 
 class AssistantService:
@@ -310,7 +311,7 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
 
     @staticmethod
     def _get_subagent_descriptions(assistant: Assistant, user: User) -> dict[str, str]:
-        return LangGraphAssistantBuilder.get_subagent_descriptions(assistant, user)
+        return LangGraphAssistantBuilder.get_subagent_descriptions_with_contributions(assistant, user)
 
     @classmethod
     def _build_bedrock_agent(
@@ -489,6 +490,12 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
 
         # Apply marketplace tool mappings if needed
         cls._apply_marketplace_tool_mappings(assistant, user, request)
+
+        # Resolve skill contributions once (toolkits/mcp/builtins) to avoid multiple DB calls.
+        skill_contributions = SkillContributionsResolver.resolve_for_assistant(assistant)
+        # Store on assistant as runtime-only property so downstream consumers can read it
+        # without threading through params.
+        assistant._runtime_skill_contributions = skill_contributions
 
         # Get tools for the agent
         tools = ToolkitService.get_tools(

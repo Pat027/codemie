@@ -52,6 +52,8 @@ from codemie.service.mcp.models import MCPServerConfig, _ALLOWED_MCP_COMMANDS, _
 from codemie.configs.logger import logger
 from codemie.service.guardrail.guardrail_service import GuardrailService
 
+from codemie.service.subagents.builtin_subagents import BuiltinSubagent
+
 from codemie.rest_api.models.assistant_generator import RefineGeneratorResponse
 
 PROMPT_DATE_FORMAT = '%a, %d %b %Y %H:%M:%S'
@@ -315,6 +317,13 @@ class AssistantRequest(BaseModel):
     hedging_config: Optional[HedgingConfig] = None
     mcp_servers: list[MCPServerDetails] = Field(default_factory=list)
     assistant_ids: list[str] = Field(default_factory=list)
+    enabled_builtin_subagents: list[BuiltinSubagent] = Field(
+        default_factory=list,
+        description=(
+            "Optional list of builtin subagents to enable for this assistant. "
+            "These are executed as LangGraph supervisor subagents at runtime."
+        ),
+    )
     skill_ids: list[str] = Field(default_factory=list)
     bedrock: Optional[BedrockAgentData] = None
     bedrock_agentcore_runtime: Optional[BedrockAgentcoreRuntimeData] = None
@@ -343,25 +352,50 @@ class AssistantRequest(BaseModel):
         This provides backward compatibility for clients sending full category objects.
         Also sanitizes string fields by removing NULL bytes (0x00) which are not allowed in PostgreSQL.
         """
-        if isinstance(data, dict):
-            # Remove NULL bytes from string fields to prevent PostgreSQL errors
-            string_fields = ['name', 'description', 'system_prompt', 'plan_prompt', 'slug', 'image_generation_model']
-            for field in string_fields:
-                if field in data and isinstance(data[field], str):
-                    data[field] = data[field].replace('\x00', '')
+        if not isinstance(data, dict):
+            return data
 
-            # Convert category objects to IDs (backward compatibility)
-            if 'categories' in data:
-                categories = data['categories']
-                is_category_object = (
-                    categories
-                    and isinstance(categories, list)
-                    and isinstance(categories[0], dict)
-                    and 'id' in categories[0]
-                )
-                if is_category_object:
-                    data['categories'] = [cat['id'] for cat in categories if isinstance(cat, dict) and 'id' in cat]
+        cls._sanitize_null_bytes(
+            data,
+            fields=("name", "description", "system_prompt", "plan_prompt", "slug", "image_generation_model"),
+        )
+        cls._normalize_category_ids(data)
+        cls._dedupe_builtin_subagents(data)
         return data
+
+    @staticmethod
+    def _sanitize_null_bytes(data: dict[str, Any], fields: tuple[str, ...]) -> None:
+        """Remove NULL bytes from known string fields to prevent PostgreSQL errors."""
+        for field in fields:
+            value = data.get(field)
+            if isinstance(value, str):
+                data[field] = value.replace("\x00", "")
+
+    @staticmethod
+    def _normalize_category_ids(data: dict[str, Any]) -> None:
+        """Convert category objects to category IDs (backward compatibility)."""
+        categories = data.get("categories")
+        if not categories or not isinstance(categories, list):
+            return
+
+        first = categories[0]
+        if not isinstance(first, dict) or "id" not in first:
+            return
+
+        data["categories"] = [cat["id"] for cat in categories if isinstance(cat, dict) and "id" in cat]
+
+    @staticmethod
+    def _dedupe_builtin_subagents(data: dict[str, Any]) -> None:
+        """De-duplicate builtin subagents (preserve order)."""
+        items = data.get("enabled_builtin_subagents")
+        if not isinstance(items, list):
+            return
+        from codemie.core.utils import dedupe_preserve_order
+
+        data["enabled_builtin_subagents"] = dedupe_preserve_order(
+            items,
+            key=lambda item: getattr(item, "value", None) or str(item),
+        )
 
     @model_validator(mode='after')
     def validate_and_set_assistant_type(self) -> Self:
@@ -607,6 +641,10 @@ class AssistantBase(CommonBaseModel, Owned):
         default_factory=list, sa_column=Column(PydanticListType(MCPServerDetails))
     )
     assistant_ids: list[str] = SQLField(default_factory=list, sa_column=Column(JSONB))
+    enabled_builtin_subagents: list[BuiltinSubagent] = SQLField(
+        default_factory=list,
+        sa_column=Column(JSONB, nullable=False, server_default="[]"),
+    )
     skill_ids: Optional[list[str]] = SQLField(default_factory=list, sa_column=Column(JSONB))
     nested_assistants: list[NestedAssistantResponse] = SQLField(
         default_factory=list, sa_column=Column(PydanticListType(NestedAssistantResponse))
@@ -631,6 +669,15 @@ class AssistantBase(CommonBaseModel, Owned):
     unique_dislikes_count: Optional[int] = SQLField(default=0, index=False)
     categories: list[str] = SQLField(default_factory=list, sa_column=Column(JSONB))
     custom_metadata: Optional[dict[str, Any]] = SQLField(default=None, sa_column=Column(JSONB))
+
+    # Runtime-only flags (never persisted, never exposed via API schemas).
+    # NOTE: We intentionally do NOT use Pydantic PrivateAttr here because SQLModel instances
+    # can be created in a mode where Pydantic private storage is not initialized.
+    _runtime_disable_skill_builtin_subagents: bool = False
+    _runtime_builtin_subagent: BuiltinSubagent | None = None
+    # Request-scoped precomputed skill contributions (resolved once per request).
+    # Kept untyped to avoid service-layer imports in REST API models.
+    _runtime_skill_contributions: Any = None
 
     # Custom PostgreSQL indexes
     __table_args__ = (
@@ -1361,6 +1408,13 @@ class VirtualAssistantChatRequest(BaseModel):
     assistant_ids: list[str] = Field(
         default_factory=list,
         description='Sub-assistant IDs to include (orchestrator pattern).',
+    )
+    enabled_builtin_subagents: list[BuiltinSubagent] = Field(
+        default_factory=list,
+        description=(
+            "Builtin subagents to enable for this virtual assistant. "
+            "They will be created as LangGraph supervisor subagents at runtime."
+        ),
     )
     agent_mode: AgentMode = Field(
         default=AgentMode.GENERAL,

@@ -40,6 +40,9 @@ from codemie.rest_api.security.user import User
 # import skill.py so there is no circular dependency.
 from codemie.rest_api.models.assistant import MCPServerDetails, ToolKitDetails
 
+from codemie.service.subagents.builtin_subagents import BuiltinSubagent
+from codemie.core.utils import dedupe_preserve_order
+
 
 class SkillVisibility(str, Enum):
     """Visibility levels for skills"""
@@ -198,6 +201,14 @@ class SkillCreateRequest(BaseModel):
         description="Optional bundled files stored alongside the main skill instructions",
     )
 
+    enabled_builtin_subagents: list[BuiltinSubagent] = Field(
+        default_factory=list,
+        description=(
+            "Optional list of builtin subagents to enable when this skill is attached to an assistant. "
+            "Merged into the assistant's enabled builtin subagents at runtime (deduped)."
+        ),
+    )
+
     @field_validator("name")
     @classmethod
     def validate_name_format(cls, v: str) -> str:
@@ -218,6 +229,11 @@ class SkillCreateRequest(BaseModel):
         if len(v) > MAX_CATEGORIES_PER_SKILL:
             raise ValueError(MAX_CATEGORIES_ERROR_MSG)
         return v
+
+    @field_validator("enabled_builtin_subagents")
+    @classmethod
+    def validate_enabled_builtin_subagents_unique(cls, v: list[BuiltinSubagent]) -> list[BuiltinSubagent]:
+        return dedupe_preserve_order(v or [], key=lambda item: item.value)
 
 
 class SkillUpdateRequest(BaseModel):
@@ -242,6 +258,14 @@ class SkillUpdateRequest(BaseModel):
         description="Optional replacement set of bundled files stored alongside the skill",
     )
 
+    enabled_builtin_subagents: list[BuiltinSubagent] | None = Field(
+        default=None,
+        description=(
+            "Optional list of builtin subagents to enable when this skill is attached to an assistant. "
+            "Merged into the assistant's enabled builtin subagents at runtime (deduped)."
+        ),
+    )
+
     @field_validator("name")
     @classmethod
     def validate_name_format(cls, v: str | None) -> str | None:
@@ -256,6 +280,13 @@ class SkillUpdateRequest(BaseModel):
                 "Must start and end with a letter or number."
             )
         return v
+
+    @field_validator("enabled_builtin_subagents")
+    @classmethod
+    def validate_enabled_builtin_subagents_unique(cls, v: list[BuiltinSubagent] | None) -> list[BuiltinSubagent] | None:
+        if v is None:
+            return None
+        return dedupe_preserve_order(v or [], key=lambda item: item.value)
 
     @field_validator("categories")
     @classmethod
@@ -425,6 +456,7 @@ class SkillDetailResponse(BaseModel):
     toolkits: list[ToolKitDetails] = Field(default_factory=list)
     mcp_servers: list[MCPServerDetails] = Field(default_factory=list)
     companion_files: list[SkillCompanionFileMetadata] = Field(default_factory=list)
+    enabled_builtin_subagents: list[BuiltinSubagent] = Field(default_factory=list)
 
 
 class SkillListPaginatedResponse(BaseModel):
@@ -477,6 +509,11 @@ class SkillBase(CommonBaseModel, Owned):
 
     # Optional bundled files for the skill (references, assets)
     companion_files: list[dict] = SQLField(
+        default_factory=list,
+        sa_column=Column(JSONB, nullable=False, server_default="[]"),
+    )
+
+    enabled_builtin_subagents: list[BuiltinSubagent] = SQLField(
         default_factory=list,
         sa_column=Column(JSONB, nullable=False, server_default="[]"),
     )
@@ -580,6 +617,7 @@ class Skill(BaseModelWithSQLSupport, SkillBase, table=True):
             toolkits=self.toolkits or [],
             mcp_servers=self.mcp_servers or [],
             companion_files=self.get_companion_file_metadata(),
+            enabled_builtin_subagents=self.enabled_builtin_subagents or [],
         )
 
     def get_companion_file_metadata(self) -> list[SkillCompanionFileMetadata]:

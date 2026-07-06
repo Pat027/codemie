@@ -1656,7 +1656,7 @@ class TestMergeSkillToolkits:
         assistant = self._make_assistant(skill_ids=["skill-1"], toolkits=[tk_git])
         skill = self._make_skill("skill-1", toolkits=[tk_code])
 
-        with patch("codemie.service.tools.toolkit_service.SkillRepository") as mock_repo:
+        with patch("codemie.service.skills.skill_contributions.SkillRepository") as mock_repo:
             mock_repo.get_by_ids.return_value = [skill]
             result = ToolkitService._merge_skill_toolkits(assistant)
 
@@ -1671,7 +1671,7 @@ class TestMergeSkillToolkits:
         assistant = self._make_assistant(skill_ids=["skill-1"], toolkits=[tk_git])
         skill = self._make_skill("skill-1", toolkits=[tk_git_dup])
 
-        with patch("codemie.service.tools.toolkit_service.SkillRepository") as mock_repo:
+        with patch("codemie.service.skills.skill_contributions.SkillRepository") as mock_repo:
             mock_repo.get_by_ids.return_value = [skill]
             result = ToolkitService._merge_skill_toolkits(assistant)
 
@@ -1687,7 +1687,7 @@ class TestMergeSkillToolkits:
         skill_1 = self._make_skill("skill-1", toolkits=[tk_code])
         skill_2 = self._make_skill("skill-2", toolkits=[tk_research])
 
-        with patch("codemie.service.tools.toolkit_service.SkillRepository") as mock_repo:
+        with patch("codemie.service.skills.skill_contributions.SkillRepository") as mock_repo:
             mock_repo.get_by_ids.return_value = [skill_1, skill_2]
             result = ToolkitService._merge_skill_toolkits(assistant)
 
@@ -1701,7 +1701,7 @@ class TestMergeSkillToolkits:
         assistant = self._make_assistant(skill_ids=["skill-1"], toolkits=[tk_git])
         skill = self._make_skill("skill-1", toolkits=[])
 
-        with patch("codemie.service.tools.toolkit_service.SkillRepository") as mock_repo:
+        with patch("codemie.service.skills.skill_contributions.SkillRepository") as mock_repo:
             mock_repo.get_by_ids.return_value = [skill]
             result = ToolkitService._merge_skill_toolkits(assistant)
 
@@ -1713,7 +1713,7 @@ class TestMergeSkillToolkits:
         assistant = self._make_assistant(skill_ids=["skill-1"], toolkits=[tk_git])
         skill = self._make_skill("skill-1", toolkits=None)
 
-        with patch("codemie.service.tools.toolkit_service.SkillRepository") as mock_repo:
+        with patch("codemie.service.skills.skill_contributions.SkillRepository") as mock_repo:
             mock_repo.get_by_ids.return_value = [skill]
             result = ToolkitService._merge_skill_toolkits(assistant)
 
@@ -1724,7 +1724,7 @@ class TestMergeSkillToolkits:
         tk_git = self._make_toolkit("git")
         assistant = self._make_assistant(skill_ids=["nonexistent"], toolkits=[tk_git])
 
-        with patch("codemie.service.tools.toolkit_service.SkillRepository") as mock_repo:
+        with patch("codemie.service.skills.skill_contributions.SkillRepository") as mock_repo:
             mock_repo.get_by_ids.return_value = []
             result = ToolkitService._merge_skill_toolkits(assistant)
 
@@ -1738,7 +1738,7 @@ class TestMergeSkillToolkits:
         skill_1 = self._make_skill("skill-1", toolkits=[tk_shared_1])
         skill_2 = self._make_skill("skill-2", toolkits=[tk_shared_2])
 
-        with patch("codemie.service.tools.toolkit_service.SkillRepository") as mock_repo:
+        with patch("codemie.service.skills.skill_contributions.SkillRepository") as mock_repo:
             mock_repo.get_by_ids.return_value = [skill_1, skill_2]
             result = ToolkitService._merge_skill_toolkits(assistant)
 
@@ -1893,7 +1893,7 @@ class TestMergeSkillMcpServers:
         assistant = self._make_assistant(skill_ids=["skill-1"], mcp_servers=[server_a])
         skill = self._make_skill("skill-1", mcp_servers=[server_b])
 
-        with patch("codemie.service.tools.toolkit_service.SkillRepository") as mock_repo:
+        with patch("codemie.service.skills.skill_contributions.SkillRepository") as mock_repo:
             mock_repo.get_by_ids.return_value = [skill]
             result = ToolkitService._merge_skill_mcp_servers(assistant)
 
@@ -1908,7 +1908,7 @@ class TestMergeSkillMcpServers:
         assistant = self._make_assistant(skill_ids=["skill-1"], mcp_servers=[server_a])
         skill = self._make_skill("skill-1", mcp_servers=[server_a_dup])
 
-        with patch("codemie.service.tools.toolkit_service.SkillRepository") as mock_repo:
+        with patch("codemie.service.skills.skill_contributions.SkillRepository") as mock_repo:
             mock_repo.get_by_ids.return_value = [skill]
             result = ToolkitService._merge_skill_mcp_servers(assistant)
 
@@ -1924,7 +1924,7 @@ class TestMergeSkillMcpServers:
         skill_1 = self._make_skill("skill-1", mcp_servers=[server_b])
         skill_2 = self._make_skill("skill-2", mcp_servers=[server_c])
 
-        with patch("codemie.service.tools.toolkit_service.SkillRepository") as mock_repo:
+        with patch("codemie.service.skills.skill_contributions.SkillRepository") as mock_repo:
             mock_repo.get_by_ids.return_value = [skill_1, skill_2]
             result = ToolkitService._merge_skill_mcp_servers(assistant)
 
@@ -1938,7 +1938,7 @@ class TestMergeSkillMcpServers:
         assistant = self._make_assistant(skill_ids=["skill-1"], mcp_servers=[server_a])
         skill = self._make_skill("skill-1", mcp_servers=[])
 
-        with patch("codemie.service.tools.toolkit_service.SkillRepository") as mock_repo:
+        with patch("codemie.service.skills.skill_contributions.SkillRepository") as mock_repo:
             mock_repo.get_by_ids.return_value = [skill]
             result = ToolkitService._merge_skill_mcp_servers(assistant)
 
@@ -1950,7 +1950,7 @@ class TestMergeSkillMcpServers:
         assistant = self._make_assistant(skill_ids=["skill-1"], mcp_servers=[server_a])
         skill = self._make_skill("skill-1", mcp_servers=None)
 
-        with patch("codemie.service.tools.toolkit_service.SkillRepository") as mock_repo:
+        with patch("codemie.service.skills.skill_contributions.SkillRepository") as mock_repo:
             mock_repo.get_by_ids.return_value = [skill]
             result = ToolkitService._merge_skill_mcp_servers(assistant)
 
@@ -1961,7 +1961,7 @@ class TestMergeSkillMcpServers:
         server_a = self._make_mcp_server("server-a")
         assistant = self._make_assistant(skill_ids=["nonexistent"], mcp_servers=[server_a])
 
-        with patch("codemie.service.tools.toolkit_service.SkillRepository") as mock_repo:
+        with patch("codemie.service.skills.skill_contributions.SkillRepository") as mock_repo:
             mock_repo.get_by_ids.return_value = []
             result = ToolkitService._merge_skill_mcp_servers(assistant)
 
@@ -1975,7 +1975,7 @@ class TestMergeSkillMcpServers:
         skill_1 = self._make_skill("skill-1", mcp_servers=[server_shared_1])
         skill_2 = self._make_skill("skill-2", mcp_servers=[server_shared_2])
 
-        with patch("codemie.service.tools.toolkit_service.SkillRepository") as mock_repo:
+        with patch("codemie.service.skills.skill_contributions.SkillRepository") as mock_repo:
             mock_repo.get_by_ids.return_value = [skill_1, skill_2]
             result = ToolkitService._merge_skill_mcp_servers(assistant)
 

@@ -113,6 +113,35 @@ def extract_text_from_llm_output(llm_output: Any, return_last: bool = False) -> 
     return str(llm_output)
 
 
+def dedupe_preserve_order(items, *, key=None):
+    """
+    De-duplicate an iterable while preserving the first occurrence order.
+
+    Args:
+        items: Iterable of items.
+        key: Optional callable used to derive a hashable key per item (e.g. enum.value).
+
+    Returns:
+        List of unique items in original order.
+    """
+    if not items:
+        return []
+
+    if key is None:
+        # dict preserves insertion order (Python 3.7+).
+        return list(dict.fromkeys(items))
+
+    seen = set()
+    result = []
+    for item in items:
+        k = key(item)
+        if k in seen:
+            continue
+        seen.add(k)
+        result.append(item)
+    return result
+
+
 def unpack_json_strings(obj):
     """
     Recursively converts string fields containing JSON objects or arrays into native Python data structures.
