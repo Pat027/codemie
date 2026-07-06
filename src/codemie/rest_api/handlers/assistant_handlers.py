@@ -17,6 +17,7 @@ import json
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 from time import time
 from types import SimpleNamespace
 from typing import List
@@ -83,6 +84,7 @@ class ChatHistoryData:
     response: str
     thoughts: List[Thought]
     status: ConversationStatus = ConversationStatus.SUCCESS
+    user_message_received_at: datetime | None = None
 
 
 class AssistantRequestHandler(ABC):
@@ -370,6 +372,7 @@ class AssistantRequestHandler(ABC):
             assistant=self.assistant,
             thoughts=self._filter_thoughts(data.thoughts),
             status=data.status,
+            user_message_received_at=data.user_message_received_at,
         )
         request_summary_manager.clear_summary(self.request_uuid)
 
@@ -447,25 +450,32 @@ class StandardAssistantHandler(AssistantRequestHandler):
         self._populate_conversation_history(request)
 
         execution_start = time()
+        user_message_received_at = datetime.now()
         if request.stream:
-            return self._handle_stream(request, raw_request, execution_start, include_tool_errors, error_detail_level)
+            return self._handle_stream(
+                request, raw_request, execution_start, user_message_received_at, include_tool_errors, error_detail_level
+            )
         elif request.background_task:
             return self._handle_background(
                 request,
                 background_tasks,
                 raw_request,
                 execution_start,
+                user_message_received_at,
                 include_tool_errors,
                 error_detail_level,
             )
         else:
-            return self._handle_sync(request, raw_request, execution_start, include_tool_errors, error_detail_level)
+            return self._handle_sync(
+                request, raw_request, execution_start, user_message_received_at, include_tool_errors, error_detail_level
+            )
 
     def _handle_stream(
         self,
         request: AssistantChatRequest,
         raw_request: Request,
         execution_start: float,
+        user_message_received_at: datetime | None = None,
         include_tool_errors: bool = False,
         error_detail_level: ErrorDetailLevel = ErrorDetailLevel.STANDARD,
     ) -> StreamingResponse:
@@ -484,6 +494,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
                 request=request,
                 threaded_generator=generator_queue,
                 execution_start=execution_start,
+                user_message_received_at=user_message_received_at,
             )
         )
 
@@ -510,6 +521,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
                 agent,
                 include_tool_errors,
                 error_detail_level,
+                user_message_received_at,
             )
 
             return StreamingResponse(
@@ -520,7 +532,9 @@ class StandardAssistantHandler(AssistantRequestHandler):
             from codemie.core.template_security import TemplateSecurityError
 
             if isinstance(e, TemplateSecurityError):  # Return security error as a thought without calling LLM
-                return self._return_security_error_response(str(e), generator_queue, request, execution_start)
+                return self._return_security_error_response(
+                    str(e), generator_queue, request, execution_start, user_message_received_at
+                )
 
             generator_queue.close()
             raise
@@ -530,6 +544,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
         request: AssistantChatRequest,
         threaded_generator: ThreadedGenerator,
         execution_start,
+        user_message_received_at: datetime | None = None,
     ):
         """
         Stop thread generator queue on client disconnect
@@ -539,6 +554,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
                 request=request,
                 execution_start=execution_start,
                 threaded_generator=threaded_generator,
+                user_message_received_at=user_message_received_at,
             )
             logger.debug("Client disconnected")
             threaded_generator.close()
@@ -548,6 +564,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
         request: AssistantChatRequest,
         threaded_generator: ThreadedGenerator,
         execution_start,
+        user_message_received_at: datetime | None = None,
     ):
         try:
             thoughts = threaded_generator.thoughts
@@ -570,6 +587,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
                     response=response,
                     thoughts=thoughts,
                     status=ConversationStatus.INTERRUPTED,
+                    user_message_received_at=user_message_received_at,
                 )
             )
         except Exception as e:
@@ -605,6 +623,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
         agent=None,
         include_tool_errors: bool = False,
         error_detail_level: ErrorDetailLevel = ErrorDetailLevel.STANDARD,
+        user_message_received_at: datetime | None = None,
     ):
         def run_stream() -> None:
             try:
@@ -637,6 +656,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
                     request=request,
                     response=response.generated,
                     thoughts=generator_queue.thoughts,
+                    user_message_received_at=user_message_received_at,
                 )
             )
             final_chunk = self._build_final_chunk(agent, execution_start, include_tool_errors, error_detail_level)
@@ -650,6 +670,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
         generator_queue: ThreadedGenerator,
         request: AssistantChatRequest,
         execution_start: float,
+        user_message_received_at: datetime | None = None,
     ) -> StreamingResponse:
         """
         Return a security error as a thought without calling the LLM.
@@ -700,6 +721,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
                         response="",  # No response since we didn't call LLM
                         thoughts=[error_thought.model_dump()],
                         status=ConversationStatus.ERROR,
+                        user_message_received_at=user_message_received_at,
                     )
                 )
             except Exception as e:
@@ -716,6 +738,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
         background_tasks: BackgroundTasks,
         raw_request: Request,
         execution_start: float,
+        user_message_received_at: datetime | None = None,
         include_tool_errors: bool = False,
         error_detail_level: ErrorDetailLevel = ErrorDetailLevel.STANDARD,
     ) -> BaseModelResponse:
@@ -740,6 +763,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
             execution_start,
             include_tool_errors,
             error_detail_level,
+            user_message_received_at,
         )
 
         return BaseModelResponse(
@@ -754,6 +778,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
         execution_start: float,
         include_tool_errors: bool = False,
         error_detail_level: ErrorDetailLevel = ErrorDetailLevel.STANDARD,
+        user_message_received_at: datetime | None = None,
     ):
         """
         Background worker for assistant generation.
@@ -794,7 +819,13 @@ class StandardAssistantHandler(AssistantRequestHandler):
 
         thoughts = agent.get_thoughts_from_callback()
         self.save_chat_history(
-            ChatHistoryData(execution_start=execution_start, request=request, response=response, thoughts=thoughts)
+            ChatHistoryData(
+                execution_start=execution_start,
+                request=request,
+                response=response,
+                thoughts=thoughts,
+                user_message_received_at=user_message_received_at,
+            )
         )
         return response
 
@@ -811,6 +842,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
         request: AssistantChatRequest,
         raw_request: Request,
         execution_start: float,
+        user_message_received_at: datetime | None = None,
         include_tool_errors: bool = False,
         error_detail_level: ErrorDetailLevel = ErrorDetailLevel.STANDARD,
     ) -> BaseModelResponse:
@@ -843,6 +875,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
                 request=request,
                 response=string_response,
                 thoughts=thoughts,
+                user_message_received_at=user_message_received_at,
             )
         )
 

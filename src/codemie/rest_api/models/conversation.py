@@ -305,9 +305,11 @@ class Conversation(BaseModelWithSQLSupport, Owned, table=True):
         output_tokens: int,
         file_names: list[str],
         money_spent: float,
+        user_message_received_at: datetime | None = None,
     ) -> tuple[GeneratedMessage, GeneratedMessage]:
+        assistant_responded_at = datetime.now()
         user_message = GeneratedMessage(
-            date=datetime.now(),
+            date=user_message_received_at or assistant_responded_at,
             role=ChatRole.USER,
             message_raw=user_query_raw,
             file_names=file_names,
@@ -315,7 +317,7 @@ class Conversation(BaseModelWithSQLSupport, Owned, table=True):
             message=user_query,
         )
         assistant_message = GeneratedMessage(
-            date=datetime.now(),
+            date=assistant_responded_at,
             role=ChatRole.ASSISTANT,
             message=assistant_response,
             input_tokens=input_tokens,
@@ -370,6 +372,7 @@ class Conversation(BaseModelWithSQLSupport, Owned, table=True):
         file_names: list[str],
         money_spent: float,
         replace_latest_variant: bool = False,
+        user_message_received_at: datetime | None = None,
     ):
         user_message, assistant_message = self._build_chat_history_messages(
             user_query=user_query,
@@ -383,6 +386,7 @@ class Conversation(BaseModelWithSQLSupport, Owned, table=True):
             output_tokens=output_tokens,
             file_names=file_names,
             money_spent=money_spent,
+            user_message_received_at=user_message_received_at,
         )
 
         retained_history = self._build_retained_history(

@@ -135,6 +135,7 @@ class ConversationService:
         user: User,
         thoughts: List[Thought],
         status: ConversationStatus = ConversationStatus.SUCCESS,
+        user_message_received_at: datetime | None = None,
     ):
         should_create_conversation = False
         llm_model = request.llm_model if request.llm_model else assistant.llm_model_type
@@ -187,6 +188,7 @@ class ConversationService:
             output_tokens=tokens_usage.output_tokens,
             money_spent=tokens_usage.money_spent,
             replace_latest_variant=replace_latest_variant,
+            user_message_received_at=user_message_received_at,
         )
         AgentWorkspaceService().sync_uploaded_files(
             conversation_id=request.conversation_id,
