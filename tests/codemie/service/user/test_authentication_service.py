@@ -170,7 +170,10 @@ class TestAuthenticateLocal:
             assert exc_info.value.message == "Invalid email or password"
             # Verify failed login logged
             mock_logger.warning.assert_called_once()
-            assert f"user_id={user_id}" in mock_logger.warning.call_args[0][0]
+            log_call = mock_logger.warning.call_args[0][0]
+            assert "login_failed" in log_call
+            assert f"target_user_id={user_id}" in log_call
+            assert "domain=user_management" in log_call
 
     @pytest.mark.asyncio
     async def test_authenticate_local_inactive_user(self):

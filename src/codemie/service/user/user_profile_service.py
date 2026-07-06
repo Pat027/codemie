@@ -123,8 +123,8 @@ class UserProfileService:
 
         try:
             await email_service.send_verification_email(email, token)
-        except Exception as e:
-            logger.warning(f"Failed to send verification email for profile update: {e}")
+        except Exception:
+            logger.warning("verification_email_failed: domain=user_management")
             # Don't fail the request - user can request resend later
 
     # ===========================================
@@ -200,7 +200,7 @@ class UserProfileService:
 
                 await personal_project_service.reconcile_personal_project_on_email_change(user_id, old_email, new_email)
 
-            logger.info(f"Profile updated: user_id={user_id}")
+            logger.info(f"profile_updated: target_user_id={user_id}, domain=user_management")
             return updated_user
 
 

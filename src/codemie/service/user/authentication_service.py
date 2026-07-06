@@ -107,7 +107,7 @@ class AuthenticationService:
             raise ExtendedHTTPException(code=401, message=_INVALID_EMAIL_OR_PASSWORD)
 
         if not password_service.verify_password(user.password_hash, password):
-            logger.warning(f"Failed login attempt: user_id={user.id}")
+            logger.warning(f"login_failed: target_user_id={user.id}, domain=user_management")
             raise ExtendedHTTPException(code=401, message=_INVALID_EMAIL_OR_PASSWORD)
 
         if not user.is_active or user.deleted_at is not None:
@@ -124,7 +124,7 @@ class AuthenticationService:
         # Update last login
         await user_repository.aupdate_last_login(session, user.id)
 
-        logger.info(f"User authenticated: user_id={user.id}, auth_source=local")
+        logger.info(f"user_authenticated: target_user_id={user.id}, auth_source=local, domain=user_management")
         return user
 
     @staticmethod
@@ -219,7 +219,9 @@ class AuthenticationService:
         # This is done here to avoid per-request overhead in the auth hot-path
         await AuthenticationService._ensure_projects_exist(idp_user.project_names + [db_user.email])
 
-        logger.info(f"user_created: target_user_id={db_user.id}, auth_source={config.IDP_PROVIDER}")
+        logger.info(
+            f"user_created: target_user_id={db_user.id}, auth_source={config.IDP_PROVIDER}, domain=user_management"
+        )
         return db_user
 
     @staticmethod
@@ -393,7 +395,9 @@ class AuthenticationService:
             raise ExtendedHTTPException(code=401, message="Invalid authentication state")
 
         db_user = await AuthenticationService.create_user_from_idp(session, idp_user)
-        logger.info(f"IDP user migrated: user_id={db_user.id}")
+        logger.info(
+            f"user_migrated: target_user_id={db_user.id}, auth_source={config.IDP_PROVIDER}, domain=user_management"
+        )
         return db_user
 
     @staticmethod
@@ -458,7 +462,7 @@ class AuthenticationService:
             db_user = await user_repository.aget_by_id(session, user_id)
             if not db_user:
                 raise
-            logger.info(f"User creation race condition handled: user_id={user_id}")
+            logger.info(f"user_creation_race_handled: target_user_id={user_id}, domain=user_management")
             pre_sync_email = await AuthenticationService._sync_existing_user(session, db_user, idp_user)
             return db_user, pre_sync_email
 
@@ -562,7 +566,9 @@ class AuthenticationService:
                     is_maintainer=True,
                 )
                 db_user = await user_repository.acreate(session, db_user)
-                logger.info(f"Dev header user created: user_id={db_user.id}")
+                logger.info(
+                    f"user_created: target_user_id={db_user.id}, auth_source=dev_header, domain=user_management"
+                )
 
             security_user_ins = AuthenticationService._build_security_user(db_user)
 
@@ -637,7 +643,7 @@ class AuthenticationService:
 
         access_token = generate_access_token(user_id, user_email, "local")
 
-        logger.info(f"User logged in: user_id={user_id}")
+        logger.info(f"user_logged_in: target_user_id={user_id}, domain=user_management")
 
         return {
             "access_token": access_token,

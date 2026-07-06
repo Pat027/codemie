@@ -83,7 +83,7 @@ class ApplicationService:
             try:
                 application_repository.create(session=session, name=project_name)
                 session.commit()
-                logger.info(f"Auto-created application for project: {project_name}")
+                logger.info(f"application_auto_created: project={project_name}, domain=user_management")
             except IntegrityError:
                 session.rollback()
                 logger.debug(f"Application already exists (race condition): {project_name}")

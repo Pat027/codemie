@@ -91,7 +91,7 @@ class RegistrationService:
         )
 
         user = user_repository.create(session, user)
-        logger.info(f"User registered: user_id={user.id}, auth_source=local")
+        logger.info(f"user_registered: target_user_id={user.id}, auth_source=local, domain=user_management")
 
         return user
 
@@ -123,7 +123,7 @@ class RegistrationService:
         if not user:
             raise ExtendedHTTPException(code=404, message="User not found")
 
-        logger.info(f"Email verified: user_id={user.id}")
+        logger.info(f"email_verified: target_user_id={user.id}, domain=user_management")
         return user
 
     # ===========================================

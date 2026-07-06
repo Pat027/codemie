@@ -95,7 +95,7 @@ class UserAccessService:
             session.commit()
 
             log_details = UserAccessService._build_project_access_log_details(actor.id, user_id)
-            logger.info(f"project_access_granted: {log_details}")
+            logger.info(f"project_access_granted: {log_details}, domain=user_management")
 
             return {"message": "Project access granted successfully"}
 
@@ -123,7 +123,7 @@ class UserAccessService:
             session.commit()
 
             log_details = UserAccessService._build_project_access_log_details(actor.id, user_id)
-            logger.info(f"project_access_updated: {log_details}")
+            logger.info(f"project_access_updated: {log_details}, domain=user_management")
 
             return {"message": "Project access updated successfully"}
 
@@ -148,7 +148,7 @@ class UserAccessService:
             session.commit()
 
             log_details = UserAccessService._build_project_access_log_details(actor.id, user_id)
-            logger.info(f"project_access_removed: {log_details}")
+            logger.info(f"project_access_removed: {log_details}, domain=user_management")
 
             return {"message": "Project access removed successfully"}
 
@@ -218,7 +218,10 @@ class UserAccessService:
             user_kb_repository.add_kb(session, user_id, kb_name)
             session.commit()
 
-            logger.info(f"kb_access_granted: actor_user_id={actor_user_id}, target_user_id={user_id}, kb={kb_name}")
+            logger.info(
+                f"kb_access_granted: actor_user_id={actor_user_id},"
+                f" target_user_id={user_id}, kb={kb_name}, domain=user_management"
+            )
 
             return {"message": "Knowledge base access granted successfully"}
 
@@ -255,7 +258,10 @@ class UserAccessService:
 
             session.commit()
 
-            logger.info(f"kb_access_removed: actor_user_id={actor_user_id}, target_user_id={user_id}, kb={kb_name}")
+            logger.info(
+                f"kb_access_removed: actor_user_id={actor_user_id},"
+                f" target_user_id={user_id}, kb={kb_name}, domain=user_management"
+            )
 
             return {"message": "Knowledge base access removed successfully"}
 
@@ -311,7 +317,7 @@ class UserAccessService:
                 f"timestamp={timestamp}",
             ]
         )
-        logger.warning(f"project_authorization_failed: {log_details}")
+        logger.warning(f"project_authorization_failed: {log_details}, domain=user_management")
 
     @staticmethod
     def _build_project_access_log_details(actor_user_id: str, target_user_id: str) -> str:

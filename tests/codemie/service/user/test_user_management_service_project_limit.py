@@ -166,7 +166,9 @@ def test_promotion_auto_sets_project_limit_null(
     assert "project_limit" in update_call[1]
     assert update_call[1]["project_limit"] is None
     # Verify logging
-    mock_logger.info.assert_any_call("project_limit_auto_management: user_id=regular-1, action=promotion, limit=NULL")
+    mock_logger.info.assert_any_call(
+        "project_limit_auto_management: target_user_id=regular-1, action=promotion, limit=NULL, domain=user_management"
+    )
 
 
 # ===========================================
@@ -240,7 +242,9 @@ def test_demotion_auto_sets_project_limit_3(
     assert "project_limit" in update_call[1]
     assert update_call[1]["project_limit"] == 3
     # Verify logging
-    mock_logger.info.assert_any_call("project_limit_auto_management: user_id=super-admin-1, action=demotion, limit=3")
+    mock_logger.info.assert_any_call(
+        "project_limit_auto_management: target_user_id=super-admin-1, action=demotion, limit=3, domain=user_management"
+    )
 
 
 # ===========================================

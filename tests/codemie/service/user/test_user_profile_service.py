@@ -319,8 +319,8 @@ class TestSendVerificationEmailSafe:
         mock_email_service.send_verification_email.assert_called_once_with(email, token)
         mock_logger.warning.assert_called_once()
         warning_call = mock_logger.warning.call_args[0][0]
-        assert "Failed to send verification email" in warning_call
-        assert error_message in warning_call
+        assert "verification_email_failed" in warning_call
+        assert "domain=user_management" in warning_call
 
 
 class TestUpdateProfile:

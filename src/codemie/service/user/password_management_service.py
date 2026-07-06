@@ -82,7 +82,7 @@ class PasswordManagementService:
         new_hash = password_service.hash_password(new_password)
         user_repository.update(session, user_id, password_hash=new_hash)
 
-        logger.info(f"password_changed: target_user_id={user_id}")
+        logger.info(f"password_changed: target_user_id={user_id}, domain=user_management")
         return True
 
     @staticmethod
@@ -155,7 +155,7 @@ class PasswordManagementService:
         new_hash = password_service.hash_password(new_password)
         user_repository.update(session, token_record.user_id, password_hash=new_hash)
 
-        logger.info(f"Password reset completed: user_id={token_record.user_id}")
+        logger.info(f"password_reset_completed: target_user_id={token_record.user_id}, domain=user_management")
         return True
 
     # ===========================================
@@ -265,7 +265,9 @@ class PasswordManagementService:
             PasswordManagementService.change_password(session, user_id, new_password, current_password=None)
             session.commit()
 
-            logger.info(f"password_changed: actor_user_id={actor_user_id}, target_user_id={user_id}")
+            logger.info(
+                f"password_changed: actor_user_id={actor_user_id}, target_user_id={user_id}, domain=user_management"
+            )
 
             return {"message": "Password changed successfully"}
 

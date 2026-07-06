@@ -160,7 +160,7 @@ async def admin_access_only(request: Request):
     Checks if current user is admin or maintainer
     """
     if not request.state.user.is_admin_or_maintainer:
-        logger.warning("Access denied: admin or maintainer privileges required")
+        logger.warning(f"access_denied_admin: actor_user_id={request.state.user.id}, domain=user_management")
         raise ExtendedHTTPException(
             code=status.HTTP_403_FORBIDDEN,
             message=ACCESS_DENIED_MESSAGE,
@@ -173,7 +173,7 @@ async def admin_access_only(request: Request):
 async def admin_or_maintainer_access_only(request: Request):
     """Checks if current user is admin or maintainer."""
     if not request.state.user.is_admin_or_maintainer:
-        logger.warning("Access denied: admin or maintainer privileges required")
+        logger.warning(f"access_denied_admin: actor_user_id={request.state.user.id}, domain=user_management")
         raise ExtendedHTTPException(
             code=status.HTTP_403_FORBIDDEN,
             message=ACCESS_DENIED_MESSAGE,
@@ -186,7 +186,7 @@ async def admin_or_maintainer_access_only(request: Request):
 async def maintainer_access_only(request: Request):
     """Checks if current user is maintainer."""
     if not request.state.user.is_maintainer:
-        logger.warning("Access denied: maintainer privileges required")
+        logger.warning(f"access_denied_maintainer: actor_user_id={request.state.user.id}, domain=user_management")
         raise ExtendedHTTPException(
             code=status.HTTP_403_FORBIDDEN,
             message=ACCESS_DENIED_MESSAGE,
@@ -232,7 +232,7 @@ async def project_admin_or_admin_user_detail_access(request: Request):
         # Extract target_user_id from path parameters
         target_user_id = request.path_params.get("user_id")
         if not target_user_id:
-            logger.warning("Access denied: missing target user_id in path for user detail access")
+            logger.warning(f"access_denied_missing_target_user_id: actor_user_id={user.id}, domain=user_management")
             raise ExtendedHTTPException(
                 code=status.HTTP_403_FORBIDDEN,
                 message=ACCESS_DENIED_MESSAGE,
@@ -256,7 +256,12 @@ async def project_admin_or_admin_user_detail_access(request: Request):
             return
 
         # Project admin cannot view this user (user exists but not in their projects)
-        logger.warning("Access denied: project admin cannot view user outside their projects")
+        actor_id = user.id
+        msg = (
+            f"access_denied_project_scope: actor_user_id={actor_id},"
+            f" target_user_id={target_user_id}, domain=user_management"
+        )
+        logger.warning(msg)
         raise ExtendedHTTPException(
             code=status.HTTP_403_FORBIDDEN,
             message="User not found in your projects",
@@ -265,7 +270,7 @@ async def project_admin_or_admin_user_detail_access(request: Request):
         )
 
     # Regular users are denied
-    logger.warning("Access denied: admin or project admin privileges required for user detail")
+    logger.warning(f"access_denied_user_detail: actor_user_id={user.id}, domain=user_management")
     raise ExtendedHTTPException(
         code=status.HTTP_403_FORBIDDEN,
         message=ACCESS_DENIED_MESSAGE,
@@ -279,7 +284,9 @@ def application_access_check(request: Request, app_name: str):
     Checks if current user has access to application
     """
     if not request.state.user.has_access_to_application(app_name):
-        logger.warning(f"Access denied: user lacks access to application '{app_name}'")
+        actor_id = request.state.user.id
+        msg = f"access_denied_application: actor_user_id={actor_id}, resource={app_name}, domain=user_management"
+        logger.warning(msg)
         raise ExtendedHTTPException(
             code=status.HTTP_403_FORBIDDEN,
             message=ACCESS_DENIED_MESSAGE,
@@ -291,7 +298,9 @@ def application_access_check(request: Request, app_name: str):
 
 def project_access_check(user: User, project_name: str):
     if not user.has_access_to_application(project_name):
-        logger.warning(f"Access denied: user lacks access to project '{project_name}'")
+        logger.warning(
+            f"access_denied_project: actor_user_id={user.id}, resource={project_name}, domain=user_management"
+        )
         raise ExtendedHTTPException(
             code=status.HTTP_403_FORBIDDEN,
             message=ACCESS_DENIED_MESSAGE,
@@ -306,7 +315,9 @@ def kb_access_check(request: Request, name: str):
     Checks if current user has access to knowledge base
     """
     if not request.state.user.has_access_to_kb(name):
-        logger.warning(f"Access denied: user lacks access to knowledge base '{name}'")
+        logger.warning(
+            f"access_denied_kb: actor_user_id={request.state.user.id}, resource={name}, domain=user_management"
+        )
         raise ExtendedHTTPException(
             code=status.HTTP_403_FORBIDDEN,
             message=ACCESS_DENIED_MESSAGE,

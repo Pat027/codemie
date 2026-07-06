@@ -157,6 +157,7 @@ class TestGrantProjectAccess:
         assert "project_access_granted" in log_message
         assert "actor_user_id=admin-456" in log_message
         assert "target_user_id=user-123" in log_message
+        assert "domain=user_management" in log_message
 
     @patch("codemie.clients.postgres.get_session")
     @patch("codemie.service.user.user_access_service.user_repository")
@@ -209,6 +210,7 @@ class TestGrantProjectAccess:
         mock_logger.warning.assert_called_once()
         log_message = mock_logger.warning.call_args[0][0]
         assert "project_authorization_failed" in log_message
+        assert "domain=user_management" in log_message
 
     @patch("codemie.clients.postgres.get_session")
     @patch("codemie.service.user.user_access_service.user_repository")
@@ -287,6 +289,7 @@ class TestUpdateUserProjectAccess:
         mock_logger.info.assert_called_once()
         log_message = mock_logger.info.call_args[0][0]
         assert "project_access_updated" in log_message
+        assert "domain=user_management" in log_message
 
     @patch("codemie.clients.postgres.get_session")
     @patch("codemie.service.user.user_access_service.user_repository")
@@ -411,6 +414,7 @@ class TestRevokeProjectAccess:
         log_message = mock_logger.info.call_args[0][0]
         assert "project_access_removed" in log_message
         assert "actor_user_id=admin-456" in log_message
+        assert "domain=user_management" in log_message
 
     @patch("codemie.clients.postgres.get_session")
     @patch("codemie.service.user.user_access_service.user_repository")
@@ -725,5 +729,6 @@ class TestHelperMethods:
         assert "project_authorization_failed" in log_message
         assert "user_id=admin-456" in log_message
         assert "target_user_id=user-123" in log_message
+        assert "domain=user_management" in log_message
         assert "method=grant_project_access" in log_message
         assert "timestamp=" in log_message

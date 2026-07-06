@@ -116,7 +116,6 @@ class UserManagementService:
         )
 
         user = user_repository.create(session, user)
-        logger.info(f"user_created: target_user_id={user.id}, auth_source=local, is_admin={is_admin}")
 
         return user
 
@@ -212,7 +211,12 @@ class UserManagementService:
         user = user_repository.update(session, user_id, **fields)
 
         if user:
-            logger.info(f"user_updated: actor_user_id={actor_user_id}, target_user_id={user_id}")
+            role_fields = {k: fields[k] for k in ("is_admin", "is_maintainer", "project_limit") if k in fields}
+            role_detail = ", ".join(f"{k}={v}" for k, v in role_fields.items())
+            suffix = f", {role_detail}" if role_detail else ""
+            logger.info(
+                f"user_updated: actor_user_id={actor_user_id}, target_user_id={user_id}{suffix}, domain=user_management"
+            )
 
         return user
 
@@ -241,7 +245,8 @@ class UserManagementService:
             if count <= 1:
                 msg = (
                     f"blocked_last_admin_deactivation: actor_user_id={actor_user_id}, "
-                    f"target_user_id={user_id}, action=deactivate, timestamp={datetime.now(UTC)}"
+                    f"target_user_id={user_id}, action=deactivate, "
+                    f"timestamp={datetime.now(UTC)}, domain=user_management"
                 )
                 logger.warning(msg)
                 raise ExtendedHTTPException(
@@ -251,7 +256,9 @@ class UserManagementService:
         # Soft delete
         user_repository.soft_delete(session, user_id)
 
-        logger.info(f"user_deactivated: actor_user_id={actor_user_id}, target_user_id={user_id}")
+        logger.info(
+            f"user_deactivated: actor_user_id={actor_user_id}, target_user_id={user_id}, domain=user_management"
+        )
 
         # Refresh user
         return user_repository.get_by_id(session, user_id)
@@ -404,10 +411,10 @@ class UserManagementService:
                 # It is legitimate, because flush/refresh is called inside bootstrap_superadmin...create() method
                 session.expunge(superadmin)
                 session.commit()
-                logger.info(f"SuperAdmin bootstrapped: user_id={superadmin_id}")
+                logger.info(f"superadmin_bootstrapped: target_user_id={superadmin_id}, domain=user_management")
                 return superadmin
             else:
-                logger.info("SuperAdmin already exists, skipping bootstrap")
+                logger.info("superadmin_bootstrap_skipped: domain=user_management")
                 return None
 
     @staticmethod
@@ -567,7 +574,9 @@ class UserManagementService:
                     f"Failed to provision budget for new user {new_user_id}, will retry on first LLM request: {e}"
                 )
 
-            logger.info(f"user_created: actor_user_id={actor_user_id}, target_user_id={new_user_id}")
+            logger.info(
+                f"user_created: actor_user_id={actor_user_id}, target_user_id={new_user_id}, domain=user_management"
+            )
 
             # Story 10: Get actor's admin status for visibility filtering
             actor = user_repository.get_by_id(session, actor_user_id)
@@ -603,7 +612,8 @@ class UserManagementService:
             if actor_user_id == user_id:
                 msg = (
                     f"blocked_self_revocation: actor_user_id={actor_user_id}, "
-                    f"target_user_id={user_id}, action=revoke_self, timestamp={datetime.now(UTC)}"
+                    f"target_user_id={user_id}, action=revoke_self, "
+                    f"timestamp={datetime.now(UTC)}, domain=user_management"
                 )
                 logger.warning(msg)
                 raise ExtendedHTTPException(code=403, message="Cannot revoke own admin status")
@@ -613,7 +623,8 @@ class UserManagementService:
             if count <= 1:
                 msg = (
                     f"blocked_last_admin_revocation: actor_user_id={actor_user_id}, "
-                    f"target_user_id={user_id}, action=revoke_last, timestamp={datetime.now(UTC)}"
+                    f"target_user_id={user_id}, action=revoke_last, "
+                    f"timestamp={datetime.now(UTC)}, domain=user_management"
                 )
                 logger.warning(msg)
                 raise ExtendedHTTPException(
@@ -686,11 +697,17 @@ class UserManagementService:
             if is_admin:
                 # Promotion: set to NULL (unlimited)
                 auto_limit_value = None
-                logger.info(f"project_limit_auto_management: user_id={user_id}, action=promotion, limit=NULL")
+                logger.info(
+                    f"project_limit_auto_management: target_user_id={user_id},"
+                    f" action=promotion, limit=NULL, domain=user_management"
+                )
             else:
                 # Demotion: set to default (3)
                 auto_limit_value = 3
-                logger.info(f"project_limit_auto_management: user_id={user_id}, action=demotion, limit=3")
+                logger.info(
+                    f"project_limit_auto_management: target_user_id={user_id},"
+                    f" action=demotion, limit=3, domain=user_management"
+                )
 
         return auto_set_limit, auto_limit_value
 
@@ -747,7 +764,10 @@ class UserManagementService:
             # Promotion to admin: FORCE project_limit=None (invariant enforcement)
             updates["project_limit"] = None
             if project_limit is not None:
-                logger.warning(f"project_limit_override_ignored: user={user_id}, value={project_limit}")
+                logger.warning(
+                    f"project_limit_override_ignored: target_user_id={user_id},"
+                    f" value={project_limit}, domain=user_management"
+                )
         elif project_limit is not None:
             # Explicit non-None project_limit provided (validated above)
             updates["project_limit"] = project_limit

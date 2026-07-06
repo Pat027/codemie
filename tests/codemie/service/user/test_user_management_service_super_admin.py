@@ -113,6 +113,7 @@ def test_self_revocation_blocked(mock_get_session, mock_repo, mock_logger, super
     assert "blocked_self_revocation" in log_call
     assert "actor_user_id=super-admin-1" in log_call
     assert "target_user_id=super-admin-1" in log_call
+    assert "domain=user_management" in log_call
 
 
 # ===========================================
@@ -147,6 +148,7 @@ def test_last_admin_status_revocation_blocked(mock_get_session, mock_repo, mock_
     mock_logger.warning.assert_called_once()
     log_call = mock_logger.warning.call_args[0][0]
     assert "blocked_last_admin_revocation" in log_call
+    assert "domain=user_management" in log_call
 
 
 # ===========================================
@@ -177,6 +179,7 @@ def test_last_admin_deactivation_blocked(mock_get_session, mock_repo, mock_logge
     mock_logger.warning.assert_called_once()
     log_call = mock_logger.warning.call_args[0][0]
     assert "blocked_last_admin_deactivation" in log_call
+    assert "domain=user_management" in log_call
 
 
 @patch("codemie.service.user.user_management_service.enqueue_mcp_auth_cleanup")
@@ -459,6 +462,7 @@ def test_blocked_operations_are_logged(mock_get_session, mock_repo, mock_logger,
     assert "actor_user_id=super-admin-1" in log_call
     assert "target_user_id=super-admin-1" in log_call
     assert "timestamp=" in log_call
+    assert "domain=user_management" in log_call
 
 
 # ===========================================
