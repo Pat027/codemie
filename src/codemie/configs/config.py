@@ -866,7 +866,9 @@ class Config(BaseSettings):
     @property
     def google_oauth_redirect_uri(self) -> str:
         """Computed redirect URI for Google OAuth."""
-        return f"{self.CALLBACK_API_BASE_URL}/v1/google-oauth/callback"
+        from codemie.core.utils import get_api_root_path
+
+        return f"{self.CALLBACK_API_BASE_URL}{get_api_root_path()}/v1/google-oauth/callback"
 
     @property
     def verbose(self) -> bool:
