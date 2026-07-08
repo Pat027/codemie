@@ -60,6 +60,13 @@ INVALID_ATTRIBUTES_ERROR = "Tool attributes are not correct. Expected: {args_des
 
 class ToolExecutionService:
     @classmethod
+    def execute_tool(cls, tool: BaseTool, tool_args: Dict[str, Any]):
+        execute = getattr(tool, "execute", None)
+        if callable(execute):
+            return execute(**tool_args)
+        return tool.invoke(tool_args)
+
+    @classmethod
     def validate_tool_args(cls, tool: BaseTool, tool_args: Dict[str, Any]) -> BaseTool:
         default_tool_input = {key: None for key in tool.args_schema.__annotations__ if key not in tool_args}
         try:
@@ -125,7 +132,7 @@ class ToolExecutionService:
             logger.info(f"Tool `{tool_name}` executed with args: {request.tool_args}")
             if request.tool_attributes:
                 tool = cls.update_tool_attributes(tool, request.tool_attributes)
-            return tool.execute(**request.tool_args)
+            return cls.execute_tool(tool, request.tool_args)
         except Exception as e:
             logger.error(f"Error occurred on tool invocation: {str(e)}", exc_info=True)
             raise e
@@ -233,7 +240,7 @@ class ToolExecutionService:
             logger.info(f"Tool `{tool_name}` executed with args: {request.tool_args}")
             if request.tool_attributes:
                 tool = cls.update_tool_attributes(tool, request.tool_attributes)
-            return tool.execute(**request.tool_args)
+            return cls.execute_tool(tool, request.tool_args)
         except Exception as e:
             logger.error(f"Error occurred on tool invocation: {str(e)}", exc_info=True)
             raise e

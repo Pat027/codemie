@@ -86,6 +86,45 @@ def test_invoke_tool_with_direct_creds_success():
     assert result == "Success result"
 
 
+def test_invoke_tool_with_system_integration_supports_langchain_tool_without_execute():
+    """Test invoking plain LangChain tools that expose invoke(), not execute()."""
+    mock_request = Mock(spec=ToolInvokeRequest)
+    mock_request.tool_args = {"query": "Elitea AI platform", "search_depth": "advanced", "topic": "general"}
+    mock_request.tool_attributes = {}
+    mock_request.tool_creds = None
+    mock_request.datasource_id = None
+    mock_request.request_id = None
+    mock_request.project = "test_project"
+    mock_request.llm_model = "gpt-4"
+
+    mock_assistant = Mock()
+    mock_assistant.id = "assistant-id"
+
+    mock_tool = Mock(spec=BaseTool)
+    mock_tool.invoke = Mock(return_value="Search result")
+
+    with patch(
+        "codemie.service.tools.tool_execution_service.VirtualAssistantService.create_from_tool_invocation",
+        return_value=mock_assistant,
+    ) as mock_create:
+        with patch("codemie.service.tools.tool_execution_service.VirtualAssistantService.delete") as mock_delete:
+            with patch.object(
+                ToolExecutionService, "get_tool_with_system_integration", return_value=mock_tool
+            ) as mock_get_tool:
+                with patch.object(ToolExecutionService, "validate_tool_args", return_value=mock_tool) as mock_validate:
+                    with patch("codemie.service.tools.tool_execution_service.logger"):
+                        result = ToolExecutionService.invoke_tool_with_system_integration(
+                            mock_request, "tavily_search_results_json", Mock(spec=User)
+                        )
+
+    assert result == "Search result"
+    mock_create.assert_called_once()
+    mock_get_tool.assert_called_once()
+    mock_validate.assert_called_once_with(mock_tool, mock_request.tool_args)
+    mock_tool.invoke.assert_called_once_with(mock_request.tool_args)
+    mock_delete.assert_called_once_with(mock_assistant.id)
+
+
 def test_invoke_tool_with_direct_creds_error():
     """Test error handling during tool invocation with direct credentials."""
     # Setup
