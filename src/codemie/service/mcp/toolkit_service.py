@@ -193,6 +193,7 @@ class MCPToolkitService:
         assistant_id: str | None = None,
         workflow_execution_id: str | None = None,
         request_headers: dict[str, str] | None = None,
+        marketplace_scope: bool = False,
     ) -> list[MCPTool]:
         """
         Get MCP tools from a list of MCP servers with execution context support.
@@ -211,6 +212,8 @@ class MCPToolkitService:
             assistant_id: Optional assistant ID for execution context
             workflow_execution_id: Optional workflow execution ID for context
             request_headers: Optional custom HTTP headers to propagate to MCP servers
+            marketplace_scope: Whether this runs a marketplace (is_global) assistant, relaxing
+                per-user integration access to any PROJECT integration (USER stays owner-only)
 
         Returns:
             List of MCP tools from all successfully processed servers
@@ -229,6 +232,7 @@ class MCPToolkitService:
             user_id=user_id,
             assistant_id=assistant_id,
             project_name=project_name,
+            marketplace_scope=marketplace_scope,
             workflow_execution_id=workflow_execution_id,
             conversation_id=conversation_id,
             session_binding_hash=cls._get_current_session_binding_hash(),
@@ -935,7 +939,9 @@ class MCPToolkitService:
         if not mcp_server_single_usage and conversation_id:
             server_config.bucket_key = conversation_id
 
-        cls._apply_server_tools_config(server_config, mcp_server, tools_config, user_id, project_name)
+        cls._apply_server_tools_config(
+            server_config, mcp_server, tools_config, user_id, project_name, execution_context=execution_context
+        )
         cls._process_server_args(server_config, mcp_server_args_preprocessor)
         cls._process_server_url_and_command(server_config, mcp_server_args_preprocessor)
         cls._resolve_server_auth(server_config, user_id, execution_context, skip_auth_resolution=skip_auth_resolution)
@@ -1003,6 +1009,7 @@ class MCPToolkitService:
         tools_config: list[ToolConfig] | None,
         user_id: str | None,
         project_name: str | None = None,
+        execution_context: MCPExecutionContext | None = None,
     ) -> None:
         """
         Apply tool configuration to the server config if available.
@@ -1013,6 +1020,7 @@ class MCPToolkitService:
             tools_config: Optional tool configurations to apply
             user_id: Optional user ID for credential resolution
             project_name: Optional assistant project used to scope per-user integration access
+            execution_context: Optional execution context carrying the marketplace scope flag
         """
         if not tools_config:
             return
@@ -1033,7 +1041,10 @@ class MCPToolkitService:
 
         if mcp_tool_config:
             logger.debug(f"Found tool config for MCP server: {mcp_server.name}")
-            cls._apply_tool_config_to_mcp_server(server_config, mcp_tool_config, user_id, project_name)
+            marketplace_scope = bool(execution_context and execution_context.marketplace_scope)
+            cls._apply_tool_config_to_mcp_server(
+                server_config, mcp_tool_config, user_id, project_name, marketplace_scope=marketplace_scope
+            )
 
     @classmethod
     def get_instance(cls, mcp_client: MCPConnectClient | None = None) -> MCPToolkitService:
@@ -1871,13 +1882,17 @@ class MCPToolkitService:
         return None
 
     @classmethod
-    def _current_user_can_use_integration(cls, integration_id: str, project_name: str | None) -> bool:
+    def _current_user_can_use_integration(
+        cls, integration_id: str, project_name: str | None, marketplace_scope: bool = False
+    ) -> bool:
         """Check that the current request user may use a per-user mapped integration.
 
-        Resolves the setting by id and applies the shared access rule (own USER setting, or a
-        PROJECT setting strictly of the assistant's project ``project_name`` the user has access
-        to). Fails closed when the user context or setting is missing, so a mapping can never
-        surface credentials outside the user's access.
+        Resolves the setting by id and applies the shared access rule (own USER setting, or an
+        accessible PROJECT setting). For project-shared assistants the PROJECT setting must be
+        strictly of the assistant's project ``project_name`` the user has access to; for
+        marketplace assistants (``marketplace_scope``) any PROJECT setting is allowed while USER
+        settings stay owner-only. Fails closed when the user context or setting is missing, so a
+        mapping can never surface credentials outside the user's access.
         """
         # Deferred import to avoid a circular import: settings_util transitively imports
         # toolkit_service (settings_util -> service.assistant -> ... -> mcp.toolkit_service).
@@ -1889,7 +1904,7 @@ class MCPToolkitService:
             return False
 
         setting = search_settings_by_id(integration_id)
-        return user_can_access_setting(setting, current_user, project_name)
+        return user_can_access_setting(setting, current_user, project_name, marketplace=marketplace_scope)
 
     @classmethod
     def _apply_tool_config_to_mcp_server(
@@ -1898,6 +1913,7 @@ class MCPToolkitService:
         tool_config: ToolConfig,
         user_id: str | None = None,
         project_name: str | None = None,
+        marketplace_scope: bool = False,
     ) -> None:
         """
         Apply tool configuration to MCP server configuration.
@@ -1907,6 +1923,8 @@ class MCPToolkitService:
             tool_config: The tool configuration containing credentials or integration reference
             user_id: Optional user ID for credential resolution when using integration_id
             project_name: Optional assistant project used to scope per-user integration access
+            marketplace_scope: Whether this runs a marketplace (is_global) assistant, relaxing
+                per-user integration access to any PROJECT integration (USER stays owner-only)
         """
         try:
             # Handle direct credentials
@@ -1924,7 +1942,9 @@ class MCPToolkitService:
                 # stale or forged mapping could point at an integration the current user has no
                 # access to. Verify access before resolving; fail closed (skip the override and
                 # keep the base config) rather than surface someone else's credentials.
-                if not cls._current_user_can_use_integration(tool_config.integration_id, project_name):
+                if not cls._current_user_can_use_integration(
+                    tool_config.integration_id, project_name, marketplace_scope=marketplace_scope
+                ):
                     logger.warning(
                         "Skipping MCP integration override: current user lacks access to the mapped integration"
                     )

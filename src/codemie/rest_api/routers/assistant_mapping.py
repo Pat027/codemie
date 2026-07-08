@@ -32,14 +32,19 @@ from codemie.service.assistant.assistant_user_mapping_service import assistant_u
 from codemie.service.settings.settings_util import search_settings_by_id, user_can_access_setting
 
 
-def _validate_mapping_access(tools_config: list[dict], user: User, assistant_project: str) -> None:
+def _validate_mapping_access(
+    tools_config: list[dict], user: User, assistant_project: str, marketplace: bool = False
+) -> None:
     """Reject mappings that reference an integration the user cannot access.
 
-    A user may only map their own USER integration or a PROJECT integration of the
-    assistant's own project that the user has access to. This prevents a crafted request
-    from binding another user's personal integration or an integration from any other
-    project (including projects the user is a member of). An empty ``integration_id`` means
-    DEFAULT (base config) and carries no credentials, so it is accepted as-is.
+    A user may only map their own USER integration or an accessible PROJECT integration.
+    For project-shared assistants (``marketplace=False``) the PROJECT integration must
+    belong to the assistant's own project and the user must have access to it. For
+    marketplace assistants (``marketplace=True``) any PROJECT integration is accepted,
+    matching the relaxed cross-project scope offered in the selection UI. The USER
+    owner-only rule is unchanged in both cases, so a crafted request can never bind another
+    user's personal integration. An empty ``integration_id`` means DEFAULT (base config)
+    and carries no credentials, so it is accepted as-is.
     """
     for tool_config in tools_config:
         integration_id = tool_config.get("integration_id")
@@ -47,7 +52,7 @@ def _validate_mapping_access(tools_config: list[dict], user: User, assistant_pro
             continue
 
         setting = search_settings_by_id(integration_id)
-        if not user_can_access_setting(setting, user, assistant_project):
+        if not user_can_access_setting(setting, user, assistant_project, marketplace=marketplace):
             raise ExtendedHTTPException(
                 code=status.HTTP_403_FORBIDDEN,
                 message="Integration is not accessible",
@@ -87,7 +92,7 @@ def create_or_update_mapping(request: AssistantMappingRequest, assistant_id: str
     """
     assistant = _get_assistant_by_id_or_raise(assistant_id)
 
-    _validate_mapping_access(request.tools_config, user, assistant.project)
+    _validate_mapping_access(request.tools_config, user, assistant.project, marketplace=bool(assistant.is_global))
 
     try:
         assistant_user_mapping_service.create_or_update_mapping(

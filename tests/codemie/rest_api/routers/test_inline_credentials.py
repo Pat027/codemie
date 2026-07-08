@@ -15,9 +15,11 @@
 from unittest.mock import MagicMock
 
 from codemie.rest_api.models.assistant import InlineCredential
+from codemie.rest_api.models.settings import SettingType
 from codemie.rest_api.routers.assistant import (
     _validate_assistant_inline_integrations,
     _check_toolkit_credentials,
+    _check_mcp_server_credentials,
     _check_object_credential_values,
     _build_validation_result,
 )
@@ -84,6 +86,44 @@ def test_check_object_credential_values():
     obj_no_creds = MockTool(has_credentials=False)
     result = _check_object_credential_values(obj_no_creds, "tool_settings")
     assert len(result) == 0
+
+
+class MockPinnedSettings:
+    def __init__(self, setting_type, credential_type="Jira", alias="my personal jira"):
+        self.setting_type = setting_type
+        self.credential_type = credential_type
+        self.alias = alias
+        self.credential_values = None
+
+
+class MockPinnedMCPServer:
+    def __init__(self, name="Server", settings=None):
+        self.name = name
+        self.settings = settings
+        self.mcp_connect_auth_token = None
+        self.config = None
+
+
+def test_check_mcp_server_pinned_user_integration_is_flagged():
+    """A server pinned to a personal (USER) integration is surfaced for the Credential Review."""
+    server = MockPinnedMCPServer(name="jira-mcp", settings=MockPinnedSettings(SettingType.USER))
+
+    result = _check_mcp_server_credentials([server])
+
+    assert len(result) == 1
+    assert result[0].mcp_server == "jira-mcp"
+    assert result[0].credential_type == "Jira"
+    assert result[0].integration_alias == "my personal jira"
+    assert result[0].toolkit == "MCP"
+
+
+def test_check_mcp_server_pinned_project_integration_is_not_flagged():
+    """A server pinned to a PROJECT integration is not a personal-credential leak and is ignored."""
+    server = MockPinnedMCPServer(name="jira-mcp", settings=MockPinnedSettings(SettingType.PROJECT))
+
+    result = _check_mcp_server_credentials([server])
+
+    assert result == []
 
 
 def test_check_toolkit_credentials():

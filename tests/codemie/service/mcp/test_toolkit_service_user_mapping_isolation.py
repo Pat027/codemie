@@ -28,7 +28,7 @@ from codemie_tools.base.models import CredentialTypes
 from codemie.core.models import ToolConfig
 from codemie.rest_api.models.assistant import MCPServerDetails
 from codemie.rest_api.models.settings import SettingsBase
-from codemie.service.mcp.models import MCPServerConfig
+from codemie.service.mcp.models import MCPExecutionContext, MCPServerConfig
 from codemie.service.mcp.toolkit_service import MCPToolkitService, MCP_TOOL_CONFIG_PREFIX
 
 
@@ -100,3 +100,53 @@ def test_use_time_override_skipped_when_user_lacks_access():
     resolve.assert_not_called()
     assert "OVERRIDE" not in server_config.env
     assert mcp_server.settings is None
+
+
+def test_marketplace_scope_from_context_reaches_access_check():
+    """The marketplace scope on the execution context is forwarded to the runtime access gate."""
+    mcp_server = MCPServerDetails(name="srv")  # not pinned
+    server_config = _server_config()
+    tools_config = [ToolConfig(name=f"{MCP_TOOL_CONFIG_PREFIX}srv", integration_id="int-cross-project")]
+    context = MCPExecutionContext(user_id="user-b", project_name="proj-a", marketplace_scope=True)
+
+    with (
+        patch.object(MCPToolkitService, "_current_user_can_use_integration", return_value=True) as access,
+        patch.object(MCPToolkitService, "_resolve_credentials_by_id", return_value={"OVERRIDE": "val"}),
+    ):
+        MCPToolkitService._apply_server_tools_config(
+            server_config, mcp_server, tools_config, "user-b", "proj-a", execution_context=context
+        )
+
+    access.assert_called_once_with("int-cross-project", "proj-a", marketplace_scope=True)
+    assert server_config.env["OVERRIDE"] == "val"
+
+
+def test_default_scope_when_no_context_is_not_marketplace():
+    """Without an execution context the runtime gate stays strict (marketplace_scope=False)."""
+    mcp_server = MCPServerDetails(name="srv")  # not pinned
+    server_config = _server_config()
+    tools_config = [ToolConfig(name=f"{MCP_TOOL_CONFIG_PREFIX}srv", integration_id="int-x")]
+
+    with (
+        patch.object(MCPToolkitService, "_current_user_can_use_integration", return_value=True) as access,
+        patch.object(MCPToolkitService, "_resolve_credentials_by_id", return_value={"OVERRIDE": "val"}),
+    ):
+        MCPToolkitService._apply_server_tools_config(server_config, mcp_server, tools_config, "user-b", "proj-a")
+
+    access.assert_called_once_with("int-x", "proj-a", marketplace_scope=False)
+
+
+def test_current_user_can_use_integration_forwards_marketplace_flag():
+    """`_current_user_can_use_integration` passes the marketplace flag to `user_can_access_setting`."""
+    setting = object()
+    current_user = object()
+
+    with (
+        patch("codemie.service.settings.settings_util.search_settings_by_id", return_value=setting),
+        patch("codemie.service.settings.settings_util.user_can_access_setting", return_value=True) as gate,
+        patch("codemie.service.mcp.toolkit_service.get_current_user", return_value=current_user),
+    ):
+        result = MCPToolkitService._current_user_can_use_integration("int-1", "proj-a", marketplace_scope=True)
+
+    assert result is True
+    gate.assert_called_once_with(setting, current_user, "proj-a", marketplace=True)

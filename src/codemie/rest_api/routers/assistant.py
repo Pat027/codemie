@@ -78,6 +78,7 @@ from codemie.rest_api.models.conversation import (
     ConversationMetrics,
 )
 from codemie.rest_api.models.index import IndexInfo
+from codemie.rest_api.models.settings import SettingType
 from codemie.rest_api.models.prebuilt_assistants import PrebuiltAssistant
 from codemie.rest_api.routers.utils import raise_access_denied
 from codemie.rest_api.security.authentication import project_access_check
@@ -2448,11 +2449,28 @@ def _check_mcp_server_credentials(mcp_servers) -> list:
 
     for server in mcp_servers:
         # Check environment variables
-        credentials.extend(
-            _check_object_credential_values(
-                server, "mcp_environment_vars", mcp_server_name=server.name, toolkit_name="MCP"
-            )
+        env_var_credentials = _check_object_credential_values(
+            server, "mcp_environment_vars", mcp_server_name=server.name, toolkit_name="MCP"
         )
+        credentials.extend(env_var_credentials)
+
+        # A server pinned to a personal (USER) integration reuses the author's own credentials
+        # for every marketplace consumer. When the reference carries no inlined credential_values
+        # the env-vars check above misses it, so surface it here for the Credential Review step.
+        pinned_settings = getattr(server, "settings", None)
+        if (
+            not env_var_credentials
+            and pinned_settings is not None
+            and getattr(pinned_settings, "setting_type", None) == SettingType.USER
+        ):
+            credentials.append(
+                InlineCredential(
+                    mcp_server=server.name,
+                    credential_type=getattr(pinned_settings.credential_type, "value", pinned_settings.credential_type),
+                    integration_alias=getattr(pinned_settings, "alias", None),
+                    toolkit="MCP",
+                )
+            )
 
         # Check auth token
         if (

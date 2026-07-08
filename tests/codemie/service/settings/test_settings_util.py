@@ -81,6 +81,39 @@ def test_user_cannot_access_assistant_project_setting_without_membership():
     assert user_can_access_setting(setting, user, assistant_project="proj-c") is False
 
 
+def test_marketplace_allows_project_setting_of_any_project():
+    # Marketplace assistants relax project scoping: any PROJECT setting is accessible,
+    # even one from a project the user is not a member of.
+    user = _make_user(user_id="user-1", project_names=["proj-a"])
+    setting = _make_setting(SettingType.PROJECT, project_name="proj-b")
+    assert user_can_access_setting(setting, user, assistant_project="proj-a", marketplace=True) is True
+
+
+def test_marketplace_allows_project_setting_without_assistant_project():
+    user = _make_user(user_id="user-1", project_names=[])
+    setting = _make_setting(SettingType.PROJECT, project_name="proj-b")
+    assert user_can_access_setting(setting, user, assistant_project=None, marketplace=True) is True
+
+
+def test_marketplace_still_rejects_other_users_user_setting():
+    # The USER owner-only invariant holds even for marketplace: another user's personal
+    # integration is never accessible.
+    user = _make_user(user_id="user-1")
+    setting = _make_setting(SettingType.USER, user_id="user-2")
+    assert user_can_access_setting(setting, user, assistant_project="proj-a", marketplace=True) is False
+
+
+def test_marketplace_allows_own_user_setting():
+    user = _make_user(user_id="user-1")
+    setting = _make_setting(SettingType.USER, user_id="user-1", project_name="proj-b")
+    assert user_can_access_setting(setting, user, assistant_project="proj-a", marketplace=True) is True
+
+
+def test_marketplace_none_still_fails_closed():
+    user = _make_user()
+    assert user_can_access_setting(None, user, "proj-a", marketplace=True) is False
+
+
 @patch("codemie.rest_api.models.assistant.Assistant.get_by_id")
 def test_search_assistant_actuall(mock_get_assistant):
     search_assistant(assistant_id="12345")

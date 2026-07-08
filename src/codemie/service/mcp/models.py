@@ -46,6 +46,15 @@ class MCPExecutionContext(BaseModel):
     user_id: str | None = Field(None, repr=False, description="Identifier for the user making the request")
     assistant_id: str | None = Field(None, repr=False, description="Identifier for the assistant making the request")
     project_name: str | None = Field(None, repr=False, description="The project name the request is associated with")
+    marketplace_scope: bool = Field(
+        False,
+        exclude=True,
+        repr=False,
+        description="Local-only flag: True when the request runs a marketplace (is_global) assistant. "
+        "Relaxes per-user integration access to any PROJECT integration (USER integrations stay "
+        "owner-only). Internal to credential resolution — excluded from model serialization so it "
+        "never enters the MCP-Connect request payload (to_request_fields).",
+    )
     workflow_execution_id: str | None = Field(None, repr=False, description="Identifier for the workflow execution")
     conversation_id: str | None = Field(
         None,

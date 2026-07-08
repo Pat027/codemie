@@ -102,6 +102,35 @@ async def test_index_available_settings(mock_authenticate, mock_get_settings):
 @patch('codemie.service.settings.settings.SettingsService.get_settings')
 @patch('codemie.service.settings.settings.SettingsService.get_all_settings')
 @patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
+async def test_index_settings_marketplace_scope_returns_all_projects(
+    mock_authenticate, mock_get_all_settings, mock_get_settings
+):
+    # A regular (non-admin) user requesting the marketplace scope receives every PROJECT
+    # integration (via get_all_settings), not just their member projects, plus their own
+    # USER integrations. This backs the cross-project selection of a marketplace assistant.
+    if config.ENV == "local":
+        config.ENV = "dev"
+    mock_authenticate.return_value = User(id="user123", username="testuser")
+    mock_get_all_settings.return_value = [project_settings, project_admin_settings]
+    mock_get_settings.side_effect = [[user_settings]]
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get("/v1/settings/user/available?scope=marketplace", headers={"user-id": "user123"})
+
+    assert response.status_code == 200
+    mock_get_all_settings.assert_called_once()
+    assert response.json() == [
+        user_settings.model_dump(),
+        project_settings.model_dump(),
+        project_admin_settings.model_dump(),
+    ]
+
+
+@pytest.mark.anyio
+@patch('codemie.service.settings.settings.SettingsService.get_settings')
+@patch('codemie.service.settings.settings.SettingsService.get_all_settings')
+@patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
 async def test_index_settings_admin(mock_authenticate, mock_get_all_settings, mock_get_settings):
     if config.ENV == "local":
         config.ENV = "dev"

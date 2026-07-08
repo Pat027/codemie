@@ -159,6 +159,69 @@ async def test_create_or_update_mapping_failure(assistant_id, sample_mapping_req
         assert "An error occurred while trying to store mappings: Database error" in response_data["error"]["details"]
 
 
+def test_validate_mapping_access_project_shared_rejects_cross_project(user):
+    """Project-shared (marketplace=False): a PROJECT integration of another project is rejected."""
+    setting = MagicMock()
+    with patch.object(assistant_mapping, "search_settings_by_id", return_value=setting):
+        with patch.object(assistant_mapping, "user_can_access_setting", return_value=False) as gate:
+            with pytest.raises(ExtendedHTTPException) as exc:
+                assistant_mapping._validate_mapping_access(
+                    [{"name": "MCP:srv", "integration_id": "int-cross"}], user, "proj-a", marketplace=False
+                )
+    assert exc.value.code == status.HTTP_403_FORBIDDEN
+    gate.assert_called_once_with(setting, user, "proj-a", marketplace=False)
+
+
+def test_validate_mapping_access_marketplace_allows_cross_project(user):
+    """Marketplace (marketplace=True): the relaxed flag is forwarded to the access gate."""
+    setting = MagicMock()
+    with patch.object(assistant_mapping, "search_settings_by_id", return_value=setting):
+        with patch.object(assistant_mapping, "user_can_access_setting", return_value=True) as gate:
+            assistant_mapping._validate_mapping_access(
+                [{"name": "MCP:srv", "integration_id": "int-cross"}], user, "proj-a", marketplace=True
+            )
+    gate.assert_called_once_with(setting, user, "proj-a", marketplace=True)
+
+
+def test_validate_mapping_access_empty_integration_id_is_skipped(user):
+    """An empty integration_id means DEFAULT (base config) and is accepted without a gate check."""
+    with patch.object(assistant_mapping, "user_can_access_setting") as gate:
+        assistant_mapping._validate_mapping_access(
+            [{"name": "MCP:srv", "integration_id": ""}], user, "proj-a", marketplace=True
+        )
+    gate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_or_update_mapping_forwards_marketplace_flag(assistant_id, sample_mapping_request, user):
+    """The router derives the marketplace flag from the assistant's is_global."""
+    marketplace_assistant = MagicMock()
+    marketplace_assistant.project = "proj-a"
+    marketplace_assistant.is_global = True
+
+    with (
+        patch("codemie.rest_api.routers.assistant_mapping._get_assistant_by_id_or_raise") as mock_get_assistant,
+        patch("codemie.rest_api.routers.assistant_mapping._validate_mapping_access") as mock_validate,
+        patch(
+            "codemie.service.assistant.assistant_user_mapping_service.assistant_user_mapping_service.create_or_update_mapping"
+        ),
+    ):
+        mock_get_assistant.return_value = marketplace_assistant
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            response = await ac.post(
+                f"/v1/assistants/{assistant_id}/users/mapping",
+                json=sample_mapping_request.dict(),
+                headers={"Authorization": "Bearer testtoken"},
+            )
+
+    assert response.status_code == status.HTTP_200_OK
+    _, kwargs = mock_validate.call_args
+    args = mock_validate.call_args.args
+    assert kwargs.get("marketplace") is True or args[-1] is True
+
+
 @pytest.mark.asyncio
 async def test_get_assistant_mapping_found(assistant_id, user, sample_mapping_db):
     # Arrange

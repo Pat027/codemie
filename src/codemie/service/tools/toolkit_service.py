@@ -894,6 +894,7 @@ class ToolkitService:
                     assistant_id=assistant.id,
                     workflow_execution_id=getattr(request, 'workflow_execution_id', None),
                     request_headers=request_headers,
+                    marketplace_scope=bool(assistant.is_global),
                 )
             )
             cls._forward_mcp_auth_warnings_to_request(request)

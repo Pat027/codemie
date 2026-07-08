@@ -22,15 +22,27 @@ from codemie.rest_api.models.settings import Settings, SettingsBase, SettingType
 from codemie.service.settings.base_settings import SearchFields
 
 
-def user_can_access_setting(setting: Optional[SettingsBase], user: User, assistant_project: Optional[str]) -> bool:
+def user_can_access_setting(
+    setting: Optional[SettingsBase],
+    user: User,
+    assistant_project: Optional[str],
+    marketplace: bool = False,
+) -> bool:
     """Return True if ``user`` may use ``setting`` as an integration for ``assistant_project``.
 
-    Access rule:
-    - USER settings: only the owner of the setting.
-    - PROJECT settings: strictly the assistant's own project — the setting's
-      ``project_name`` must equal ``assistant_project`` AND the user must have access to
-      that project (via ``User.has_access_to_application``). Integrations from any other
-      project (even a project the user is also a member of) are rejected.
+    Access rule (conditional on assistant type):
+    - USER settings: only the owner of the setting. Applies to both assistant types, so
+      another user's personal integration is never accessible.
+    - PROJECT settings:
+      - project-shared assistants (``marketplace=False``): strictly the assistant's own
+        project — the setting's ``project_name`` must equal ``assistant_project`` AND the
+        user must have access to that project (via ``User.has_access_to_application``).
+        Integrations from any other project (even a project the user is also a member of)
+        are rejected.
+      - marketplace assistants (``marketplace=True``): project scoping is intentionally
+        relaxed — any PROJECT integration is allowed, regardless of the assistant's own
+        project or the user's membership. The USER owner-only rule is unchanged, so this
+        only opens cross-project PROJECT credentials, never other users' personal ones.
 
     Used to gate per-user tool mappings both on save and defensively at runtime, so a stale
     or forged mapping can never surface credentials the current user has no access to. Fails
@@ -40,6 +52,8 @@ def user_can_access_setting(setting: Optional[SettingsBase], user: User, assista
         return False
 
     if setting.setting_type == SettingType.PROJECT:
+        if marketplace:
+            return True
         return (
             bool(assistant_project)
             and setting.project_name == assistant_project
