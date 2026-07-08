@@ -35,16 +35,17 @@ _current_user: ContextVar[User | None] = ContextVar('current_user', default=None
 _current_auth_token: ContextVar[str | None] = ContextVar('current_auth_token', default=None)
 
 
-def set_current_user(user: User) -> None:
+def set_current_user(user: User | None) -> None:
     """
     Store the current authenticated user in the request context.
 
     This function should be called during authentication after the user
     has been successfully validated. The user will be available for the
-    duration of the request in the current async context.
+    duration of the request in the current async context. Passing ``None``
+    resets the context (e.g. during teardown of a request scope).
 
     Args:
-        user: The authenticated User object to store in context
+        user: The authenticated User object to store in context, or None to reset
     """
     _current_user.set(user)
 

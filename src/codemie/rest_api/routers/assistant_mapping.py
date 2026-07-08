@@ -29,6 +29,32 @@ from codemie.rest_api.routers.assistant import _get_assistant_by_id_or_raise
 from codemie.rest_api.security.authentication import authenticate
 from codemie.rest_api.security.user import User
 from codemie.service.assistant.assistant_user_mapping_service import assistant_user_mapping_service
+from codemie.service.settings.settings_util import search_settings_by_id, user_can_access_setting
+
+
+def _validate_mapping_access(tools_config: list[dict], user: User, assistant_project: str) -> None:
+    """Reject mappings that reference an integration the user cannot access.
+
+    A user may only map their own USER integration or a PROJECT integration of the
+    assistant's own project that the user has access to. This prevents a crafted request
+    from binding another user's personal integration or an integration from any other
+    project (including projects the user is a member of). An empty ``integration_id`` means
+    DEFAULT (base config) and carries no credentials, so it is accepted as-is.
+    """
+    for tool_config in tools_config:
+        integration_id = tool_config.get("integration_id")
+        if not integration_id:
+            continue
+
+        setting = search_settings_by_id(integration_id)
+        if not user_can_access_setting(setting, user, assistant_project):
+            raise ExtendedHTTPException(
+                code=status.HTTP_403_FORBIDDEN,
+                message="Integration is not accessible",
+                details="The selected integration is not available to your account.",
+                help="Choose one of your own integrations or an integration of this assistant's project.",
+            )
+
 
 router = APIRouter(
     tags=["Assistant Mappings"],
@@ -59,7 +85,9 @@ def create_or_update_mapping(request: AssistantMappingRequest, assistant_id: str
     }
     ```
     """
-    _get_assistant_by_id_or_raise(assistant_id)
+    assistant = _get_assistant_by_id_or_raise(assistant_id)
+
+    _validate_mapping_access(request.tools_config, user, assistant.project)
 
     try:
         assistant_user_mapping_service.create_or_update_mapping(
@@ -67,6 +95,8 @@ def create_or_update_mapping(request: AssistantMappingRequest, assistant_id: str
         )
 
         return BaseResponse(message="Mappings created or updated successfully")
+    except ExtendedHTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error creating or updating mappings: {str(e)}", exc_info=True)
         raise ExtendedHTTPException(

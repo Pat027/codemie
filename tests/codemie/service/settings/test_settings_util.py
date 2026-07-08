@@ -13,7 +13,72 @@
 # limitations under the License.
 
 from unittest.mock import patch, MagicMock, PropertyMock
-from codemie.service.settings.settings_util import search_assistant, get_assistant_settings_id
+
+from codemie.rest_api.models.settings import SettingType
+from codemie.service.settings.settings_util import (
+    search_assistant,
+    get_assistant_settings_id,
+    user_can_access_setting,
+)
+
+
+def _make_user(user_id="user-1", project_names=None, is_admin=False):
+    user = MagicMock()
+    user.id = user_id
+    user.project_names = project_names if project_names is not None else []
+    user.has_access_to_application.side_effect = lambda project: (is_admin or project in user.project_names)
+    return user
+
+
+def _make_setting(setting_type, user_id=None, project_name="proj-a"):
+    setting = MagicMock()
+    setting.setting_type = setting_type
+    setting.user_id = user_id
+    setting.project_name = project_name
+    return setting
+
+
+def test_user_can_access_setting_none_fails_closed():
+    user = _make_user()
+    assert user_can_access_setting(None, user, "proj-a") is False
+
+
+def test_user_can_access_own_user_setting():
+    user = _make_user(user_id="user-1")
+    setting = _make_setting(SettingType.USER, user_id="user-1")
+    assert user_can_access_setting(setting, user, "proj-a") is True
+
+
+def test_user_cannot_access_other_users_user_setting():
+    user = _make_user(user_id="user-1")
+    setting = _make_setting(SettingType.USER, user_id="user-2")
+    assert user_can_access_setting(setting, user, "proj-a") is False
+
+
+def test_user_can_access_project_setting_of_assistant_project():
+    user = _make_user(user_id="user-1", project_names=["proj-a"])
+    setting = _make_setting(SettingType.PROJECT, project_name="proj-a")
+    assert user_can_access_setting(setting, user, assistant_project="proj-a") is True
+
+
+def test_user_cannot_access_project_setting_of_other_membership_project():
+    # User is a member of proj-b too, but the assistant lives in proj-a: strict scoping rejects it.
+    user = _make_user(user_id="user-1", project_names=["proj-a", "proj-b"])
+    setting = _make_setting(SettingType.PROJECT, project_name="proj-b")
+    assert user_can_access_setting(setting, user, assistant_project="proj-a") is False
+
+
+def test_user_cannot_access_project_setting_of_non_member_project():
+    user = _make_user(user_id="user-1", project_names=["proj-a"])
+    setting = _make_setting(SettingType.PROJECT, project_name="proj-b")
+    assert user_can_access_setting(setting, user, assistant_project="proj-b") is False
+
+
+def test_user_cannot_access_assistant_project_setting_without_membership():
+    # Setting matches the assistant project, but the user is not a member of it.
+    user = _make_user(user_id="user-1", project_names=["proj-a"])
+    setting = _make_setting(SettingType.PROJECT, project_name="proj-c")
+    assert user_can_access_setting(setting, user, assistant_project="proj-c") is False
 
 
 @patch("codemie.rest_api.models.assistant.Assistant.get_by_id")

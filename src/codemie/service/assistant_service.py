@@ -50,7 +50,20 @@ from codemie.service.llm_service.llm_service import llm_service
 from codemie.service.llm_service.utils import set_llm_context
 from codemie.service.tools.tools_info_service import ToolsInfoService
 from codemie.service.tools.toolkit_service import ToolkitService
+from codemie.service.mcp.toolkit_service import MCP_TOOL_CONFIG_PREFIX
 from codemie.service.skills.skill_contributions import SkillContributionsResolver
+
+
+# Registry of tool-config name prefixes whose per-user mappings participate in the
+# "extended gate" — i.e. they are applied to any shared assistant, not only global
+# marketplace ones. Data-driven on purpose: enrolling another toolkit type later is a
+# one-line addition here, with no change to the gating logic below.
+EXTENDED_GATE_TOOL_CONFIG_PREFIXES: tuple[str, ...] = (MCP_TOOL_CONFIG_PREFIX,)
+
+
+def _is_extended_gate_tool_config(name: str) -> bool:
+    """Return True if a mapping entry belongs to a toolkit type in the extended gate."""
+    return any(name.startswith(prefix) for prefix in EXTENDED_GATE_TOOL_CONFIG_PREFIXES)
 
 
 class AssistantService:
@@ -350,11 +363,20 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
         user: User,
         request: AssistantChatRequest,
     ) -> None:
-        """Apply user-specific tool mappings for marketplace assistants."""
-        if not assistant.is_global:
+        """Apply user-specific tool mappings for shared assistants.
+
+        Global marketplace assistants keep the full per-user mapping behavior. For other
+        shared assistants (e.g. project-shared) only toolkit types enrolled in the extended
+        gate (currently MCP) receive per-user mappings; regular tool mappings stay scoped to
+        marketplace assistants, so their behavior is unchanged.
+        """
+        # Global marketplace assistants are handled by the is_global branch in
+        # _select_gated_tool_configs, so let them through even in the rare is_global && not-shared
+        # case; other non-shared (private) assistants have no other users and stay a no-op.
+        if not (assistant.is_global or assistant.shared):
             return
 
-        logger.debug(f"Loading user-specific tool mappings for marketplace assistant {assistant.id} and user {user.id}")
+        logger.debug(f"Loading user-specific tool mappings for shared assistant {assistant.id} and user {user.id}")
 
         if assistant.mcp_servers:
             mcp_server_names = [s.name for s in assistant.mcp_servers]
@@ -363,18 +385,24 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
         mapping = assistant_user_mapping_service.get_mapping(assistant_id=assistant.id, user_id=user.id)
 
         if not mapping or not mapping.tools_config:
-            logger.debug(f"No tool mappings found for marketplace assistant {assistant.id} and user {user.id}")
+            logger.debug(f"No tool mappings found for shared assistant {assistant.id} and user {user.id}")
             return
 
-        logger.debug(f"Found {len(mapping.tools_config)} tool mappings for user {user.id}")
-        logger.debug(f"Tool mapping names: {[tc.name for tc in mapping.tools_config]}")
+        eligible_configs = cls._select_gated_tool_configs(assistant, mapping.tools_config)
+
+        if not eligible_configs:
+            logger.debug(f"No gate-eligible tool mappings for assistant {assistant.id} and user {user.id}")
+            return
+
+        logger.debug(f"Found {len(eligible_configs)} tool mappings for user {user.id}")
+        logger.debug(f"Tool mapping names: {[tc.name for tc in eligible_configs]}")
 
         local_tools_config = [
             ToolConfig(
                 name=tc.name,
                 integration_id=tc.integration_id,
             )
-            for tc in mapping.tools_config
+            for tc in eligible_configs
         ]
 
         # Merge with existing tools_config from request
@@ -386,6 +414,19 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
         else:
             logger.debug(f"Setting {len(local_tools_config)} mapped tools as request tools_config")
             request.tools_config = local_tools_config
+
+    @classmethod
+    def _select_gated_tool_configs(cls, assistant: Assistant, tools_config: list) -> list:
+        """Select which mapping entries are allowed through the per-user mapping gate.
+
+        - Global marketplace assistants: all mappings (unchanged behavior).
+        - Other shared assistants: only mappings for toolkit types in the extended gate
+          (currently MCP), so regular tools remain marketplace-only.
+        """
+        if assistant.is_global:
+            return list(tools_config)
+
+        return [tc for tc in tools_config if _is_extended_gate_tool_config(tc.name)]
 
     @classmethod
     def _prepare_system_prompt(
@@ -751,6 +792,14 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
             tools_config=cls.prepare_tools_config_from_toolkits(assistant.toolkits),
             disable_cache=disable_cache,
         )
+
+        # Stage 1.5: an assistant node backed by a real standalone assistant reuses the per-assistant
+        # integration mapping the user configured in the assistant view (same record, same gate, same
+        # three-state resolution as chat). Inline/virtual assistants (no assistant_id) and tool nodes
+        # are out of scope — they have no persistent assistant to key a mapping on, so the merge is
+        # skipped and their credential resolution stays unchanged.
+        if workflow_assistant.assistant_id:
+            cls._apply_marketplace_tool_mappings(assistant, user, request)
 
         file_objects = build_unique_file_objects_list(
             file_names=request.file_names, conversation_id=request.conversation_id, history_index=request.history_index

@@ -21,6 +21,7 @@ from datetime import datetime, UTC
 from typing import Optional, List, Any
 from uuid import uuid4
 
+from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import Session, select
 
 from codemie.rest_api.models.usage.assistant_user_mapping import AssistantUserMappingSQL, ToolConfig
@@ -116,6 +117,10 @@ class SQLAssistantUserMappingRepository(AssistantUserMappingRepository):
                 mapping.tools_config = tools_config
                 mapping.updated_at = datetime.now(UTC)
                 session.add(mapping)
+                # Force the JSON column to persist: replacing the list on a detached-then-readded
+                # instance is not always detected as dirty, which would leave stale entries (e.g. a
+                # slot the user reset to "None" would appear to remain saved).
+                flag_modified(mapping, "tools_config")
                 session.commit()
                 session.refresh(mapping)
                 return mapping

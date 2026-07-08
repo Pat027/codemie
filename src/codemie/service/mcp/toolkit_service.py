@@ -911,7 +911,20 @@ class MCPToolkitService:
         Returns:
             Complete MCP server configuration, or None if catalog entry is unavailable.
         """
-        server_config = cls._build_mcp_server_config(mcp_server, user_id, project_name)
+        # Per-user selection (chat, non-pinned servers): when the slot carries an explicit
+        # integration UUID the alias must NOT leak into the base env — the base is built as clean
+        # inline config and the chosen integration is applied afterwards by _apply_server_tools_config.
+        # Otherwise alias resolution is left untouched. Computed per-server here, so
+        # workflow/validation/test-connection/tools-info callers (which never pass an MCP slot in
+        # tools_config) are unaffected.
+        ignore_integration_alias = cls._is_explicit_integration_slot(mcp_server, tools_config)
+
+        server_config = cls._build_mcp_server_config(
+            mcp_server,
+            user_id,
+            project_name,
+            ignore_integration_alias=ignore_integration_alias,
+        )
         if server_config is None:
             return None
 
@@ -922,7 +935,7 @@ class MCPToolkitService:
         if not mcp_server_single_usage and conversation_id:
             server_config.bucket_key = conversation_id
 
-        cls._apply_server_tools_config(server_config, mcp_server, tools_config, user_id)
+        cls._apply_server_tools_config(server_config, mcp_server, tools_config, user_id, project_name)
         cls._process_server_args(server_config, mcp_server_args_preprocessor)
         cls._process_server_url_and_command(server_config, mcp_server_args_preprocessor)
         cls._resolve_server_auth(server_config, user_id, execution_context, skip_auth_resolution=skip_auth_resolution)
@@ -962,12 +975,34 @@ class MCPToolkitService:
             cls._legacy_token_resolver.resolve(server_config, user_id, execution_context)
 
     @classmethod
+    def _is_explicit_integration_slot(cls, mcp_server: MCPServerDetails, tools_config: list[ToolConfig] | None) -> bool:
+        """Return True when a non-pinned MCP server slot carries an explicit integration UUID.
+
+        - Pinned server (``settings`` set by the author) or no matching slot / empty id -> False
+          (``integration_alias`` is resolved as before; without an alias this yields base config).
+        - Slot id equal to a real setting UUID -> True (explicit per-user integration).
+
+        Pinned servers always return False here so their existing alias/settings resolution is
+        never altered by a stray mapping entry (the per-user override is skipped separately).
+        """
+        if mcp_server.settings is not None:
+            return False
+
+        if not tools_config:
+            return False
+
+        slot_name = f"{MCP_TOOL_CONFIG_PREFIX}{mcp_server.name}"
+        tool_config = cls._find_tool_config_by_name(tools_config, slot_name)
+        return tool_config is not None and bool(tool_config.integration_id)
+
+    @classmethod
     def _apply_server_tools_config(
         cls,
         server_config: MCPServerConfig,
         mcp_server: MCPServerDetails,
         tools_config: list[ToolConfig] | None,
         user_id: str | None,
+        project_name: str | None = None,
     ) -> None:
         """
         Apply tool configuration to the server config if available.
@@ -977,8 +1012,16 @@ class MCPToolkitService:
             mcp_server: The MCP server details
             tools_config: Optional tool configurations to apply
             user_id: Optional user ID for credential resolution
+            project_name: Optional assistant project used to scope per-user integration access
         """
         if not tools_config:
+            return
+
+        # A pinned integration (settings set by the author) is authoritative for every
+        # user of the assistant; per-user mapping overrides must never replace it, even
+        # if a stray mapping targeting this server slips into tools_config.
+        if mcp_server.settings is not None:
+            logger.debug(f"MCP server '{mcp_server.name}' has a pinned integration; skipping per-user mapping override")
             return
 
         mcp_tool_config_name = f"{MCP_TOOL_CONFIG_PREFIX}{mcp_server.name}"
@@ -990,7 +1033,7 @@ class MCPToolkitService:
 
         if mcp_tool_config:
             logger.debug(f"Found tool config for MCP server: {mcp_server.name}")
-            cls._apply_tool_config_to_mcp_server(server_config, mcp_tool_config, user_id)
+            cls._apply_tool_config_to_mcp_server(server_config, mcp_tool_config, user_id, project_name)
 
     @classmethod
     def get_instance(cls, mcp_client: MCPConnectClient | None = None) -> MCPToolkitService:
@@ -1391,7 +1434,11 @@ class MCPToolkitService:
 
     @classmethod
     def _resolve_credentials_with_priority(
-        cls, mcp_server: MCPServerDetails, user_id: str | None, project_name: str | None
+        cls,
+        mcp_server: MCPServerDetails,
+        user_id: str | None,
+        project_name: str | None,
+        ignore_integration_alias: bool = False,
     ) -> dict[str, Any]:
         """
         Resolve credentials with priority logic for MCP server configuration.
@@ -1400,14 +1447,20 @@ class MCPToolkitService:
             mcp_server: MCP server details containing integration information
             user_id: Optional user ID for scoped resolution
             project_name: Optional project name for scoped resolution
+            ignore_integration_alias: When True, skip the Priority-1 alias branch so an explicit
+                per-user integration selection yields a clean inline base before the chosen
+                integration is applied. Priority-2 pinned ``settings`` resolution is unaffected.
+                Defaults to False so DEFAULT and all non-chat callers keep the alias behavior.
 
         Returns:
             Dictionary of resolved environment variables
         """
-        # Priority 1: Use integration_alias if provided
-        if mcp_server.integration_alias:
+        # Priority 1: Use integration_alias if provided (unless an explicit per-user choice overrides it)
+        if not ignore_integration_alias and mcp_server.integration_alias:
             resolved_env_vars = cls._resolve_credentials_by_alias(
-                integration_alias=mcp_server.integration_alias, user_id=user_id, project_name=project_name
+                integration_alias=mcp_server.integration_alias,
+                user_id=user_id,
+                project_name=project_name,
             )
             if resolved_env_vars:
                 logger.debug(f"Applied {len(resolved_env_vars)} environment variables from integration_alias")
@@ -1427,7 +1480,11 @@ class MCPToolkitService:
 
     @classmethod
     def _build_mcp_server_config(
-        cls, mcp_server: MCPServerDetails, user_id: str | None = None, project_name: str | None = None
+        cls,
+        mcp_server: MCPServerDetails,
+        user_id: str | None = None,
+        project_name: str | None = None,
+        ignore_integration_alias: bool = False,
     ) -> MCPServerConfig | None:
         """
         Build the actual MCP server configuration from server details.
@@ -1438,6 +1495,8 @@ class MCPToolkitService:
             mcp_server: The MCP server details containing configuration
             user_id: Optional user ID for credential resolution
             project_name: Optional project name for credential resolution
+            ignore_integration_alias: When True, skip the alias branch so an explicit per-user
+                selection produces a clean inline base config (see _resolve_credentials_with_priority).
 
         Returns:
             The built MCP server configuration
@@ -1470,7 +1529,12 @@ class MCPToolkitService:
         env_vars = actual_config.env or {}
 
         # Resolve credentials with priority logic
-        resolved_env_vars = cls._resolve_credentials_with_priority(mcp_server, user_id, project_name)
+        resolved_env_vars = cls._resolve_credentials_with_priority(
+            mcp_server,
+            user_id,
+            project_name,
+            ignore_integration_alias=ignore_integration_alias,
+        )
         env_vars.update(resolved_env_vars)
 
         actual_config.env = env_vars
@@ -1807,8 +1871,33 @@ class MCPToolkitService:
         return None
 
     @classmethod
+    def _current_user_can_use_integration(cls, integration_id: str, project_name: str | None) -> bool:
+        """Check that the current request user may use a per-user mapped integration.
+
+        Resolves the setting by id and applies the shared access rule (own USER setting, or a
+        PROJECT setting strictly of the assistant's project ``project_name`` the user has access
+        to). Fails closed when the user context or setting is missing, so a mapping can never
+        surface credentials outside the user's access.
+        """
+        # Deferred import to avoid a circular import: settings_util transitively imports
+        # toolkit_service (settings_util -> service.assistant -> ... -> mcp.toolkit_service).
+        from codemie.service.settings.settings_util import search_settings_by_id, user_can_access_setting
+
+        current_user = get_current_user()
+        if not current_user:
+            logger.warning("No current user in context while applying MCP integration mapping; skipping override")
+            return False
+
+        setting = search_settings_by_id(integration_id)
+        return user_can_access_setting(setting, current_user, project_name)
+
+    @classmethod
     def _apply_tool_config_to_mcp_server(
-        cls, server_config: MCPServerConfig, tool_config: ToolConfig, user_id: str | None = None
+        cls,
+        server_config: MCPServerConfig,
+        tool_config: ToolConfig,
+        user_id: str | None = None,
+        project_name: str | None = None,
     ) -> None:
         """
         Apply tool configuration to MCP server configuration.
@@ -1817,6 +1906,7 @@ class MCPToolkitService:
             server_config: The MCP server configuration to modify
             tool_config: The tool configuration containing credentials or integration reference
             user_id: Optional user ID for credential resolution when using integration_id
+            project_name: Optional assistant project used to scope per-user integration access
         """
         try:
             # Handle direct credentials
@@ -1830,6 +1920,16 @@ class MCPToolkitService:
 
             # Handle integration reference
             if tool_config.integration_id:
+                # Defensive re-check: the per-user mapping stores a bare integration_id, so a
+                # stale or forged mapping could point at an integration the current user has no
+                # access to. Verify access before resolving; fail closed (skip the override and
+                # keep the base config) rather than surface someone else's credentials.
+                if not cls._current_user_can_use_integration(tool_config.integration_id, project_name):
+                    logger.warning(
+                        "Skipping MCP integration override: current user lacks access to the mapped integration"
+                    )
+                    return
+
                 logger.debug(f"Resolving integration credentials for integration_id: {tool_config.integration_id}")
                 resolved_env_vars = cls._resolve_credentials_by_id(
                     integration_id=tool_config.integration_id, user_id=user_id

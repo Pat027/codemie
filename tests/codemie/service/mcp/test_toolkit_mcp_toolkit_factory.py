@@ -231,6 +231,46 @@ class TestMCPToolkitFactory(unittest.TestCase):
         # Verify equivalent configs produce the same key
         self.assertEqual(key1, key_same_as_1)
 
+    def test_cache_key_isolates_credential_channels(self):
+        """The cache key must reflect creds delivered via headers/auth, not only env.
+
+        Two effective configs that differ only by a header/auth value must produce different
+        keys, otherwise one user's cached toolkit leaks to another and a reset to "None"
+        returns a stale integration. Identical effective configs must still share one key.
+        """
+        factory = MCPToolkitFactory(mcp_client=self.mock_client)
+        base_env = {"COMMON": "1"}
+
+        user_a = MCPServerConfig(
+            url="https://mcp.example/sse", args=[], env=dict(base_env), headers={"Authorization": "Bearer TOKEN_A"}
+        )
+        user_b = MCPServerConfig(
+            url="https://mcp.example/sse", args=[], env=dict(base_env), headers={"Authorization": "Bearer TOKEN_B"}
+        )
+        reset_none = MCPServerConfig(url="https://mcp.example/sse", args=[], env=dict(base_env), headers={})
+
+        # Cross-user isolation: different header creds -> different keys (no leak).
+        self.assertNotEqual(factory._generate_cache_key(user_a), factory._generate_cache_key(user_b))
+        # Reset to base (None): distinct from the previously selected integration -> no stale hit.
+        self.assertNotEqual(factory._generate_cache_key(user_a), factory._generate_cache_key(reset_none))
+
+        # auth_token and auth_config channels are also part of the key.
+        at1 = MCPServerConfig(command="npx", args=["s"], env=dict(base_env), auth_token="tok-1")
+        at2 = MCPServerConfig(command="npx", args=["s"], env=dict(base_env), auth_token="tok-2")
+        self.assertNotEqual(factory._generate_cache_key(at1), factory._generate_cache_key(at2))
+        ac1 = MCPServerConfig(command="npx", args=["s"], env=dict(base_env), auth_config={"client_id": "c1"})
+        ac2 = MCPServerConfig(command="npx", args=["s"], env=dict(base_env), auth_config={"client_id": "c2"})
+        self.assertNotEqual(factory._generate_cache_key(ac1), factory._generate_cache_key(ac2))
+
+        # Identical effective config (e.g. a pinned/shared server) still shares one cache entry.
+        shared1 = MCPServerConfig(
+            url="https://mcp.example/sse", args=[], env=dict(base_env), headers={"Authorization": "Bearer PINNED"}
+        )
+        shared2 = MCPServerConfig(
+            url="https://mcp.example/sse", args=[], env=dict(base_env), headers={"Authorization": "Bearer PINNED"}
+        )
+        self.assertEqual(factory._generate_cache_key(shared1), factory._generate_cache_key(shared2))
+
     async def test_cache_clearing_and_removal(self):
         """Test that cache clearing and specific toolkit removal works."""
         # Configure mocks

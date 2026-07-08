@@ -39,6 +39,12 @@ class AssistantUserMappingService:
         """
         Create or update a mapping between an assistant and tools/settings.
 
+        The incoming ``tools_config`` is merged into the user's existing mapping per slot name:
+        - a slot with a non-empty ``integration_id`` is upserted (added or replaced);
+        - a slot with an empty ``integration_id`` is removed (user reset it to "None", so the
+          tool/server falls back to the author's base config);
+        - slots not present in ``tools_config`` are left untouched.
+
         Args:
             assistant_id: ID of the assistant
             user_id: ID of the user
@@ -49,10 +55,26 @@ class AssistantUserMappingService:
         """
         logger.debug(f"Creating or updating mapping for assistant {assistant_id} and user {user_id}")
 
-        # Convert dictionaries to ToolConfig instances
-        tool_configs = [ToolConfig(**config) for config in tools_config]
+        upserts: Dict[str, ToolConfig] = {}
+        removals: set[str] = set()
+        for config in tools_config:
+            name = config.get("name")
+            if not name:
+                continue
+            integration_id = config.get("integration_id")
+            if integration_id:
+                upserts[name] = ToolConfig(name=name, integration_id=integration_id)
+            else:
+                removals.add(name)
 
-        return self.repository.create_or_update_mapping(assistant_id, user_id, tool_configs)
+        existing = self.repository.get_mapping(assistant_id, user_id)
+        merged: Dict[str, ToolConfig] = {tc.name: tc for tc in existing.tools_config} if existing else {}
+
+        for name in removals:
+            merged.pop(name, None)
+        merged.update(upserts)
+
+        return self.repository.create_or_update_mapping(assistant_id, user_id, list(merged.values()))
 
     def get_mapping(self, assistant_id: str, user_id: str) -> Optional[AssistantUserMappingSQL]:
         """

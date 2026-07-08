@@ -95,12 +95,15 @@ async def test_create_or_update_mapping_success(assistant_id, sample_mapping_req
     # Arrange
     with (
         patch("codemie.rest_api.routers.assistant_mapping._get_assistant_by_id_or_raise") as mock_get_assistant,
+        patch("codemie.rest_api.routers.assistant_mapping.search_settings_by_id") as mock_search_settings,
+        patch("codemie.rest_api.routers.assistant_mapping.user_can_access_setting", return_value=True),
         patch(
             "codemie.service.assistant.assistant_user_mapping_service.assistant_user_mapping_service.create_or_update_mapping"
         ) as mock_create_update,
     ):
         # Set up the mocks
         mock_get_assistant.return_value = MagicMock()
+        mock_search_settings.return_value = MagicMock()
 
         # Act
         transport = ASGITransport(app=app)
@@ -129,12 +132,15 @@ async def test_create_or_update_mapping_failure(assistant_id, sample_mapping_req
     # Arrange
     with (
         patch("codemie.rest_api.routers.assistant_mapping._get_assistant_by_id_or_raise") as mock_get_assistant,
+        patch("codemie.rest_api.routers.assistant_mapping.search_settings_by_id") as mock_search_settings,
+        patch("codemie.rest_api.routers.assistant_mapping.user_can_access_setting", return_value=True),
         patch(
             "codemie.service.assistant.assistant_user_mapping_service.assistant_user_mapping_service.create_or_update_mapping"
         ) as mock_create_update,
     ):
         # Set up the mocks
         mock_get_assistant.return_value = MagicMock()
+        mock_search_settings.return_value = MagicMock()
         mock_create_update.side_effect = Exception("Database error")
 
         # Act

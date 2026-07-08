@@ -809,16 +809,24 @@ class MCPToolkitFactory:
         Returns:
             A string hash (hexadecimal SHA-256) that uniquely identifies the server configuration
         """
-        # Create a dictionary with all relevant configuration parts
+        # Create a dictionary with all relevant configuration parts.
+        # Every credential-bearing field must be included: per-user integration creds land in
+        # `env`, but remote-server creds and the resolved user token land in `headers` /
+        # `auth_token` / `auth_config`. Omitting those made two effective configs that differ
+        # only by headers/auth share one cache entry — leaking one user's toolkit to another and
+        # returning a stale integration after a user reset their selection to "None".
         config_dict = {
             "command": server_config.url if server_config.url else server_config.command,
             "args": server_config.args,
             "env": server_config.env,
+            "headers": getattr(server_config, "headers", None),
+            "auth_token": getattr(server_config, "auth_token", None),
+            "auth_config": getattr(server_config, "auth_config", None),
             "bucket_key": getattr(server_config, "bucket_key", None),
         }
 
         # Convert to a stable JSON string (sorted keys for determinism)
-        config_json = json.dumps(config_dict, sort_keys=True)
+        config_json = json.dumps(config_dict, sort_keys=True, default=str)
 
         # Generate SHA-256 hash and return the hexadecimal representation
         hash_obj = hashlib.sha256(config_json.encode())

@@ -820,6 +820,15 @@ class WorkflowExecutor:
         """
         # Set user context for LLM budget tracking in this workflow execution thread
         # This must be set here since background tasks don't inherit context from the request handler
+        from codemie.rest_api.security.user_context import set_current_user
+
+        # Bind the executing user into the request-scoped ContextVar for this background thread, so
+        # per-user, membership-scoped credential resolution (per-user MCP mapping access checks) can
+        # run. Set UNCONDITIONALLY (even to None) to overwrite any stale user left on a reused pool
+        # thread; the matching reset in the finally below clears it after this execution. Fail closed:
+        # None means get_current_user() is None and resolution surfaces nothing.
+        set_current_user(self.user)
+
         if self.user:
             from codemie.configs.logger import set_logging_info
 
@@ -845,38 +854,43 @@ class WorkflowExecutor:
         # thread that does not inherit contextvars.
         # Must be done BEFORE starting ThoughtConsumer so that ThoughtConsumer.__init__
         # captures the correct (HTTP) context when it calls get_otel_context_for_thread().
-        with propagated_span(
-            self._otel_context,
-            "workflow.execute",
-            {
-                "codemie.workflow_name": self.workflow_config.name or "",
-                "codemie.workflow_id": str(self.workflow_config.id) if self.workflow_config.id else "",
-                "codemie.execution_id": self.execution_id or "",
-                "codemie.user_id": str(self.user.id) if self.user else "",
-            },
-        ):
-            consumer_future = self._start_thought_consumer_if_enabled(enable_verbose_consumer)
-            graph_config = self._build_graph_config()
-            chunks_collector = []
-            workflow_succeeded = False
-            try:
-                self._run_workflow_execution(graph_config, chunks_collector)
-                workflow_succeeded = True
-            except InterruptedException as e:
-                self._handle_interrupt(str(e.message), e.interrupted_state, chunks_collector)
-            except Exception as e:
-                record_exception_on_span(e)
-                self._handle_task_exception(e, chunks_collector)
-            finally:
-                self.thought_queue.close()
-                self._drain_thought_consumer(consumer_future)
-                if workflow_succeeded:
-                    self.workflow_execution_service.finish()
-                if self.delete_on_completion:
-                    self._auto_delete_execution()
-                # Clear trace context to prevent memory leaks
-                get_observability_provider().clear_workflow_trace_context(self.execution_id)
-                VirtualAssistantService.delete_by_execution_id(self.execution_id)
+        try:
+            with propagated_span(
+                self._otel_context,
+                "workflow.execute",
+                {
+                    "codemie.workflow_name": self.workflow_config.name or "",
+                    "codemie.workflow_id": str(self.workflow_config.id) if self.workflow_config.id else "",
+                    "codemie.execution_id": self.execution_id or "",
+                    "codemie.user_id": str(self.user.id) if self.user else "",
+                },
+            ):
+                consumer_future = self._start_thought_consumer_if_enabled(enable_verbose_consumer)
+                graph_config = self._build_graph_config()
+                chunks_collector = []
+                workflow_succeeded = False
+                try:
+                    self._run_workflow_execution(graph_config, chunks_collector)
+                    workflow_succeeded = True
+                except InterruptedException as e:
+                    self._handle_interrupt(str(e.message), e.interrupted_state, chunks_collector)
+                except Exception as e:
+                    record_exception_on_span(e)
+                    self._handle_task_exception(e, chunks_collector)
+                finally:
+                    self.thought_queue.close()
+                    self._drain_thought_consumer(consumer_future)
+                    if workflow_succeeded:
+                        self.workflow_execution_service.finish()
+                    if self.delete_on_completion:
+                        self._auto_delete_execution()
+                    # Clear trace context to prevent memory leaks
+                    get_observability_provider().clear_workflow_trace_context(self.execution_id)
+                    VirtualAssistantService.delete_by_execution_id(self.execution_id)
+        finally:
+            # Reset the ContextVar so a reused pool thread never carries this execution's user
+            # into the next run (which may run for a different or no user).
+            set_current_user(None)
 
     def _start_thought_consumer_if_enabled(self, enable_verbose_consumer: bool):
         """Start ThoughtConsumer for database persistence if enabled."""

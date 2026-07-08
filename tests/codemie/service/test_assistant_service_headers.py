@@ -246,6 +246,9 @@ class TestAssistantServiceBuildAgentForWorkflowWithHeaders:
         assistant.project = 'test-project'
         assistant.is_react = False
         assistant.prompt_variables = []
+        assistant.is_global = False  # Not a marketplace assistant
+        assistant.shared = False  # Private assistant: per-user tool mapping is a no-op
+        assistant.mcp_servers = []
         mock_get_by_id.return_value = assistant
 
         user = Mock(spec=User)
@@ -337,6 +340,9 @@ class TestAssistantServiceBuildAgentForWorkflowWithHeaders:
         assistant.project = 'test-project'
         assistant.is_react = False
         assistant.prompt_variables = []
+        assistant.is_global = False  # Not a marketplace assistant
+        assistant.shared = False  # Private assistant: per-user tool mapping is a no-op
+        assistant.mcp_servers = []
         mock_get_by_id.return_value = assistant
 
         user = Mock(spec=User)

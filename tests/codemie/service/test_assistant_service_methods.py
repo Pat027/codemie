@@ -129,11 +129,12 @@ class TestBuildBedrockAgent:
 class TestApplyMarketplaceToolMappings:
     """Test cases for _apply_marketplace_tool_mappings helper method."""
 
-    def test_apply_marketplace_tool_mappings_skips_non_global_assistant(self):
-        """Test that non-global assistants are skipped."""
+    def test_apply_marketplace_tool_mappings_skips_private_assistant(self):
+        """Test that private (non-shared) assistants are skipped."""
         # Arrange
         assistant = Mock(spec=Assistant)
         assistant.is_global = False
+        assistant.shared = False
 
         user = Mock(spec=User)
         request = AssistantChatRequest(text='Test', file_names=[])
@@ -143,6 +144,77 @@ class TestApplyMarketplaceToolMappings:
 
         # Assert
         # Should return early without modifying request
+        assert request.tools_config is None
+
+    @patch('codemie.service.assistant_service.assistant_user_mapping_service')
+    def test_apply_marketplace_tool_mappings_shared_non_global_applies_only_mcp(
+        self,
+        mock_mapping_service,
+    ):
+        """Shared, non-global assistants only receive extended-gate (MCP) mappings."""
+        # Arrange
+        mcp_tool_config = Mock()
+        mcp_tool_config.name = 'MCP:server1'
+        mcp_tool_config.integration_id = 'mcp-int'
+
+        regular_tool_config = Mock()
+        regular_tool_config.name = 'Git'
+        regular_tool_config.integration_id = 'git-int'
+
+        mock_mapping = Mock()
+        mock_mapping.tools_config = [mcp_tool_config, regular_tool_config]
+        mock_mapping_service.get_mapping.return_value = mock_mapping
+
+        assistant = Mock(spec=Assistant)
+        assistant.id = 'asst-project'
+        assistant.is_global = False
+        assistant.shared = True
+        assistant.mcp_servers = []
+
+        user = Mock(spec=User)
+        user.id = 'user-123'
+
+        request = AssistantChatRequest(text='Test', file_names=[])
+
+        # Act
+        AssistantService._apply_marketplace_tool_mappings(assistant, user, request)
+
+        # Assert — only the MCP mapping is applied; the regular tool mapping is skipped
+        assert request.tools_config is not None
+        assert len(request.tools_config) == 1
+        assert request.tools_config[0].name == 'MCP:server1'
+        assert request.tools_config[0].integration_id == 'mcp-int'
+
+    @patch('codemie.service.assistant_service.assistant_user_mapping_service')
+    def test_apply_marketplace_tool_mappings_shared_non_global_without_mcp_noop(
+        self,
+        mock_mapping_service,
+    ):
+        """Shared, non-global assistants with only regular mappings apply nothing."""
+        # Arrange
+        regular_tool_config = Mock()
+        regular_tool_config.name = 'Git'
+        regular_tool_config.integration_id = 'git-int'
+
+        mock_mapping = Mock()
+        mock_mapping.tools_config = [regular_tool_config]
+        mock_mapping_service.get_mapping.return_value = mock_mapping
+
+        assistant = Mock(spec=Assistant)
+        assistant.id = 'asst-project'
+        assistant.is_global = False
+        assistant.shared = True
+        assistant.mcp_servers = []
+
+        user = Mock(spec=User)
+        user.id = 'user-123'
+
+        request = AssistantChatRequest(text='Test', file_names=[])
+
+        # Act
+        AssistantService._apply_marketplace_tool_mappings(assistant, user, request)
+
+        # Assert
         assert request.tools_config is None
 
     @patch('codemie.service.assistant_service.assistant_user_mapping_service')
@@ -170,6 +242,43 @@ class TestApplyMarketplaceToolMappings:
         # Assert
         assert request.tools_config is None
         mock_mapping_service.get_mapping.assert_called_once_with(assistant_id='asst-global', user_id='user-123')
+
+    @patch('codemie.service.assistant_service.assistant_user_mapping_service')
+    def test_apply_marketplace_tool_mappings_global_not_shared_still_applies_all(
+        self,
+        mock_mapping_service,
+    ):
+        """Rare is_global && not shared: the early gate must not block; is_global applies all mappings."""
+        # Arrange
+        mcp_tool_config = Mock()
+        mcp_tool_config.name = 'MCP:server1'
+        mcp_tool_config.integration_id = 'mcp-int'
+
+        regular_tool_config = Mock()
+        regular_tool_config.name = 'Git'
+        regular_tool_config.integration_id = 'git-int'
+
+        mock_mapping = Mock()
+        mock_mapping.tools_config = [mcp_tool_config, regular_tool_config]
+        mock_mapping_service.get_mapping.return_value = mock_mapping
+
+        assistant = Mock(spec=Assistant)
+        assistant.id = 'asst-global-not-shared'
+        assistant.is_global = True
+        assistant.shared = False
+        assistant.mcp_servers = []
+
+        user = Mock(spec=User)
+        user.id = 'user-123'
+
+        request = AssistantChatRequest(text='Test', file_names=[])
+
+        # Act
+        AssistantService._apply_marketplace_tool_mappings(assistant, user, request)
+
+        # Assert — global branch applies ALL mappings (not just MCP)
+        assert request.tools_config is not None
+        assert {tc.name for tc in request.tools_config} == {'MCP:server1', 'Git'}
 
     @patch('codemie.service.assistant_service.assistant_user_mapping_service')
     def test_apply_marketplace_tool_mappings_adds_tools_config(

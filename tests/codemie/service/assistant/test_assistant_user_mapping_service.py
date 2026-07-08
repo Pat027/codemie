@@ -60,6 +60,7 @@ def test_create_or_update_mapping(service, mock_repository, tools_config_list, s
     # Arrange
     assistant_id = "test-assistant-id"
     user_id = "test-user-id"
+    mock_repository.get_mapping.return_value = None  # no existing mapping
     mock_repository.create_or_update_mapping.return_value = sample_mapping
 
     # Act
@@ -73,13 +74,56 @@ def test_create_or_update_mapping(service, mock_repository, tools_config_list, s
     args = mock_repository.create_or_update_mapping.call_args[0]
     assert args[0] == assistant_id
     assert args[1] == user_id
-    assert len(args[2]) == 2
-    assert isinstance(args[2][0], ToolConfig)
-    assert args[2][0].name == "Git"
-    assert args[2][0].integration_id == "git-integration-id"
-    assert isinstance(args[2][1], ToolConfig)
-    assert args[2][1].name == "JIRA"
-    assert args[2][1].integration_id == "jira-integration-id"
+    saved = {tc.name: tc.integration_id for tc in args[2]}
+    assert saved == {"Git": "git-integration-id", "JIRA": "jira-integration-id"}
+    assert all(isinstance(tc, ToolConfig) for tc in args[2])
+
+
+def test_create_or_update_mapping_clears_slot_reset_to_none(service, mock_repository, sample_mapping):
+    """A slot sent with an empty integration_id is removed from the stored mapping."""
+    # Arrange: existing mapping has Git + JIRA; user resets Git to "None".
+    mock_repository.get_mapping.return_value = sample_mapping
+    incoming = [{"name": "Git", "integration_id": ""}]
+
+    # Act
+    service.create_or_update_mapping("test-assistant-id", "test-user-id", incoming)
+
+    # Assert: only JIRA remains; Git entry deleted.
+    saved = {tc.name: tc.integration_id for tc in mock_repository.create_or_update_mapping.call_args[0][2]}
+    assert saved == {"JIRA": "jira-integration-id"}
+
+
+def test_create_or_update_mapping_leaves_untouched_slots(service, mock_repository, sample_mapping):
+    """Slots absent from the payload are preserved; only the sent slot is upserted."""
+    # Arrange: existing Git + JIRA; payload only updates Git.
+    mock_repository.get_mapping.return_value = sample_mapping
+    incoming = [{"name": "Git", "integration_id": "git-new-id"}]
+
+    # Act
+    service.create_or_update_mapping("test-assistant-id", "test-user-id", incoming)
+
+    # Assert: Git updated, JIRA untouched.
+    saved = {tc.name: tc.integration_id for tc in mock_repository.create_or_update_mapping.call_args[0][2]}
+    assert saved == {"Git": "git-new-id", "JIRA": "jira-integration-id"}
+
+
+def test_create_or_update_mapping_clears_last_slot_to_empty(service, mock_repository, sample_mapping):
+    """Clearing the only remaining slot results in an empty stored tools_config."""
+    # Arrange: existing has a single Git slot; user clears it.
+    single = AssistantUserMappingSQL(
+        id="test-id",
+        assistant_id="test-assistant-id",
+        user_id="test-user-id",
+        tools_config=[ToolConfig(name="Git", integration_id="git-integration-id")],
+    )
+    mock_repository.get_mapping.return_value = single
+    incoming = [{"name": "Git", "integration_id": ""}]
+
+    # Act
+    service.create_or_update_mapping("test-assistant-id", "test-user-id", incoming)
+
+    # Assert
+    assert mock_repository.create_or_update_mapping.call_args[0][2] == []
 
 
 def test_get_mapping(service, mock_repository, sample_mapping):
