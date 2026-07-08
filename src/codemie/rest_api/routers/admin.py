@@ -33,6 +33,8 @@ from codemie.rest_api.security.user import User
 from codemie.service.monitoring.project_monitoring_service import ProjectMonitoringService
 from codemie.service.platform.platform_indexing_service import PlatformIndexingService
 from codemie.configs.logger import logger
+from codemie.service.spend_tracking.config import SPEND_TRACKING_LOCK_ID
+from codemie.utils.leader_lock import async_leader_lock
 
 router = APIRouter(tags=["Admin"], prefix="/v1", dependencies=[Depends(authenticate), Depends(admin_access_only)])
 
@@ -190,32 +192,43 @@ async def trigger_spend_collection(admin: User = Depends(authenticate)):
         extra={"admin_id": admin.id, "admin_name": admin.name},
     )
 
-    service = LiteLLMSpendCollectorService(
-        app_repository=ApplicationRepository(),
-        tracking_repository=ProjectSpendTrackingRepository(),
-    )
-    try:
-        rows_inserted = await service.collect()
-    except Exception as e:
-        logger.error(
-            "Spend collection failed",
-            exc_info=True,
-            extra={"admin_id": admin.id},
+    async with async_leader_lock(SPEND_TRACKING_LOCK_ID) as acquired:
+        if not acquired:
+            logger.info(
+                "Spend collection already in progress, rejecting concurrent request",
+                extra={"admin_id": admin.id},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Spend collection is already in progress",
+            )
+
+        service = LiteLLMSpendCollectorService(
+            app_repository=ApplicationRepository(),
+            tracking_repository=ProjectSpendTrackingRepository(),
         )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Spend collection failed: {e}",
+        try:
+            rows_inserted = await service.collect()
+        except Exception as e:
+            logger.error(
+                "Spend collection failed",
+                exc_info=True,
+                extra={"admin_id": admin.id},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Spend collection failed: {e}",
+            )
+
+        logger.info(
+            "Spend collection completed",
+            extra={"admin_id": admin.id, "rows_inserted": rows_inserted},
         )
 
-    logger.info(
-        "Spend collection completed",
-        extra={"admin_id": admin.id, "rows_inserted": rows_inserted},
-    )
-
-    return BaseResponseWithData(
-        message="Spend collection completed",
-        data={"rows_inserted": rows_inserted},
-    )
+        return BaseResponseWithData(
+            message="Spend collection completed",
+            data={"rows_inserted": rows_inserted},
+        )
 
 
 @router.get(

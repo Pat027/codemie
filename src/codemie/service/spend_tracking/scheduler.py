@@ -19,12 +19,10 @@ from apscheduler.triggers.cron import CronTrigger
 from codemie.configs import config, logger
 from codemie.repository.application_repository import ApplicationRepository
 from codemie.repository.project_spend_tracking_repository import ProjectSpendTrackingRepository
+from codemie.service.spend_tracking.config import SPEND_TRACKING_LOCK_ID
 from codemie.service.spend_tracking.spend_collector_service import LiteLLMSpendCollectorService
 from codemie.utils.leader_lock import LeaderLockContext
 
-# Distinct advisory lock ID for the spend tracking job — must differ from
-# LeaderLockContext.ADVISORY_LOCK_ID (987654321) used by ConversationAnalysisService.
-_SPEND_TRACKING_LOCK_ID = 987654322
 _SPEND_TRACKING_RESET_WINDOW_LOCK_ID = 987654323
 _SPEND_TRACKING_RESET_RECONCILIATION_LOCK_ID = 987654324
 
@@ -153,7 +151,7 @@ class SpendTrackingScheduler:
         multiple replicas are deployed. Catches and logs all exceptions to
         prevent APScheduler from suppressing them silently.
         """
-        with LeaderLockContext(lock_id=_SPEND_TRACKING_LOCK_ID) as lock:
+        with LeaderLockContext(lock_id=SPEND_TRACKING_LOCK_ID) as lock:
             if not lock.acquired:
                 logger.info("LiteLLM spend collector: not the leader, skipping")
                 return

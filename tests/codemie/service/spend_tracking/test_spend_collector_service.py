@@ -35,6 +35,7 @@ from codemie.service.spend_tracking.spend_collector_service import (
     InvalidSpendSnapshotError,
     LiteLLMSpendCollectorService,
 )
+from codemie.service.spend_tracking.config import SPEND_TRACKING_LOCK_ID
 from codemie.service.spend_tracking.spend_models import ProjectSpendTracking
 
 
@@ -1009,3 +1010,10 @@ class TestSchedulerJobRegistration:
         assert mock_scheduler.add_job.call_count == 1
         assert mock_scheduler.add_job.call_args.kwargs["id"] == "litellm_spend_collector"
         mock_logger.error.assert_called_once()
+
+
+# ── config module ─────────────────────────────────────────────────────
+
+
+def test_spend_tracking_lock_id_value():
+    assert SPEND_TRACKING_LOCK_ID == 987654322
