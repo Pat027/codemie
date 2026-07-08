@@ -98,7 +98,11 @@ class GoogleDocDatasourceProcessor(BaseDatasourceProcessor):
                 raise ValueError(f"Failed to fetch Google OAuth credentials: {e.message}") from e
             self._access_token = access_token
         else:
-            self._access_token = None
+            raise ValueError(
+                "This Google Docs datasource was created using a deprecated service account authentication method. "
+                "OAuth authentication is now required to access Google Docs. "
+                "Please delete this datasource and create a new one with OAuth credentials to continue."
+            )
 
         return GoogleDocLoader(product_id=self.product_id, access_token=self._access_token)
 

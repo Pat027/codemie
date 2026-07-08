@@ -105,8 +105,14 @@ def processor(mock_elastic, mock_loader):
     """Create a GoogleDocDatasourceProcessor with mocked dependencies."""
     with (
         patch("codemie.datasource.google_doc.google_doc_datasource_processor.GoogleDocLoader") as mock_loader_class,
+        patch(
+            "codemie.datasource.google_doc.google_doc_datasource_processor.GoogleOAuthTokenManager"
+        ) as mock_token_manager,
     ):
         mock_loader_class.return_value = mock_loader
+        mock_token_manager_instance = MagicMock()
+        mock_token_manager.return_value = mock_token_manager_instance
+        mock_token_manager_instance.get_valid_access_token.return_value = "mock_access_token"
 
         processor = GoogleDocDatasourceProcessor(
             datasource_name="test-datasource",
@@ -115,6 +121,7 @@ def processor(mock_elastic, mock_loader):
             description="Test description",
             project_space_visible=True,
             user=User(id="1", username="theo", name="Theo"),
+            setting_id="test_setting_id",  # Add setting_id to simulate OAuth authentication
         )
 
         processor.client = mock_elastic
@@ -338,3 +345,47 @@ class TestGoogleDocDatasourceProcessor:
         processor.is_incremental_reindex = False
         # Should not raise an exception
         processor._on_process_start()
+
+    def test_init_loader_without_setting_id_raises_error(self):
+        """Test that _init_loader raises ValueError when setting_id is None."""
+        with patch("codemie.datasource.google_doc.google_doc_datasource_processor.ElasticSearchClient"):
+            processor = GoogleDocDatasourceProcessor(
+                datasource_name="test",
+                project_name="test",
+                google_doc=f"https://docs.google.com/document/d/{DOC_ID}/edit",
+                setting_id=None,  # Old datasource without OAuth
+            )
+
+            with pytest.raises(ValueError) as exc_info:
+                processor._init_loader()
+
+            error_message = str(exc_info.value)
+            assert "deprecated service account authentication" in error_message
+            assert "OAuth authentication is now required" in error_message
+            assert "create a new one with OAuth credentials" in error_message
+
+    def test_init_loader_with_setting_id(self):
+        """Test that _init_loader works correctly when setting_id is provided."""
+        with (
+            patch("codemie.datasource.google_doc.google_doc_datasource_processor.ElasticSearchClient"),
+            patch(
+                "codemie.datasource.google_doc.google_doc_datasource_processor.GoogleOAuthTokenManager"
+            ) as mock_token_manager,
+            patch("codemie.datasource.google_doc.google_doc_datasource_processor.GoogleDocLoader") as mock_loader,
+        ):
+            mock_token_manager_instance = MagicMock()
+            mock_token_manager.return_value = mock_token_manager_instance
+            mock_token_manager_instance.get_valid_access_token.return_value = "mock_access_token"
+
+            processor = GoogleDocDatasourceProcessor(
+                datasource_name="test",
+                project_name="test",
+                google_doc=f"https://docs.google.com/document/d/{DOC_ID}/edit",
+                setting_id="test_setting_id",
+            )
+
+            processor._init_loader()
+
+            mock_token_manager_instance.get_valid_access_token.assert_called_once_with("test_setting_id")
+            mock_loader.assert_called_once_with(product_id=DOC_ID, access_token="mock_access_token")
+            assert processor._access_token == "mock_access_token"

@@ -71,6 +71,11 @@ components:
       name: "Documentation"
       enabled: true
       url: "https://docs.codemie.ai/user-guide/workflows/create-workflow"
+  - id: "googleDocsDocumentation"
+    settings:
+      name: "Documentation"
+      enabled: true
+      url: "https://docs.codemie.ai/user-guide/data-source/datasources-types/add-google-data-source/"
   - id: "workflowYamlDocumentation"
     settings:
       name: "Documentation"
