@@ -164,6 +164,39 @@ def test_enabled_callback_script_route_returns_first_party_javascript() -> None:
     assert 'Authentication successful! Open CodeMie to continue.' in response.text
 
 
+def test_keep_callback_tab_open_flag_defaults_to_false() -> None:
+    from codemie.configs.config import Config
+
+    assert Config.model_fields["MCP_AUTH_CALLBACK_KEEP_TAB_OPEN"].default is False
+
+
+def test_callback_script_closes_tab_by_default() -> None:
+    client = _build_enabled_client()
+
+    script = client.get("/v1/mcp-auth/oauth2/callback-page.js").text
+
+    assert "const CALLBACK_KEEP_TAB_OPEN = false;" in script
+    assert "window.close();" in script
+    assert "if (!CALLBACK_KEEP_TAB_OPEN)" in script
+
+
+def test_callback_script_keeps_tab_open_when_flag_enabled(monkeypatch) -> None:
+    from codemie.enterprise.mcp_auth import _callback_pages
+
+    monkeypatch.setattr(_callback_pages.config, "MCP_AUTH_CALLBACK_KEEP_TAB_OPEN", True)
+    client = _build_enabled_client()
+
+    script = client.get("/v1/mcp-auth/oauth2/callback-page.js").text
+
+    assert "const CALLBACK_KEEP_TAB_OPEN = true;" in script
+    # close is gated, not unconditional
+    assert "if (!CALLBACK_KEEP_TAB_OPEN)" in script
+    # success path still notifies the opener before deciding whether to close
+    assert "window.opener.postMessage" in script
+    # beacon stays truthful about the gated close
+    assert "window_should_close: !CALLBACK_KEEP_TAB_OPEN," in script
+
+
 def test_disabled_callback_script_route_is_absent() -> None:
     client = _build_disabled_client()
 

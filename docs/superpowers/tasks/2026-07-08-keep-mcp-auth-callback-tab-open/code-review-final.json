@@ -1,0 +1,44 @@
+{
+  "gate_id": "code-review.final",
+  "decision": "request-changes",
+  "rationale": "Implementation is functionally correct and satisfies all 6 acceptance criteria: the flag gates window.close() (default False preserves auto-close), postMessage and the diagnostics beacon still fire before the gate, window_should_close stays truthful (!CALLBACK_KEEP_TAB_OPEN), the error/no-opener branches are untouched, and the Python bool is safely lowered to JS. Two items block a clean auto-approve. CR-001 (security, decision_needed): with the flag on, the callback tab stays open indefinitely with the OAuth code/state still in its URL/history — a real, if mild (values are already consumed server-side), exposure tradeoff on auth code with no prod-guard; a human should accept the default-off/operator-controlled posture or require a safeguard. CR-002 (test strength, patch): the new tests assert served-script substrings only and never execute the JS, so a branch-body inversion could pass green. 1 low/informational finding dismissed (reused close message; other-branch completeness — the error/no-opener paths never close, so the flag is correctly irrelevant there). Confidence low: a decision_needed finding remains.",
+  "confidence": "low",
+  "risk_flags": ["security"],
+  "business_review": [
+    {"criterion": "1. Callback tab can stay open after success for inspection", "status": "pass", "note": "CALLBACK_KEEP_TAB_OPEN gates window.close() in the success+opener branch."},
+    {"criterion": "2. Config-gated, default OFF, default behavior unchanged", "status": "pass", "note": "MCP_AUTH_CALLBACK_KEEP_TAB_OPEN: bool = False; default script still calls window.close()."},
+    {"criterion": "3. Kept-open tab shows a user-facing message", "status": "pass", "note": "else-branch calls updateMessage(CALLBACK_SUCCESS_CLOSE_MESSAGE), reusing existing copy."},
+    {"criterion": "4. postMessage + beacon still fire; window_should_close truthful", "status": "pass", "note": "Both fire unconditionally before the gate; window_should_close: !CALLBACK_KEEP_TAB_OPEN."},
+    {"criterion": "5. Error branch untouched", "status": "pass", "note": "Error branch has no window.close() and no flag reference; unchanged."},
+    {"criterion": "6. Tests cover default value, default-closes, flag-on-keeps-open", "status": "pass", "note": "All three tests present and passing (77 bridge+feature-gating tests green)."}
+  ],
+  "standards_review": [
+    {"check": "commit-format (git-workflow.md)", "status": "pass", "notes": "Commit subject 'EPMCDME-11515: Add config flag...' matches EPMCDME-####: Description."},
+    {"check": "code-quality (ruff)", "status": "pass", "notes": "ruff check + format --check clean on all three changed files."},
+    {"check": "security-patterns", "status": "partial", "notes": "OAuth code/state URL persistence when flag enabled — raised as CR-001."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "decision_needed",
+      "title": "Kept-open callback tab prolongs OAuth code/state exposure in URL/history",
+      "problem": "When MCP_AUTH_CALLBACK_KEEP_TAB_OPEN=true, the success branch no longer closes the tab, so the callback URL (carrying the OAuth code/state query params) remains in the address bar and browser history indefinitely. No production guard and no URL scrub (history.replaceState) accompany the flag.",
+      "impact": "Extended visibility of OAuth callback parameters (screen shares, history, physical access). Mitigated by: default-off/opt-in, and the code/state are single-use and already consumed server-side by the time the bridge renders.",
+      "recommendation": "Human decision: (a) accept as-is (default-off, operator-controlled, diagnostic-only), or (b) add a safeguard — scrub the URL via history.replaceState before leaving the tab open, and/or warn/refuse when the flag is enabled outside a diagnostic environment.",
+      "file": "src/codemie/enterprise/mcp_auth/_callback_pages.py",
+      "line": 246
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "title": "New tests assert served-script substrings only; cannot catch a branch-body inversion",
+      "problem": "The two script tests check for literal substrings in the served JS and never execute it. The const-value flip (= true; / = false;) is asserted, but a semantic inversion (e.g. swapping the if/else bodies) would keep all substrings present and ship green.",
+      "impact": "A future edit that inverts the gate logic would not be caught by the suite. Consistent with the file's existing substring-only convention, so this is a pre-existing test-strength limitation, not a regression.",
+      "recommendation": "Cheaply strengthen the keep-open test to assert the gated structure precisely (e.g. that the else-branch updateMessage follows the if (!CALLBACK_KEEP_TAB_OPEN) block), or accept the file's existing substring convention.",
+      "file": "tests/enterprise/mcp_auth/test_oauth2_callback_bridge.py",
+      "line": 178
+    }
+  ]
+}

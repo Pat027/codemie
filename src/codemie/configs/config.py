@@ -461,6 +461,10 @@ class Config(BaseSettings):
     MCP_AUTH_DCR_REGISTRATION_TIMEOUT_SECONDS: float = 30.0
     MCP_AUTH_DISCOVERY_PROBE_OVERALL_TIMEOUT_SECONDS: float = 30.0
     MCP_AUTH_RESOURCE_METADATA_DISCOVERY_TIMEOUT_SECONDS: float = 30.0
+    # Diagnostic: keep the OAuth2 callback tab open after successful auth instead of
+    # calling window.close(), so its console/URL can be inspected. Default False
+    # preserves the auto-close UX.
+    MCP_AUTH_CALLBACK_KEEP_TAB_OPEN: bool = False
     MCP_CONNECT_ENABLED: bool = True
     MCP_CONNECT_URL: str = "http://localhost:3000"
     MCP_CONNECT_BUCKETS_COUNT: int = 10

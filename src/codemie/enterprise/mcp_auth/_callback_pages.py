@@ -181,6 +181,7 @@ const CALLBACK_SUCCESS_CLOSE_MESSAGE = '{_CALLBACK_SUCCESS_CLOSE_MESSAGE}';
 const CALLBACK_SUCCESS_OPEN_CODEMIE_MESSAGE = '{_CALLBACK_SUCCESS_OPEN_CODEMIE_MESSAGE}';
 const CALLBACK_FALLBACK_DELAY_MS = {_CALLBACK_FALLBACK_DELAY_MS};
 const CALLBACK_DIAGNOSTICS_URL = '{_OAUTH2_CALLBACK_DIAGNOSTICS_PATH}';
+const CALLBACK_KEEP_TAB_OPEN = {str(config.MCP_AUTH_CALLBACK_KEEP_TAB_OPEN).lower()};
 
 const main = document.querySelector('main[data-callback-result]');
 
@@ -241,14 +242,18 @@ if (main instanceof HTMLElement) {{
       sendDiagnostics({{
         post_message_attempted: postMessageAttempted,
         post_message_error: postMessageError,
-        window_should_close: true,
+        window_should_close: !CALLBACK_KEEP_TAB_OPEN,
       }});
-      window.close();
-      window.setTimeout(() => {{
-        if (!window.closed) {{
-          updateMessage(CALLBACK_SUCCESS_CLOSE_MESSAGE);
-        }}
-      }}, CALLBACK_FALLBACK_DELAY_MS);
+      if (!CALLBACK_KEEP_TAB_OPEN) {{
+        window.close();
+        window.setTimeout(() => {{
+          if (!window.closed) {{
+            updateMessage(CALLBACK_SUCCESS_CLOSE_MESSAGE);
+          }}
+        }}, CALLBACK_FALLBACK_DELAY_MS);
+      }} else {{
+        updateMessage(CALLBACK_SUCCESS_CLOSE_MESSAGE);
+      }}
     }}
   }}
 
