@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 from pydantic import ValidationError, create_model
 
-from codemie.core.json_schema_utils import model_to_string
+from codemie.core.json_schema_utils import json_schema_to_model, model_to_string
 
 
 class TestRecursiveSchemaHandler:
@@ -471,3 +471,51 @@ def test_multiple_recursive_paths():
         assert "related: list" in graph_str
         # Capture recursive ref marking from model_to_string
         assert "<recursive ref" in graph_str or "GraphNode" in graph_str
+
+
+def test_self_referential_defs_entry_children_ref_resolves_via_real_code_path():
+    """A $defs entry that references itself (TreeNode.children items -> #/$defs/TreeNode)
+    exercises the two-pass _process_definitions fix against the real production code path
+    (no mocking, unlike every other test in this file). Locks in the current, pre-existing
+    behavior:
+    - a reference to the self-referential def from OUTSIDE its own body (the top-level
+      'root' property, resolved only after $defs processing fully completes) resolves to
+      the real recursive model.
+    - the reference INSIDE the def's own body (children items, resolved while that same
+      def is still mid-construction) resolves to Any. This is a documented, pre-existing
+      tradeoff of the placeholder-based cache -- identical in the old single-pass
+      implementation -- not a behavior introduced or changed by the two-pass fix.
+    """
+    tree_node_schema = {
+        "type": "object",
+        "$defs": {
+            "TreeNode": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                    "name": {"type": "string"},
+                    "children": {
+                        "type": "array",
+                        "items": {"$ref": "#/$defs/TreeNode"},
+                    },
+                },
+            },
+        },
+        "properties": {
+            "root": {"$ref": "#/$defs/TreeNode"},
+        },
+        "required": ["root"],
+    }
+
+    model = json_schema_to_model(tree_node_schema)
+
+    tree_node_model = model.model_fields["root"].annotation
+    assert tree_node_model is not Any, "root should resolve to the real TreeNode model"
+
+    instance = model(root={"name": "root", "children": [{"name": "child", "children": []}]})
+    assert instance.root.name == "root"
+    # Known limitation (pre-existing, not introduced by the two-pass fix): the self-reference
+    # inside TreeNode's own body is untyped (Any), so pydantic stores the raw dict rather than
+    # coercing it into a TreeNode instance.
+    assert isinstance(instance.root.children[0], dict)
+    assert instance.root.children[0]["name"] == "child"

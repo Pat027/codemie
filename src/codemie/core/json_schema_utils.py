@@ -217,21 +217,26 @@ def _process_definitions(schema: JsonSchema, cache: ModelCache):
     cache.set_path(path)
     is_required = True
 
-    for def_name, def_schema in definitions.items():
-        cache.set_path(def_name)  # Include definition name in path
-
-        # Pre-register Any as a placeholder before processing this definition.
-        # If the definition is self-referential (e.g. Condition = anyOf[Filter, Group]
-        # where Group.conditions uses $ref back to Condition), the recursive $ref
-        # will find this placeholder in the cache and resolve to Any instead of
-        # triggering the processing_stack forward-ref path (which would create a
-        # string ForwardRef that resolves to the wrong single-variant type).
-        # The placeholder is replaced with the real type after processing completes.
+    # First pass: pre-register every definition as Any so that a $ref to any sibling --
+    # declared earlier OR later in this $defs/definitions map (e.g.
+    # BadgeAssignmentImportEntry.$ref -> Ref, with Ref declared afterward) -- resolves
+    # without raising, instead of hitting a missing-placeholder TypeError. A sibling that
+    # hasn't been built yet still degrades to Any rather than its real type; only a
+    # backward reference (to an already-built sibling) resolves to the real type. A
+    # self-referential definition hits this same placeholder for its own in-flight
+    # reference, so it degrades to Any the same way -- an already-accepted trade-off,
+    # not something new this two-pass split introduces.
+    for def_name in definitions:
+        cache.set_path(def_name)
         cache.save_model(Any)
+        cache.unset_path(def_name)
 
+    # Second pass: process each definition and replace the placeholder with the real type.
+    for def_name, def_schema in definitions.items():
+        cache.set_path(def_name)
         definition = _create_field_definition(def_name, def_schema, is_required, cache)
         cache.save_model(definition[0])
-        cache.unset_path(def_name)  # Remove definition name from path
+        cache.unset_path(def_name)
 
     cache.unset_path(path)
 

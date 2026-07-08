@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import get_args, get_type_hints
+from typing import Any, get_args, get_type_hints
 import json
 from codemie.core.json_schema_utils import _create_model_from_schema, Cache
 
@@ -326,3 +326,76 @@ def test_json_schema_properties_ref_to_ref():
         if len(item_type_args) > 0:
             fields_size_model = item_type_args[0]
             assert size_model is fields_size_model, "fields items should reference the same Size model"
+
+
+JSON_SCHEMA_WITH_DEFS_FORWARD_SIBLING_REF = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "name": "assignBadges",
+    "inputSchema": {
+        "type": "object",
+        "$defs": {
+            "BadgeAssignmentImportEntry": {
+                "type": "object",
+                "required": ["assigner", "badge"],
+                "properties": {
+                    "assigner": {"$ref": "#/$defs/Ref"},
+                    "badge": {"$ref": "#/$defs/Ref"},
+                },
+                "additionalProperties": False,
+            },
+            "Ref": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "url": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+        },
+        "properties": {
+            "singleEntries": {
+                "type": "array",
+                "items": {"$ref": "#/$defs/BadgeAssignmentImportEntry"},
+            }
+        },
+        "required": ["singleEntries"],
+        "additionalProperties": False,
+    },
+}
+
+JSON_SCHEMA_WITH_DEFS_FORWARD_SIBLING_REF_INPUT = {
+    "singleEntries": [
+        {
+            "assigner": {"id": "u-1", "url": "https://example.com/u-1"},
+            "badge": {"id": "b-1", "url": "https://example.com/b-1"},
+        }
+    ]
+}
+
+
+def test_json_schema_defs_sibling_ref_resolves_regardless_of_declaration_order():
+    """BadgeAssignmentImportEntry (declared first in $defs) references Ref (declared
+    second) via $ref -- must resolve without raising TypeError, regardless of dict
+    iteration order. Reproduces the reported assignBadges MCP tool load failure.
+
+    A forward reference to a not-yet-built sibling degrades to Any rather than the
+    real Ref type (same trade-off already accepted for self-referential definitions);
+    what matters for this bug is that model creation no longer raises."""
+    cache = Cache()
+    model = _create_model_from_schema("Test", JSON_SCHEMA_WITH_DEFS_FORWARD_SIBLING_REF["inputSchema"], cache)
+
+    data = model(**JSON_SCHEMA_WITH_DEFS_FORWARD_SIBLING_REF_INPUT)
+    extracted = data.model_dump()
+    assert json.dumps(extracted) == json.dumps(JSON_SCHEMA_WITH_DEFS_FORWARD_SIBLING_REF_INPUT)
+
+    ref_model = cache.get_model_by_path("#/$defs/Ref")
+    assert ref_model is not None, "Ref model not found in cache"
+
+    entry_model = cache.get_model_by_path("#/$defs/BadgeAssignmentImportEntry")
+    assert entry_model is not None, "BadgeAssignmentImportEntry model not found in cache"
+
+    assigner_type = get_type_hints(entry_model)["assigner"]
+    assert assigner_type is Any, (
+        "assigner is a forward reference to Ref (declared later in $defs), so it "
+        "degrades to Any -- documenting current behavior, not asserting it as ideal"
+    )
