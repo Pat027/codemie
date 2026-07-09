@@ -103,6 +103,7 @@ class ProviderDatasourceSchemaService:
                     enum=param.enum,
                     title=param.title,
                     example=param.example,
+                    default_value=param.default_value,
                 )
             )
 
@@ -154,6 +155,7 @@ class ProviderDatasourceSchemaService:
                     enum=param.enum,
                     title=param.title,
                     example=param.example,
+                    default_value=param.default_value,
                 )
             )
 
@@ -181,6 +183,7 @@ class ProviderDatasourceSchemaService:
                 multiselect_options=options,
                 title=param.title,
                 example=param.example,
+                default_value=param.default_value,
             )
         )
 

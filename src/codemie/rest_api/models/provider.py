@@ -65,6 +65,7 @@ class ProviderToolkitConfigParameter(BaseModel):
     enum: Optional[List[str]] = None
     example: Optional[str] = None
     title: Optional[str] = None
+    default_value: str | None = None
 
 
 class ProviderToolArgument(BaseModel):
@@ -84,6 +85,7 @@ class ProviderToolArgument(BaseModel):
     enum: Optional[List[str]] = None
     title: Optional[str] = None
     example: Optional[str] = None
+    default_value: str | None = None
 
 
 class ProviderToolMetadata(BaseModel):
@@ -340,6 +342,7 @@ class ProviderDataSourceTypeSchema(BaseModel):
         multiselect_options: Optional[List[dict]] = None
         title: Optional[str] = None
         example: Optional[str] = None
+        default_value: str | None = None
 
     description: str
     parameters: List[Parameter] = Field(default_factory=list)

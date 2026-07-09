@@ -16,7 +16,14 @@ import pytest
 from unittest.mock import patch, MagicMock
 from fastapi.exceptions import RequestValidationError
 from pydantic import HttpUrl
-from codemie.rest_api.models.provider import Provider, ProviderToolkit, ProviderToolMetadata, ProviderConfiguration
+from codemie.rest_api.models.provider import (
+    Provider,
+    ProviderToolkit,
+    ProviderToolMetadata,
+    ProviderConfiguration,
+    ProviderToolkitConfigParameter,
+    ProviderToolArgument,
+)
 
 NAME_FIELD = "name.keyword"
 ID_FIELD = "id.keyword"
@@ -243,3 +250,48 @@ def test_provider_toolkit_validates_lifecycle_actions_pos():
     )
 
     assert toolkit
+
+
+def test_toolkit_config_parameter_accepts_default_value():
+    """default_value is parsed from the provider JSON for config parameters."""
+    param = ProviderToolkitConfigParameter(
+        **{
+            "type": "Number",
+            "description": "Answer-check strictness",
+            "required": False,
+            "enum": ["0.0", "0.5"],
+            "default_value": "0.0",
+        }
+    )
+
+    assert param.default_value == "0.0"
+    assert param.enum == ["0.0", "0.5"]
+
+
+def test_tool_argument_accepts_default_value():
+    """default_value is parsed from the provider JSON for tool arguments."""
+    arg = ProviderToolArgument(
+        **{
+            "type": "String",
+            "required": False,
+            "description": "Language",
+            "enum": ["en", "az"],
+            "default_value": "en",
+        }
+    )
+
+    assert arg.default_value == "en"
+
+
+def test_toolkit_config_parameter_without_default_value_defaults_to_none():
+    """Backward compat: JSON without default_value still parses, default_value is None."""
+    param = ProviderToolkitConfigParameter(**{"type": "String", "description": "x", "required": False})
+
+    assert param.default_value is None
+
+
+def test_tool_argument_without_default_value_defaults_to_none():
+    """Backward compat: tool arg JSON without default_value still parses."""
+    arg = ProviderToolArgument(**{"type": "String", "required": True, "description": "x"})
+
+    assert arg.default_value is None

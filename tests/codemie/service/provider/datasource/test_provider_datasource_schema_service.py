@@ -42,6 +42,8 @@ def mock_provider_toolkit():
                 description="test_param",
                 parameter_type=ProviderToolkitConfigParameter.ParameterType.STRING,
                 required=False,
+                enum=["a", "b"],
+                default_value="a",
             )
         },
     )
@@ -90,3 +92,15 @@ def test_schema_for_not_ds(mock_provider, mock_user):
 
     with pytest.raises(ValueError):
         instance.schema_for(toolkit_id="TestID", include_autofilled=False)
+
+
+def test_schema_for_passes_default_value_and_enum(mock_provider, mock_user):
+    """default_value and enum from the config parameter reach the UI schema."""
+    instance = ProviderDatasourceSchemaService(provider=mock_provider, user=mock_user)
+
+    result = instance.schema_for(toolkit_id="TestID", include_autofilled=False)
+
+    param = result.base_schema.parameters[0]
+    assert param.name == "test_param"
+    assert param.default_value == "a"
+    assert param.enum == ["a", "b"]

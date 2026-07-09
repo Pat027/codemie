@@ -117,6 +117,8 @@ class ProviderDatasourceBaseService:
                 params[name] = provider_values[name]
             elif managed_fields and name in managed_fields:
                 params[name] = managed_fields[name]
+            elif param_def.default_value is not None:
+                params[name] = param_def.default_value
             elif param_def.required and param_def.parameter_type != ProviderToolkitConfigParameter.ParameterType.SECRET:
                 raise ValueError(f"Missing required parameter: {name}")
 
