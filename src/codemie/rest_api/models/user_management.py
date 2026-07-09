@@ -242,6 +242,7 @@ class ProjectInfo(BaseModel):
     """Project access information for user responses"""
 
     name: str
+    display_name: Optional[str] = None
     is_project_admin: bool
 
 

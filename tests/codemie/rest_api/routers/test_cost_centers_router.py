@@ -118,6 +118,7 @@ class TestCostCenterRouter:
         )
         project = SimpleNamespace(
             name="data-pipeline",
+            display_name=None,
             description="Analytics pipeline",
             project_type="shared",
             created_by="user-1",

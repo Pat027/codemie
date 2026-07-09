@@ -73,12 +73,25 @@ async def update_profile(data: UserProfileUpdateRequest, user: User = Depends(au
 
     # F-10: Query DB directly for projects (consistent with admin endpoints)
     from codemie.clients.postgres import get_session
+    from codemie.core.models import Application
     from codemie.repository.user_project_repository import user_project_repository
+    from sqlmodel import select
 
     with get_session() as session:
         user_projects = user_project_repository.get_by_user_id(session, user.id)
+        project_names = [p.project_name for p in user_projects]
+        display_name_map = dict(
+            session.exec(
+                select(Application.name, Application.display_name).where(Application.name.in_(project_names))
+            ).all()
+        )
         projects = [
-            ProjectInfoResponse(name=p.project_name, is_project_admin=p.is_project_admin) for p in user_projects
+            ProjectInfoResponse(
+                name=p.project_name,
+                display_name=display_name_map.get(p.project_name),
+                is_project_admin=p.is_project_admin,
+            )
+            for p in user_projects
         ]
 
     return UserResponse(

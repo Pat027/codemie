@@ -12,6 +12,7 @@ paths = [
   '''.idea/.*''',                      # IDE workspace files (gitignored, UUIDs trigger generic-api-key)
   '''.keys/.*''',                      # Local dev keys (gitignored, never committed)
   '''.env_local''',                    # Local environment variables (gitignored, never committed)
+  '''.env\.local''',                   # Local environment variables (gitignored, never committed)
 ]
 
 stopwords = [

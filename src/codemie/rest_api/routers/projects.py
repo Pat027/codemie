@@ -155,6 +155,7 @@ class ProjectListItem(BaseModel):
     """Project list response item with member counts (Story 16)"""
 
     name: str
+    display_name: Optional[str] = None
     description: Optional[str] = None
     project_type: str
     created_by: Optional[str] = None
@@ -213,6 +214,7 @@ class ProjectDetailResponse(BaseModel):
     """Project detail response with member list (Story 16)"""
 
     name: str
+    display_name: Optional[str] = None
     description: Optional[str] = None
     project_type: str
     created_by: Optional[str] = None
@@ -229,12 +231,14 @@ class ProjectDetailResponse(BaseModel):
 
 class ProjectCreateRequest(BaseModel):
     name: str
+    display_name: Optional[str] = None
     description: str = Field(description="Project description")
     cost_center_id: Optional[UUID] = None
 
 
 class ProjectCreateResponse(BaseModel):
     name: str
+    display_name: Optional[str] = None
     description: str
     project_type: str
     created_by: str
@@ -246,6 +250,7 @@ class ProjectCreateResponse(BaseModel):
 
 class ProjectUpdateRequest(BaseModel):
     name: Optional[str] = None
+    display_name: Optional[str] = None
     description: Optional[str] = None
     cost_center_id: Optional[UUID] = None
     clear_cost_center: bool = False
@@ -255,6 +260,7 @@ class ProjectUpdateRequest(BaseModel):
     def validate_non_empty(self):
         if (
             self.name is None
+            and self.display_name is None
             and self.description is None
             and self.cost_center_id is None
             and self.enforce_member_spend_limits is None
@@ -488,10 +494,14 @@ def _key_row_to_widget(row, budgets_by_id: dict[str, Budget] | None = None) -> S
     )
 
 
-def _ensure_project_budget_list_supported() -> None:
-    """Require active budget enforcement for explicit project-budget list params."""
+def _is_budget_provider_active() -> bool:
     provider = get_active_provider()
-    if not config.LLM_PROXY_BUDGET_CHECK_ENABLED or provider.provider_name == "noop":
+    return bool(config.LLM_PROXY_BUDGET_CHECK_ENABLED) and provider.provider_name != "noop"
+
+
+def _ensure_project_budget_list_supported() -> None:
+    """Require active budget enforcement for explicit project-budget filter params."""
+    if not _is_budget_provider_active():
         raise ExtendedHTTPException(
             code=400,
             message="Project budget filtering requires budget enforcement provider configuration",
@@ -638,6 +648,8 @@ def create_project(payload: ProjectCreateRequest, user: User = Depends(authentic
         "project_name": payload.name,
         "description": payload.description,
     }
+    if payload.display_name is not None:
+        create_kwargs["display_name"] = payload.display_name
     if payload.cost_center_id is not None:
         create_kwargs["cost_center_id"] = payload.cost_center_id
 
@@ -647,6 +659,7 @@ def create_project(payload: ProjectCreateRequest, user: User = Depends(authentic
 
     return ProjectCreateResponse(
         name=project.name,
+        display_name=project.display_name,
         description=project.description or payload.description,
         project_type=project.project_type,
         created_by=project.created_by or user.id,
@@ -703,7 +716,7 @@ async def list_projects(
     """
 
     _ensure_user_management_enabled()
-    if include_budgets or has_assigned_budgets or budget_category is not None:
+    if has_assigned_budgets or budget_category is not None:
         _ensure_project_budget_list_supported()
 
     enriched_projects, total_count = await asyncio.to_thread(
@@ -722,7 +735,7 @@ async def list_projects(
 
     items = [ProjectListItem(**proj) for proj in enriched_projects]
 
-    if include_budgets:
+    if include_budgets and _is_budget_provider_active():
         await _attach_assigned_budget_summaries(items, budget_category)
 
     if include_spending:
@@ -789,6 +802,7 @@ async def get_project_detail(
 def _build_project_detail_response(project_detail: dict, project_name: str) -> ProjectDetailResponse:
     return ProjectDetailResponse(
         name=project_detail["name"],
+        display_name=project_detail.get("display_name"),
         description=project_detail["description"],
         project_type=project_detail["project_type"],
         created_by=project_detail["created_by"],
@@ -968,6 +982,7 @@ def update_project(
         user=user,
         project_name=project_name,
         name=payload.name,
+        display_name=payload.display_name,
         description=payload.description,
         cost_center_id=None if payload.clear_cost_center else payload.cost_center_id,
         clear_cost_center=payload.clear_cost_center,
@@ -976,6 +991,7 @@ def update_project(
 
     return ProjectCreateResponse(
         name=project.name,
+        display_name=project.display_name,
         description=project.description or "",
         project_type=project.project_type,
         created_by=project.created_by or user.id,

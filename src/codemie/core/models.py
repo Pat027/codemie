@@ -370,6 +370,7 @@ class Application(BaseModelWithSQLSupport, Owned, table=True):
         SHARED = "shared"
 
     name: str
+    display_name: Optional[str] = SQLField(default=None, max_length=150)
     description: Optional[str] = SQLField(default=None, max_length=500)  # Project description
     git_repos: list[GitRepo] = SQLField(default_factory=list, sa_column=Column(PydanticListType(GitRepo)))
     project_type: str = SQLField(default=ProjectType.SHARED)
@@ -713,6 +714,7 @@ class ProjectInfoResponse(BaseModel):
     """Project access information in user responses"""
 
     name: str
+    display_name: Optional[str] = None
     is_project_admin: bool
 
 
@@ -741,8 +743,13 @@ class UserResponse(BaseModel):
     is_maintainer: bool = False
 
 
+class ApplicationInfo(ConfiguredModel):
+    name: str
+    display_name: Optional[str] = None
+
+
 class ApplicationsResponse(ConfiguredModel):
-    applications: list[str]
+    applications: list[ApplicationInfo]
 
 
 class ExportAssistantRequest(BaseModel):

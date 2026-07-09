@@ -53,6 +53,7 @@ class TestProjectVisibilityService:
         mock_session = MagicMock()
         project = SimpleNamespace(
             name="proj-a",
+            display_name=None,
             description="Project A",
             project_type="shared",
             created_by="owner-1",
@@ -93,6 +94,7 @@ class TestProjectVisibilityService:
         assert result == [
             {
                 "name": "proj-a",
+                "display_name": None,
                 "description": "Project A",
                 "project_type": "shared",
                 "created_by": "owner-1",
@@ -157,6 +159,7 @@ class TestProjectVisibilityService:
         mock_session = MagicMock()
         project = SimpleNamespace(
             name="proj-a",
+            display_name=None,
             description="Project A",
             project_type="shared",
             created_by="owner-1",

@@ -236,7 +236,7 @@ class TestProjectInfoModel:
         json_data = project.model_dump()
 
         # Assert
-        assert json_data == {"name": "my-project", "is_project_admin": False}
+        assert json_data == {"name": "my-project", "display_name": None, "is_project_admin": False}
         assert "name" in json_data  # snake_case field name
         assert "is_project_admin" in json_data  # snake_case field name
 

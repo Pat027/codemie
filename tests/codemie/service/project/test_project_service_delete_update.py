@@ -496,6 +496,7 @@ class TestProjectServiceUpdateProject:
             mock_session,
             project,
             name=None,
+            display_name=None,
             description="new desc",
             cost_center_id=None,
         )
@@ -582,6 +583,7 @@ class TestProjectServiceUpdateProject:
             mock_session,
             project,
             name=None,
+            display_name=None,
             description=None,
             cost_center_id="cc-1",
         )
@@ -608,6 +610,7 @@ class TestProjectServiceUpdateProject:
             mock_session,
             project,
             name=None,
+            display_name=None,
             description=None,
             cost_center_id=None,
         )

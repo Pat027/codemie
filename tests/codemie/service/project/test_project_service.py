@@ -79,6 +79,7 @@ class TestProjectServiceCreateSharedProject:
         mock_application_repository.create.assert_called_once_with(
             session=mock_session,
             name="data-pipeline",
+            display_name=None,
             description="Analytics pipeline",
             project_type="shared",
             created_by="user-1",
@@ -395,3 +396,37 @@ class TestProjectServiceValidation:
 
         assert exc_info.value.code == 400
         assert exc_info.value.message == "Project description cannot exceed 500 characters"
+
+
+class TestProjectServiceValidateDisplayName:
+    """Unit tests for ProjectService._validate_display_name."""
+
+    def test_strips_leading_and_trailing_whitespace(self):
+        result = ProjectService._validate_display_name("  My Team  ")
+        assert result == "My Team"
+
+    def test_returns_value_unchanged_when_no_whitespace(self):
+        result = ProjectService._validate_display_name("My Team")
+        assert result == "My Team"
+
+    def test_accepts_exactly_150_characters(self):
+        name = "a" * 150
+        result = ProjectService._validate_display_name(name)
+        assert result == name
+
+    def test_raises_400_when_stripped_length_exceeds_150(self):
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            ProjectService._validate_display_name("x" * 151)
+        assert exc_info.value.code == 400
+        assert exc_info.value.message == "Project display name cannot exceed 150 characters"
+
+    def test_raises_400_for_151_chars_before_stripping(self):
+        # After stripping spaces the string is still 151 chars
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            ProjectService._validate_display_name(" " + "x" * 151 + " ")
+        assert exc_info.value.code == 400
+
+    def test_strips_first_then_validates_length(self):
+        # 152 chars total but only 150 after stripping 1 space on each side — should pass
+        result = ProjectService._validate_display_name(" " + "a" * 150 + " ")
+        assert len(result) == 150

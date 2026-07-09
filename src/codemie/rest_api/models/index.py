@@ -187,6 +187,7 @@ class SharePointIndexInfo(BaseModel):
 class IndexListItem(BaseModel):
     id: str
     project_name: str
+    display_name: Optional[str] = None
     repo_name: str
     index_type: str
     created_by: Optional[Dict] = None

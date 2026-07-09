@@ -106,6 +106,7 @@ class ProjectVisibilityService:
             enriched.append(
                 {
                     "name": project.name,
+                    "display_name": project.display_name,
                     "description": project.description,
                     "project_type": project.project_type,
                     "created_by": project.created_by,
@@ -182,6 +183,7 @@ class ProjectVisibilityService:
 
         return {
             "name": project.name,
+            "display_name": project.display_name,
             "description": project.description,
             "project_type": project.project_type,
             "created_by": project.created_by,

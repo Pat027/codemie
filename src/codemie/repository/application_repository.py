@@ -172,6 +172,7 @@ class ApplicationRepository:
         project_type: str = "shared",
         created_by: Optional[str] = None,
         cost_center_id: UUID | None = None,
+        display_name: Optional[str] = None,
     ) -> Application:
         """Create new application
 
@@ -181,6 +182,7 @@ class ApplicationRepository:
             description: Project description
             project_type: Project type ('shared' or 'personal')
             created_by: Creator user ID
+            display_name: Human-friendly display name for the project
 
         Returns:
             Created Application record
@@ -198,13 +200,14 @@ class ApplicationRepository:
             project_type=project_type,
             created_by=created_by,
             cost_center_id=cost_center_id,
+            display_name=display_name,
             date=now,
             update_date=now,
         )
         session.add(application)
         session.flush()
         session.refresh(application)
-        logger.debug("Created application: " f"name={name}, project_type={project_type}, created_by={created_by}")
+        logger.debug(f"Created application: name={name}, project_type={project_type}, created_by={created_by}")
         return application
 
     def get_or_create(self, session: Session, name: str) -> Application:
@@ -668,6 +671,7 @@ class ApplicationRepository:
         application: Application,
         *,
         name: Optional[str] = None,
+        display_name: Optional[str] = None,
         description: Optional[str] = None,
         cost_center_id: UUID | None = None,
     ) -> Application:
@@ -675,6 +679,8 @@ class ApplicationRepository:
         if name is not None:
             application.id = name
             application.name = name
+        if display_name is not None:
+            application.display_name = display_name
         if description is not None:
             application.description = description
         application.cost_center_id = cost_center_id
@@ -743,7 +749,7 @@ class ApplicationRepository:
         session.add(application)
         await session.flush()
         await session.refresh(application)
-        logger.debug("Created application: " f"name={name}, project_type={project_type}, created_by={created_by}")
+        logger.debug(f"Created application: name={name}, project_type={project_type}, created_by={created_by}")
         return application
 
     async def aget_all_non_deleted(self, session: AsyncSession) -> list[Application]:

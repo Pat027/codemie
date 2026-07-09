@@ -765,6 +765,16 @@ class AssistantBase(CommonBaseModel, Owned):
     def version(self, value: Optional[int]):
         self._version = value
 
+    @computed_field(return_type=Optional[str])
+    @property
+    def display_name(self) -> Optional[str]:
+        """Transient display_name field - not stored in database, populated at fetch time"""
+        return getattr(self, '_display_name', None)
+
+    @display_name.setter
+    def display_name(self, value: Optional[str]):
+        self._display_name = value
+
     def model_post_init(self, __context):
         """Initialize transient fields after model creation"""
         super().model_post_init(__context)
@@ -1017,6 +1027,26 @@ class Assistant(BaseModelWithSQLSupport, AssistantBase, table=True):
 
     # Version tracking field
     version_count: int = SQLField(default=1, index=True, sa_column_kwargs={"server_default": "1"})
+
+    @classmethod
+    def get_by_id(cls, id_: str) -> "Assistant":
+        from codemie.clients.postgres import get_session
+        from codemie.core.models import Application
+        from sqlmodel import select
+
+        with get_session() as session:
+            result = session.exec(
+                select(cls, Application.display_name)
+                .outerjoin(Application, cls.project == Application.name)
+                .where(cls.id == id_)
+            ).first()
+
+        if not result:
+            raise KeyError(f"No {cls.__tablename__} found with id {id_}")
+
+        assistant, display_name = result
+        assistant.display_name = display_name
+        return assistant
 
     def update_assistant(self, request: AssistantRequest, user: User, change_notes: Optional[str] = None):
         """

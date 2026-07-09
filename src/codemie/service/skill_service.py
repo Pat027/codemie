@@ -150,7 +150,7 @@ class SkillService:
     @staticmethod
     def _get_skill_or_raise(skill_id: str) -> Skill:
         """Load a skill or raise a standard not-found error."""
-        skill = SkillRepository.get_by_id(skill_id)
+        skill = Skill.find_by_id(skill_id)
         if not skill:
             raise ExtendedHTTPException(
                 code=status.HTTP_404_NOT_FOUND,
@@ -380,10 +380,8 @@ class SkillService:
         Validates user has read access based on visibility.
         """
         skill = SkillService._get_skill_or_raise(skill_id)
-
         SkillService._raise_if_no_access(user, skill, Action.READ)
 
-        # Get additional counts
         assistants_count = SkillRepository.count_assistants_using_skill(skill_id)
         user_abilities = SkillService.get_user_abilities(user, skill)
 

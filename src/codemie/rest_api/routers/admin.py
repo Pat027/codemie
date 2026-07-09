@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, status, Depends, BackgroundTasks
 from codemie.configs import config
 from codemie.core.models import (
     Application,
+    ApplicationInfo,
     ApplicationRequest,
     ApplicationsResponse,
     BaseResponse,
@@ -46,7 +47,7 @@ router = APIRouter(tags=["Admin"], prefix="/v1", dependencies=[Depends(authentic
 )
 def get_applications(search: str = None, limit: int = None):
     applications = Application.search_by_name(name_query=search, limit=limit)
-    result = [app.name for app in applications]
+    result = [ApplicationInfo(name=app.name, display_name=app.display_name) for app in applications]
 
     return ApplicationsResponse(applications=result)
 

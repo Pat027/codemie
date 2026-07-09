@@ -54,6 +54,7 @@ class CostCenterUpdateRequest(BaseModel):
 
 class LinkedProjectResponse(BaseModel):
     name: str
+    display_name: Optional[str] = None
     description: Optional[str] = None
     project_type: str
     created_by: Optional[str] = None
@@ -163,6 +164,7 @@ def get_cost_center_detail(
         linked_projects = [
             LinkedProjectResponse(
                 name=project.name,
+                display_name=project.display_name,
                 description=project.description,
                 project_type=project.project_type,
                 created_by=project.created_by,

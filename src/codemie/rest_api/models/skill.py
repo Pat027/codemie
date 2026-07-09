@@ -23,9 +23,10 @@ from __future__ import annotations
 
 from datetime import datetime, UTC
 from enum import Enum
+from typing import Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator
 from sqlalchemy import Index, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as SQLField, Column
@@ -444,6 +445,7 @@ class SkillDetailResponse(BaseModel):
     description: str
     content: str
     project: str
+    display_name: str | None = None
     visibility: SkillVisibility
     created_by: CreatedByUser | None = None
     categories: list[SkillCategory]
@@ -569,6 +571,36 @@ class Skill(BaseModelWithSQLSupport, SkillBase, table=True):
 
     __tablename__ = "skills"
 
+    @computed_field(return_type=Optional[str])
+    @property
+    def display_name(self) -> Optional[str]:
+        """Transient display_name field - not stored in database, populated at fetch time"""
+        return getattr(self, '_display_name', None)
+
+    @display_name.setter
+    def display_name(self, value: Optional[str]):
+        self._display_name = value
+
+    @classmethod
+    def get_by_id(cls, id_: str) -> "Skill":
+        from codemie.clients.postgres import get_session
+        from codemie.core.models import Application
+        from sqlmodel import select
+
+        with get_session() as session:
+            result = session.exec(
+                select(cls, Application.display_name)
+                .outerjoin(Application, cls.project == Application.name)
+                .where(cls.id == id_)
+            ).first()
+
+        if not result:
+            raise KeyError(f"No {cls.__tablename__} found with id {id_}")
+
+        skill, display_name = result
+        skill.display_name = display_name
+        return skill
+
     def to_list_response(
         self,
         is_attached: bool = False,
@@ -605,6 +637,7 @@ class Skill(BaseModelWithSQLSupport, SkillBase, table=True):
             description=self.description,
             content=self.content,
             project=self.project,
+            display_name=self.display_name,
             visibility=self.visibility,
             created_by=self.created_by,
             categories=[SkillCategory(c) for c in self.categories if c in [e.value for e in SkillCategory]],

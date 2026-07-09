@@ -41,6 +41,7 @@ class ProjectService:
     MIN_PROJECT_NAME_LENGTH: Final[int] = 3
     MAX_PROJECT_NAME_LENGTH: Final[int] = 100
     MAX_PROJECT_DESCRIPTION_LENGTH: Final[int] = 500
+    MAX_DISPLAY_NAME_LENGTH: Final[int] = 150
     PROJECT_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
     RESERVED_PROJECT_NAMES: Final[set[str]] = {
         "admin",
@@ -73,6 +74,8 @@ class ProjectService:
         # Description validation
         DESC_REQUIRED="Project description is required",
         DESC_TOO_LONG="Project description cannot exceed 500 characters",
+        # Display name validation
+        DISPLAY_NAME_TOO_LONG="Project display name cannot exceed 150 characters",
         # Project limits
         LIMIT_REACHED=(
             "Project creation limit reached ({count}/{limit}). Contact administrator to increase your limit."
@@ -99,11 +102,13 @@ class ProjectService:
         user: User,
         project_name: str,
         description: str,
+        display_name: str | None = None,
         cost_center_id: UUID | None = None,
     ) -> Application:
         """Create a shared project and grant creator project-admin membership."""
         validated_name = cls._validate_shared_project_name(project_name)
         validated_description = cls._validate_project_description(description)
+        validated_display_name = cls._validate_display_name(display_name) if display_name is not None else None
 
         with get_session() as session:
             cls._enforce_project_limit(session, user)
@@ -120,6 +125,7 @@ class ProjectService:
                 create_kwargs = {
                     "session": session,
                     "name": validated_name,
+                    "display_name": validated_display_name,
                     "description": validated_description,
                     "project_type": Application.ProjectType.SHARED,
                     "created_by": user.id,
@@ -153,6 +159,7 @@ class ProjectService:
         project_name: str,
         *,
         name: str | None = None,
+        display_name: str | None = None,
         description: str | None = None,
         cost_center_id: UUID | None = None,
         clear_cost_center: bool = False,
@@ -186,6 +193,10 @@ class ProjectService:
             if description is not None:
                 validated_description = cls._validate_project_description(description)
 
+            validated_display_name: str | None = None
+            if display_name is not None:
+                validated_display_name = cls._validate_display_name(display_name)
+
             resolved_cost_center_id: UUID | None = project.cost_center_id
             if cost_center_id is not None:
                 cost_center = cost_center_service.ensure_exists_for_project(session, cost_center_id)
@@ -197,6 +208,7 @@ class ProjectService:
                 session,
                 project,
                 name=validated_name,
+                display_name=validated_display_name,
                 description=validated_description,
                 cost_center_id=resolved_cost_center_id,
             )
@@ -258,6 +270,13 @@ class ProjectService:
             raise ExtendedHTTPException(code=400, message=cls.ERRORS.DESC_TOO_LONG)
 
         return description
+
+    @classmethod
+    def _validate_display_name(cls, display_name: str) -> str:
+        stripped = display_name.strip()
+        if len(stripped) > cls.MAX_DISPLAY_NAME_LENGTH:
+            raise ExtendedHTTPException(code=400, message=cls.ERRORS.DISPLAY_NAME_TOO_LONG)
+        return stripped
 
     @staticmethod
     def _enforce_project_limit(session: Session, user: User) -> None:

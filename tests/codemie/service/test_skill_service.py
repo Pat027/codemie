@@ -986,12 +986,11 @@ class TestGetSkill:
     """Test skill retrieval operations"""
 
     def test_get_skill_by_id_success(self, mock_repository, owner_user, sample_skill):
-        # Arrange
-        mock_repository.get_by_id.return_value = sample_skill
+        # Arrange — Skill.find_by_id is the entry point now (_get_skill_or_raise delegates to it)
         mock_repository.count_assistants_using_skill.return_value = 3
 
         # Act
-        with patch.object(SkillRepository, "get_by_id", mock_repository.get_by_id):
+        with patch.object(Skill, "find_by_id", return_value=sample_skill):
             with patch.object(
                 SkillRepository, "count_assistants_using_skill", mock_repository.count_assistants_using_skill
             ):
@@ -1004,28 +1003,53 @@ class TestGetSkill:
         assert "write" in result.user_abilities
         assert "delete" in result.user_abilities
 
+    def test_get_skill_by_id_includes_display_name(self, mock_repository, owner_user, sample_skill):
+        # Arrange — display_name is a transient @computed_field set by Skill.get_by_id JOIN
+        sample_skill.display_name = "My Project Display Name"
+        mock_repository.count_assistants_using_skill.return_value = 0
+
+        # Act
+        with patch.object(Skill, "find_by_id", return_value=sample_skill):
+            with patch.object(
+                SkillRepository, "count_assistants_using_skill", mock_repository.count_assistants_using_skill
+            ):
+                result = SkillService.get_skill_by_id(sample_skill.id, owner_user)
+
+        # Assert
+        assert result.display_name == "My Project Display Name"
+
+    def test_get_skill_by_id_display_name_none_when_project_has_none(self, mock_repository, owner_user, sample_skill):
+        # Arrange — project exists but has no display_name set
+        sample_skill.display_name = None
+        mock_repository.count_assistants_using_skill.return_value = 0
+
+        # Act
+        with patch.object(Skill, "find_by_id", return_value=sample_skill):
+            with patch.object(
+                SkillRepository, "count_assistants_using_skill", mock_repository.count_assistants_using_skill
+            ):
+                result = SkillService.get_skill_by_id(sample_skill.id, owner_user)
+
+        # Assert
+        assert result.display_name is None
+
     def test_get_skill_by_id_not_found(self, mock_repository, owner_user):
         # Arrange
-        mock_repository.get_by_id.return_value = None
-
-        # Act & Assert
-        with patch.object(SkillRepository, "get_by_id", mock_repository.get_by_id):
+        with patch.object(Skill, "find_by_id", return_value=None):
             with pytest.raises(ExtendedHTTPException) as exc_info:
                 SkillService.get_skill_by_id("nonexistent-id", owner_user)
 
         assert exc_info.value.code == status.HTTP_404_NOT_FOUND
 
     def test_get_skill_by_id_permission_denied(self, mock_repository, other_user, sample_skill):
-        # Arrange
-        mock_repository.get_by_id.return_value = sample_skill
+        # is_admin is resolved at User construction time (ENV=local → True in tests).
+        # Override it directly so the access check behaves like a non-admin user.
+        other_user.is_admin = False
+        with patch.object(Skill, "find_by_id", return_value=sample_skill):
+            with pytest.raises(ExtendedHTTPException) as exc_info:
+                SkillService.get_skill_by_id(sample_skill.id, other_user)
 
-        # Act & Assert - ensure user is not admin
-        with patch("codemie.rest_api.security.user.config.ENV", "production"):
-            with patch.object(SkillRepository, "get_by_id", mock_repository.get_by_id):
-                with pytest.raises(ExtendedHTTPException) as exc_info:
-                    SkillService.get_skill_by_id(sample_skill.id, other_user)
-
-            assert exc_info.value.code == status.HTTP_403_FORBIDDEN
+        assert exc_info.value.code == status.HTTP_403_FORBIDDEN
 
     def test_get_skills_by_ids_filters_by_access(
         self, mock_repository, owner_user, sample_skill, public_skill, project_skill
@@ -2042,7 +2066,7 @@ class TestGetCompanionFileFromRepo:
             content=b"hello from repo",
         )
 
-        with patch.object(SkillRepository, "get_by_id", return_value=skill):
+        with patch.object(Skill, "find_by_id", return_value=skill):
             with patch("codemie.service.skill_service.FileRepositoryFactory") as mock_factory:
                 mock_factory.get_current_repository.return_value = mock_repo
                 result = SkillService.get_companion_file(skill_id, "refs/guide.md", owner_user)
@@ -2057,7 +2081,7 @@ class TestGetCompanionFileFromRepo:
 
         mock_repo = MagicMock()
 
-        with patch.object(SkillRepository, "get_by_id", return_value=skill):
+        with patch.object(Skill, "find_by_id", return_value=skill):
             with patch("codemie.service.skill_service.FileRepositoryFactory") as mock_factory:
                 mock_factory.get_current_repository.return_value = mock_repo
                 result = SkillService.get_companion_file(skill_id, "refs/guide.md", owner_user)

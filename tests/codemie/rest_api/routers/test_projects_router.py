@@ -85,6 +85,7 @@ class TestProjectCreationEndpoint:
         mock_resolve_cost_center_name.return_value = None
         project = SimpleNamespace(
             name="data-pipeline",
+            display_name=None,
             description="Analytics pipeline",
             project_type="shared",
             created_by="user-1",
@@ -118,6 +119,7 @@ class TestProjectCreationEndpoint:
         mock_resolve_cost_center_name.return_value = None
         mock_project_service.create_shared_project.return_value = SimpleNamespace(
             name="data-pipeline",
+            display_name=None,
             description="Analytics pipeline",
             project_type="shared",
             created_by="user-1",
@@ -150,6 +152,7 @@ class TestProjectCreationEndpoint:
         mock_resolve_cost_center_name.return_value = "epm-cdme"
         mock_project_service.create_shared_project.return_value = SimpleNamespace(
             name="data-pipeline",
+            display_name=None,
             description="Analytics pipeline",
             project_type="shared",
             created_by="user-1",
@@ -1431,6 +1434,7 @@ class TestUpdateProjectEndpoint:
         mock_config.ENABLE_USER_MANAGEMENT = True
         updated_app = MagicMock()
         updated_app.name = "my-project"
+        updated_app.display_name = None
         updated_app.description = "new description"
         updated_app.project_type = "shared"
         updated_app.created_by = "user-1"
@@ -1451,6 +1455,7 @@ class TestUpdateProjectEndpoint:
             user=user,
             project_name="my-project",
             name=None,
+            display_name=None,
             description="new description",
             cost_center_id=None,
             clear_cost_center=False,
@@ -1468,6 +1473,7 @@ class TestUpdateProjectEndpoint:
         mock_config.ENABLE_USER_MANAGEMENT = True
         updated_app = MagicMock()
         updated_app.name = "my-project"
+        updated_app.display_name = None
         updated_app.description = ""
         updated_app.project_type = "shared"
         updated_app.created_by = "user-1"
@@ -1487,6 +1493,7 @@ class TestUpdateProjectEndpoint:
             user=user,
             project_name="my-project",
             name=None,
+            display_name=None,
             description=None,
             cost_center_id=cost_center_id,
             clear_cost_center=False,
@@ -1504,6 +1511,7 @@ class TestUpdateProjectEndpoint:
         mock_config.ENABLE_USER_MANAGEMENT = True
         updated_app = MagicMock()
         updated_app.name = "my-project"
+        updated_app.display_name = None
         updated_app.description = ""
         updated_app.project_type = "shared"
         updated_app.created_by = "user-1"
@@ -1522,6 +1530,7 @@ class TestUpdateProjectEndpoint:
             user=user,
             project_name="my-project",
             name=None,
+            display_name=None,
             description=None,
             cost_center_id=None,
             clear_cost_center=True,
@@ -1538,6 +1547,7 @@ class TestUpdateProjectEndpoint:
         mock_config.ENABLE_USER_MANAGEMENT = True
         updated_app = MagicMock()
         updated_app.name = "my-project"
+        updated_app.display_name = None
         updated_app.description = ""
         updated_app.project_type = "shared"
         updated_app.created_by = "user-1"
@@ -1556,6 +1566,7 @@ class TestUpdateProjectEndpoint:
             user=user,
             project_name="my-project",
             name=None,
+            display_name=None,
             description=None,
             cost_center_id=None,
             clear_cost_center=False,
@@ -2677,3 +2688,147 @@ class TestGetProjectSpends:
 
         assert mock_spend_repo.get_spend_for_period.call_args.kwargs["budget_category"] is None
         assert mock_spend_repo.get_spend_for_period.call_args.kwargs["spend_subject_type"] is None
+
+
+class TestProjectDisplayNameEndpoints:
+    """Tests for display_name field in create and update project endpoints."""
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.project_service")
+    @patch("codemie.rest_api.routers.projects._resolve_cost_center_name")
+    def test_create_project_with_display_name_passes_to_service(
+        self,
+        mock_resolve_cost_center_name,
+        mock_project_service,
+        mock_config,
+        regular_user,
+    ):
+        """display_name in create payload is forwarded to project_service."""
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        mock_resolve_cost_center_name.return_value = None
+        mock_project_service.create_shared_project.return_value = SimpleNamespace(
+            name="my-team",
+            display_name="My Team",
+            description="desc",
+            project_type="shared",
+            created_by="user-1",
+            date=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+
+        response = create_project(
+            payload=ProjectCreateRequest(name="my-team", description="desc", display_name="My Team"),
+            user=regular_user,
+        )
+
+        assert response.display_name == "My Team"
+        mock_project_service.create_shared_project.assert_called_once_with(
+            user=regular_user,
+            project_name="my-team",
+            description="desc",
+            display_name="My Team",
+        )
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.project_service")
+    @patch("codemie.rest_api.routers.projects._resolve_cost_center_name")
+    def test_create_project_without_display_name_omits_kwarg(
+        self,
+        mock_resolve_cost_center_name,
+        mock_project_service,
+        mock_config,
+        regular_user,
+    ):
+        """Omitting display_name does not pass the kwarg to project_service."""
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        mock_resolve_cost_center_name.return_value = None
+        mock_project_service.create_shared_project.return_value = SimpleNamespace(
+            name="my-team",
+            display_name=None,
+            description="desc",
+            project_type="shared",
+            created_by="user-1",
+            date=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+
+        create_project(
+            payload=ProjectCreateRequest(name="my-team", description="desc"),
+            user=regular_user,
+        )
+
+        call_kwargs = mock_project_service.create_shared_project.call_args.kwargs
+        assert "display_name" not in call_kwargs
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.project_service")
+    def test_update_project_with_display_name_passes_to_service(
+        self,
+        mock_project_service,
+        mock_config,
+    ):
+        """display_name in update payload is forwarded to project_service."""
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        updated_app = MagicMock()
+        updated_app.name = "my-project"
+        updated_app.display_name = "My Project"
+        updated_app.description = "desc"
+        updated_app.project_type = "shared"
+        updated_app.created_by = "user-1"
+        updated_app.date = datetime(2026, 1, 1, tzinfo=UTC)
+        updated_app.cost_center_id = None
+        mock_project_service.update_project.return_value = updated_app
+
+        user = MagicMock(id="user-1")
+        response = update_project(
+            payload=ProjectUpdateRequest(display_name="My Project"),
+            project_name="my-project",
+            user=user,
+        )
+
+        assert response.display_name == "My Project"
+        mock_project_service.update_project.assert_called_once_with(
+            user=user,
+            project_name="my-project",
+            name=None,
+            display_name="My Project",
+            description=None,
+            cost_center_id=None,
+            clear_cost_center=False,
+            enforce_member_spend_limits=None,
+        )
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.project_service")
+    def test_update_project_display_name_none_passes_through(
+        self,
+        mock_project_service,
+        mock_config,
+    ):
+        """display_name=None (omitted) passes None to project_service."""
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        updated_app = MagicMock()
+        updated_app.name = "my-project"
+        updated_app.display_name = None
+        updated_app.description = "desc"
+        updated_app.project_type = "shared"
+        updated_app.created_by = "user-1"
+        updated_app.date = datetime(2026, 1, 1, tzinfo=UTC)
+        updated_app.cost_center_id = None
+        mock_project_service.update_project.return_value = updated_app
+
+        user = MagicMock(id="user-1")
+        update_project(
+            payload=ProjectUpdateRequest(description="desc"),
+            project_name="my-project",
+            user=user,
+        )
+
+        mock_project_service.update_project.assert_called_once_with(
+            user=user,
+            project_name="my-project",
+            name=None,
+            display_name=None,
+            description="desc",
+            cost_center_id=None,
+            clear_cost_center=False,
+            enforce_member_spend_limits=None,
+        )

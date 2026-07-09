@@ -221,8 +221,7 @@ def get_prebuilt_workflow_by_slug(slug: str, user: User = Depends(authenticate))
 def get_workflow(workflow_id: str, user: User = Depends(authenticate)):
     try:
         workflow_config = workflow_service.get_workflow(workflow_id, user)
-    except Exception as e:
-        logger.error(str(e).strip())
+    except Exception:
         raise_not_found(resource_id=workflow_id, resource_type="Workflow")
 
     if not Ability(user).can(Action.READ, workflow_config):

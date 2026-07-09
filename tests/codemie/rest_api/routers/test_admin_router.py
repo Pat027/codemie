@@ -44,12 +44,15 @@ def _async_lock_cm(acquired: bool):
 
 
 def test_get_applications_returns_application_names():
-    applications = [SimpleNamespace(name="proj-a"), SimpleNamespace(name="proj-b")]
+    applications = [
+        SimpleNamespace(name="proj-a", display_name=None),
+        SimpleNamespace(name="proj-b", display_name=None),
+    ]
 
     with patch("codemie.rest_api.routers.admin.Application.search_by_name", return_value=applications):
         response = get_applications(search="proj", limit=2)
 
-    assert response.applications == ["proj-a", "proj-b"]
+    assert [app.name for app in response.applications] == ["proj-a", "proj-b"]
 
 
 def test_add_application_creates_application_and_emits_metric():

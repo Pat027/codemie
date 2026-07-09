@@ -55,21 +55,34 @@ def _get_user_response(user: User) -> UserResponse:
     F-10: When user management is enabled, queries DB directly for projects
     instead of relying on the security context indirection.
     """
-    if config.ENABLE_USER_MANAGEMENT:
-        from codemie.clients.postgres import get_session
-        from codemie.repository.user_project_repository import user_project_repository
+    from codemie.clients.postgres import get_session
+    from codemie.core.models import Application
+    from sqlmodel import select
 
-        with get_session() as session:
+    with get_session() as session:
+        if config.ENABLE_USER_MANAGEMENT:
+            from codemie.repository.user_project_repository import user_project_repository
+
             user_projects = user_project_repository.get_by_user_id(session, user.id)
-            projects = [
-                ProjectInfoResponse(name=p.project_name, is_project_admin=p.is_project_admin) for p in user_projects
-            ]
-    else:
-        # Legacy path: derive from security context (IDP mode)
-        projects = [
-            ProjectInfoResponse(name=name, is_project_admin=name in user.admin_project_names)
-            for name in user.project_names
-        ]
+            project_admin_map = {p.project_name: p.is_project_admin for p in user_projects}
+        else:
+            # Legacy path: derive from security context (IDP mode)
+            project_admin_map = {name: name in user.admin_project_names for name in user.project_names}
+
+        display_name_map = dict(
+            session.exec(
+                select(Application.name, Application.display_name).where(Application.name.in_(project_admin_map.keys()))
+            ).all()
+        )
+
+    projects = [
+        ProjectInfoResponse(
+            name=name,
+            display_name=display_name_map.get(name),
+            is_project_admin=is_admin,
+        )
+        for name, is_admin in project_admin_map.items()
+    ]
 
     return UserResponse(
         user_id=user.id,
