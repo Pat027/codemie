@@ -26,7 +26,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, case, func, select
 
 from codemie.configs.logger import logger
-from codemie.core.exceptions import ExtendedHTTPException
+from codemie.core.exceptions import ExtendedHTTPException, ValidationException
 from codemie.rest_api.models.category import Category
 
 # ============================================================================
@@ -71,20 +71,24 @@ class DatabaseCategoryService:
             categories = session.exec(select(Category).order_by(Category.name)).all()
             return list(categories)
 
-    def validate_category_ids(self, category_ids: List[str]) -> List[str]:
+    def validate_category_ids(self, category_ids: List[str], required: bool = False) -> List[str]:
         """
         Validate that all provided category IDs exist using optimized IN query.
 
         Args:
             category_ids: List of category IDs to validate
+            required: If True, raises ValidationException when empty list provided
 
         Returns:
             List of valid category IDs
 
         Raises:
-            ValueError: If any category ID is invalid
+            ValidationException: If required=True and no categories provided, or any category ID is invalid
+            ValueError: If required=False and any category ID is invalid (backward compatibility)
         """
         if not category_ids:
+            if required:
+                raise ValidationException("At least one category is required")
             return category_ids
 
         # Query only the specific categories we need and extract IDs
@@ -93,7 +97,10 @@ class DatabaseCategoryService:
         invalid_ids = list(set(category_ids) - valid_ids)
 
         if invalid_ids:
-            raise ValueError(f"Invalid category IDs: {invalid_ids}")
+            if required:
+                raise ValidationException(f"Invalid category IDs: {invalid_ids}")
+            else:
+                raise ValueError(f"Invalid category IDs: {invalid_ids}")
 
         return category_ids
 

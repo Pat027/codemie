@@ -136,7 +136,9 @@ class CategoriesRequest(BaseModel):
 class PublishToMarketplaceRequest(BaseModel):
     """Request model for publishing assistant to marketplace"""
 
-    categories: Optional[list[str]] = None
+    categories: list[str] = Field(
+        min_length=1, max_length=3, description="Category IDs for marketplace classification (1-3 required)"
+    )
     sub_assistants_settings: Optional[List[SubAssistantPublishSettings]] = Field(
         default_factory=list,
         description="Settings for each sub-assistant including marketplace visibility (is_global), "
@@ -825,6 +827,9 @@ def update_assistant(
         # Check if assistant is published to marketplace before update
         was_global = assistant.is_global
 
+        # Validate category IDs (required for marketplace assistants)
+        category_service.validate_category_ids(request.categories, required=was_global)
+
         # Extracting the guardrail_assignments before the update
         guardrail_assignments = request.guardrail_assignments
 
@@ -1343,7 +1348,7 @@ def publish_assistant_to_marketplace(
 
     # Get the assistant
     assistant = _get_assistant_by_id_or_raise(assistant_id)
-    _validate_publish_marketplace(assistant, user)
+    _validate_publish_marketplace(assistant, user, request.categories)
 
     # Set LiteLLM context with user's credentials
     from codemie.service.llm_service.utils import set_llm_context
@@ -1489,6 +1494,7 @@ def _apply_sub_assistant_settings(sub_assistant: Assistant, settings: Optional[S
 
     # Update categories if provided
     if settings.categories:
+        category_service.validate_category_ids(settings.categories, required=True)
         sub_assistant.categories = settings.categories
 
     return is_global
@@ -1603,16 +1609,18 @@ def _publish_sub_assistants(
     return published_count
 
 
-def _validate_publish_marketplace(assistant, user):
+def _validate_publish_marketplace(assistant, user, categories: list[str]):
     """
     Validate that an assistant can be published to the marketplace.
 
     This function checks:
     - User has write access to the assistant
     - Remote entities (e.g., Bedrock agents) exist if applicable
+    - Categories are valid and exist in the database
     """
     _check_user_can_access_assistant(user, assistant, "write", Action.WRITE)
     _validate_remote_entities_and_raise(assistant)
+    category_service.validate_category_ids(categories, required=True)
 
 
 @router.post(

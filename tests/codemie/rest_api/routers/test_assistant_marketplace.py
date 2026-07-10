@@ -320,6 +320,7 @@ async def test_publish_assistant_to_marketplace():
             return_value=quality_validation_mock,
         ),
         patch("codemie.service.monitoring.base_monitoring_service.send_log_metric"),
+        patch("codemie.service.assistant.category_service.category_service.validate_category_ids", return_value=None),
         patch.object(
             assistant_mock, "update", side_effect=lambda *args, **kwargs: setattr(assistant_mock, "is_global", True)
         ) as mock_update,
@@ -390,6 +391,7 @@ async def test_publish_assistant_with_subassistants():
         patch.object(sub1_mock, "update") as mock_update_sub1,
         patch.object(sub2_mock, "update") as mock_update_sub2,
         patch("codemie.rest_api.routers.assistant._track_assistant_management_metric"),
+        patch("codemie.service.assistant.category_service.category_service.validate_category_ids", return_value=None),
         patch(
             "codemie.rest_api.routers.assistant.AssistantGeneratorService.validate_assistant_for_publish",
             return_value=quality_validation_mock,
@@ -458,6 +460,7 @@ async def test_publish_assistant_with_subassistants_and_settings():
         patch.object(assistant_mock, "update") as mock_update_main,
         patch.object(sub1_mock, "update") as mock_update_sub1,
         patch("codemie.rest_api.routers.assistant._track_assistant_management_metric"),
+        patch("codemie.service.assistant.category_service.category_service.validate_category_ids", return_value=None),
         patch(
             "codemie.rest_api.routers.assistant.AssistantGeneratorService.validate_assistant_for_publish",
             return_value=quality_validation_mock,
@@ -539,3 +542,115 @@ async def test_unpublish_assistant_access_denied():
         mock_find.assert_called_once_with(assistant_id)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert "Access denied" in response.json()["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_publish_returns_422_when_categories_field_absent():
+    """Test that publishing without categories field returns 422."""
+    assistant_id = "456"
+
+    assistant_mock = MagicMock()
+    assistant_mock.id = assistant_id
+    assistant_mock.assistant_ids = []
+
+    with (
+        patch("codemie.rest_api.routers.assistant.Assistant.find_by_id", return_value=assistant_mock),
+        patch("codemie.core.ability.Ability.can", return_value=True),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as ac:
+            response = await ac.post(
+                f"/v1/assistants/{assistant_id}/marketplace/publish",
+                json={},  # No categories field
+                headers={"Authorization": "Bearer testtoken"},
+            )
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        result = response.json()
+        assert "categories" in str(result).lower()
+
+
+@pytest.mark.asyncio
+async def test_publish_returns_422_when_categories_is_empty_list():
+    """Test that publishing with empty categories list returns 422."""
+    assistant_id = "456"
+
+    assistant_mock = MagicMock()
+    assistant_mock.id = assistant_id
+    assistant_mock.assistant_ids = []
+
+    with (
+        patch("codemie.rest_api.routers.assistant.Assistant.find_by_id", return_value=assistant_mock),
+        patch("codemie.core.ability.Ability.can", return_value=True),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as ac:
+            response = await ac.post(
+                f"/v1/assistants/{assistant_id}/marketplace/publish",
+                json={"categories": []},
+                headers={"Authorization": "Bearer testtoken"},
+            )
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        result = response.json()
+        assert "categories" in str(result).lower()
+
+
+@pytest.mark.asyncio
+async def test_publish_returns_400_when_categories_contain_invalid_ids():
+    """Test that publishing with invalid category IDs returns 400."""
+    assistant_id = "456"
+    invalid_category_ids = ["non-existent-1", "non-existent-2"]
+
+    assistant_mock = MagicMock()
+    assistant_mock.id = assistant_id
+    assistant_mock.assistant_ids = []
+
+    with (
+        patch("codemie.rest_api.routers.assistant.Assistant.find_by_id", return_value=assistant_mock),
+        patch("codemie.core.ability.Ability.can", return_value=True),
+        patch("codemie.repository.category_repository.CategoryRepository.get_by_ids", return_value=[]),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as ac:
+            response = await ac.post(
+                f"/v1/assistants/{assistant_id}/marketplace/publish",
+                json={"categories": invalid_category_ids},
+                headers={"Authorization": "Bearer testtoken"},
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        result = response.json()
+        assert "invalid category" in str(result).lower()
+        assert "non-existent-1" in str(result) or "non-existent-2" in str(result)
+
+
+@pytest.mark.asyncio
+async def test_update_marketplace_assistant_requires_categories():
+    """Test that updating a marketplace assistant with empty categories fails."""
+    assistant_id = "456"
+
+    assistant_mock = MagicMock()
+    assistant_mock.id = assistant_id
+    assistant_mock.is_global = True  # Published to marketplace
+    assistant_mock.mcp_servers = []
+    assistant_mock.prompt_variables = []
+
+    with (
+        patch("codemie.rest_api.routers.assistant.Assistant.find_by_id", return_value=assistant_mock),
+        patch("codemie.core.ability.Ability.can", return_value=True),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as ac:
+            response = await ac.put(
+                f"/v1/assistants/{assistant_id}",
+                json={
+                    "name": "Updated Assistant",
+                    "description": "Updated description",
+                    "system_prompt": "Updated prompt",
+                    "llm_model_type": "gpt-4",
+                    "type": "codemie",
+                    "categories": [],  # Empty categories
+                },
+                headers={"Authorization": "Bearer testtoken"},
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        result = response.json()
+        assert "category" in str(result).lower() or "categories" in str(result).lower()
