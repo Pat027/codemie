@@ -31,6 +31,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import create_react_agent
 from pydantic import BaseModel
 
+from codemie.agents.langgraph_patches import _patch_generate_structured_response_node
 from codemie.agents.smart_tool_selector import SmartToolSelector
 from codemie.agents.smart_tool_state import SmartToolState, ToolRegistry
 from codemie.configs import config
@@ -137,7 +138,7 @@ def _create_standard_react_agent(
     if parallel_tool_calls is not None:
         agent_model = model.bind_tools(tools, parallel_tool_calls=parallel_tool_calls)
 
-    return create_react_agent(
+    compiled = create_react_agent(
         model=agent_model,
         tools=tools,
         prompt=prompt,
@@ -145,6 +146,8 @@ def _create_standard_react_agent(
         name=name,
         pre_model_hook=pre_model_hook,
     )
+    _patch_generate_structured_response_node(compiled)
+    return compiled
 
 
 def _build_smart_react_workflow(
@@ -351,14 +354,16 @@ def _create_sub_agent(
     # Create agent with selected tools
     # IMPORTANT: This creates a NEW agent instance with only selected tools
     # and preserves response_format for structured output
-    return create_react_agent(
+    compiled = create_react_agent(
         model=agent_model,
         tools=available_tools,
         prompt=prompt,
-        response_format=response_format,  # ✅ Structured output preserved
+        response_format=response_format,
         name=name,
         pre_model_hook=pre_model_hook,
     )
+    _patch_generate_structured_response_node(compiled)
+    return compiled
 
 
 def _determine_next_step(state: SmartToolState) -> Literal["tool_selection", "agent", END]:
