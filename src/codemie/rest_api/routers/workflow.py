@@ -16,7 +16,7 @@ import base64
 import json
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, status, Depends, Query, BackgroundTasks
+from fastapi import APIRouter, status, Depends, Query, BackgroundTasks, Request
 
 from codemie.configs import logger
 from codemie.core.ability import Ability, Action
@@ -24,12 +24,13 @@ from codemie.rest_api.models.assistant import MCPServerDetails
 from codemie.service.mcp.access_control import MCPAccessControlService
 from codemie.core.constants import MermaidMimeType
 from codemie.core.exceptions import ExtendedHTTPException, ValidationException
-from codemie.core.models import BaseResponse, BaseResponseWithData, CreatedByUser
+from codemie.core.models import BaseResponse, BaseResponseWithData, CreatedByUser, EvaluationResponse
 from codemie.core.workflow_models import (
     CreateWorkflowRequest,
     UpdateWorkflowRequest,
     WorkflowConfig,
     WorkflowConfigTemplate,
+    WorkflowEvaluationRequest,
     WorkflowListResponse,
     WorkflowErrorFormat,
 )
@@ -43,6 +44,7 @@ from codemie.service.guardrail.guardrail_service import GuardrailService
 from codemie.service.workflow_config import WorkflowConfigIndexService
 from codemie.service.workflow_config.workflow_config_index_service import WorkflowScope
 from codemie.service.workflow_service import WorkflowService
+from codemie.service.workflow_evaluation_service import WorkflowEvaluationService
 from codemie.workflows.custom_node_info import CustomNodeInfoService
 from codemie.core.workflow_models import CustomNodeSchemaResponse
 from codemie.workflows.workflow import WorkflowExecutor
@@ -431,6 +433,48 @@ def create_workflow_diagram(request: CreateWorkflowRequest, user: User = Depends
         data=f"data:{MermaidMimeType.SVG.value};base64,{b64_diagram}",
         message="Workflow diagram generated successfully",
     )
+
+
+@router.post(
+    "/workflows/{workflow_id}/evaluate",
+    status_code=status.HTTP_200_OK,
+    response_model=EvaluationResponse,
+)
+def evaluate_workflow(
+    workflow_id: str,
+    request: WorkflowEvaluationRequest,
+    raw_request: Request,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(authenticate),
+):
+    """
+    Evaluate a workflow against a dataset of inputs from Langfuse.
+
+    Runs every item in the dataset through the workflow and records the results as a
+    named experiment in Langfuse. Eager validation returns an immediate response; the
+    item-by-item execution runs in the background.
+    """
+    try:
+        workflow_config = workflow_service.get_workflow(workflow_id, user)
+    except Exception as e:
+        logger.error(str(e).strip())
+        raise_not_found(resource_id=workflow_id, resource_type="Workflow")
+
+    if not Ability(user).can(Action.READ, workflow_config):
+        raise_access_denied("evaluate")
+
+    evaluation_response = WorkflowEvaluationService.evaluate_workflow(
+        workflow_config=workflow_config,
+        dataset_id=request.dataset_id,
+        experiment_name=request.experiment_name,
+        max_concurrency=request.max_concurrency,
+        background_tasks=background_tasks,
+        user=user,
+        raw_request=raw_request,
+    )
+    logger.info(f"Workflow evaluation task started for experiment: {request.experiment_name}")
+
+    return evaluation_response
 
 
 def update_workflow_schema(workflow_config, user):

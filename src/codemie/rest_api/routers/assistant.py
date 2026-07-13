@@ -38,9 +38,10 @@ from codemie.core.models import (
     BaseModelResponse,
     AssistantChatRequest,
     AssistantEvaluationRequest,
+    EvaluationResponse,
 )
 from codemie.rest_api.models.guardrail import GuardrailEntity, GuardrailSource
-from codemie.service.assistant_evaluation_service import AssistantEvaluationService, EvaluationResponse
+from codemie.service.assistant_evaluation_service import AssistantEvaluationService
 from codemie.rest_api.handlers.assistant_handlers import get_request_handler, ChatHistoryData
 from codemie.rest_api.models.assistant import (
     Assistant,

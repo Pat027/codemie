@@ -21,17 +21,10 @@ from fastapi import BackgroundTasks, Request
 from codemie.configs import logger
 from codemie.enterprise.langfuse import require_langfuse_client
 from codemie.core.exceptions import ExtendedHTTPException
-from codemie.core.models import AssistantChatRequest, BaseResponse
+from codemie.core.models import AssistantChatRequest, EvaluationResponse
 from codemie.rest_api.handlers.assistant_handlers import get_request_handler
 from codemie.rest_api.models.assistant import Assistant
 from codemie.rest_api.security.user import User
-
-
-class EvaluationResponse(BaseResponse):
-    """Response model for evaluation endpoints."""
-
-    message: str
-    experiment_name: str
 
 
 class AssistantEvaluationService:

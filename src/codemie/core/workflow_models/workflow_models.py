@@ -433,3 +433,9 @@ class UpdateWorkflowRequest(BaseModel):
     supervisor_prompt: Optional[str] = None
     meta_config: Optional[str] = None
     guardrail_assignments: Optional[List[GuardrailAssignmentItem]] = None
+
+
+class WorkflowEvaluationRequest(BaseModel):
+    dataset_id: str
+    experiment_name: str
+    max_concurrency: int = Field(default=1, ge=1, le=5)

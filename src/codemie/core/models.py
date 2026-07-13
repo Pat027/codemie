@@ -705,6 +705,12 @@ class BaseModelResponse(ConfiguredModel):
     )
 
 
+class EvaluationResponse(BaseResponse):
+    """Response model for evaluation endpoints."""
+
+    experiment_name: str
+
+
 class InfoResponse(BaseResponse):
     version: str
     description: str

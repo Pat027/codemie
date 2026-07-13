@@ -27,6 +27,7 @@ from codemie.core.workflow_models import (
     WorkflowConfigTemplate,
     CreateWorkflowRequest,
     UpdateWorkflowRequest,
+    WorkflowEvaluationRequest,
     WorkflowMode,
 )
 from codemie.rest_api.main import app
@@ -144,6 +145,15 @@ def assistant_chat_request():
         conversation_id="conv_123",
         stream=True,
         llm_model="Test Model",
+    )
+
+
+@pytest.fixture
+def workflow_evaluation_request():
+    return WorkflowEvaluationRequest(
+        dataset_id="ds-1",
+        experiment_name="exp-1",
+        max_concurrency=2,
     )
 
 
@@ -786,3 +796,116 @@ async def test_get_workflow_users(mock_get_users, request_header):
     assert response.json()[0]["name"] == "User One"
     assert response.json()[1]["id"] == "user2"
     mock_get_users.assert_called_once_with(user=user, scope=None)
+
+
+@pytest.mark.asyncio
+async def test_evaluate_workflow_success(workflow_config, workflow_evaluation_request, request_header):
+    from codemie.core.models import EvaluationResponse
+
+    with (
+        patch(
+            "codemie.service.workflow_service.WorkflowService.get_workflow",
+            return_value=workflow_config,
+        ),
+        patch("codemie.core.ability.Ability.can", return_value=True),
+        patch(
+            "codemie.rest_api.routers.workflow.WorkflowEvaluationService.evaluate_workflow",
+            return_value=EvaluationResponse(message="queued", experiment_name="exp-1"),
+        ) as mock_evaluate,
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            response = await ac.post(
+                f"/v1/workflows/{workflow_config.id}/evaluate",
+                json=workflow_evaluation_request.model_dump(),
+                headers=request_header,
+            )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["experimentName"] == "exp-1"
+    mock_evaluate.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_evaluate_workflow_not_found(workflow_config, workflow_evaluation_request, request_header):
+    with patch(
+        "codemie.service.workflow_service.WorkflowService.get_workflow",
+        side_effect=Exception("Workflow not found"),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            response = await ac.post(
+                f"/v1/workflows/{workflow_config.id}/evaluate",
+                json=workflow_evaluation_request.model_dump(),
+                headers=request_header,
+            )
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_evaluate_workflow_access_denied(workflow_config, workflow_evaluation_request, request_header):
+    with (
+        patch(
+            "codemie.service.workflow_service.WorkflowService.get_workflow",
+            return_value=workflow_config,
+        ),
+        patch("codemie.core.ability.Ability.can", return_value=False),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            response = await ac.post(
+                f"/v1/workflows/{workflow_config.id}/evaluate",
+                json=workflow_evaluation_request.model_dump(),
+                headers=request_header,
+            )
+
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_evaluate_workflow_langfuse_unavailable(workflow_config, workflow_evaluation_request, request_header):
+    with (
+        patch(
+            "codemie.service.workflow_service.WorkflowService.get_workflow",
+            return_value=workflow_config,
+        ),
+        patch("codemie.core.ability.Ability.can", return_value=True),
+        patch(
+            "codemie.rest_api.routers.workflow.WorkflowEvaluationService.evaluate_workflow",
+            side_effect=ExtendedHTTPException(code=503, message="LangFuse not available"),
+        ),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            response = await ac.post(
+                f"/v1/workflows/{workflow_config.id}/evaluate",
+                json=workflow_evaluation_request.model_dump(),
+                headers=request_header,
+            )
+
+    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_evaluate_workflow_dataset_not_found(workflow_config, workflow_evaluation_request, request_header):
+    with (
+        patch(
+            "codemie.service.workflow_service.WorkflowService.get_workflow",
+            return_value=workflow_config,
+        ),
+        patch("codemie.core.ability.Ability.can", return_value=True),
+        patch(
+            "codemie.rest_api.routers.workflow.WorkflowEvaluationService.evaluate_workflow",
+            side_effect=ExtendedHTTPException(code=400, message="Cannot find dataset"),
+        ),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            response = await ac.post(
+                f"/v1/workflows/{workflow_config.id}/evaluate",
+                json=workflow_evaluation_request.model_dump(),
+                headers=request_header,
+            )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
