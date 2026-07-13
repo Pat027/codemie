@@ -29,7 +29,7 @@ ENV PATH="$POETRY_HOME/bin:$VIRTUAL_ENV/bin:$PATH"
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    curl=8.14.1-2+deb13u3 \
+    curl=8.14.1-2+deb13u4 \
     libimage-exiftool-perl=13.25+dfsg-1 \
     gcc=4:14.2.0-1 \
     freetds-dev=1.3.17+ds-2+deb13u1 \
@@ -104,7 +104,7 @@ ENV PATH="$POETRY_HOME/bin:$VIRTUAL_ENV/bin:$PATH"
 # hadolint ignore=DL3008
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    curl=8.14.1-2+deb13u3 \
+    curl=8.14.1-2+deb13u4 \
     freetds-bin=1.3.17+ds-2+deb13u1 \
     unixodbc=2.3.12-2 \
     libpango1.0-dev=1.56.3-1 \
