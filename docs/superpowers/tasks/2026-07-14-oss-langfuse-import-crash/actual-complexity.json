@@ -1,0 +1,70 @@
+{
+  "task": "Fix OSS build startup crash by moving top-level langfuse import in workflow_evaluation_service.py under TYPE_CHECKING guard",
+  "generated": "2026-07-14T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 1,
+      "label": "XS",
+      "affected": "WorkflowEvaluationService",
+      "layers": "Service"
+    },
+    "requirements_clarity": {
+      "score": 1,
+      "label": "XS",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 1,
+      "label": "XS",
+      "risk_factors": null,
+      "mitigation": null
+    },
+    "file_change_estimate": {
+      "score": 2,
+      "label": "S",
+      "modified_files": 1,
+      "modified_file_list": [
+        "src/codemie/service/workflow_evaluation_service.py"
+      ],
+      "new_files": 1,
+      "new_file_list": [
+        "tests/codemie/service/test_workflow_evaluation_service_import.py"
+      ],
+      "affected_dirs": [
+        "src/codemie/service",
+        "tests/codemie/service"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 1,
+      "label": "XS",
+      "layers_changed": ["Service"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 7,
+  "size": "XS",
+  "band_range": "6-9",
+  "files_changed": 2,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "file_change_estimate",
+      "reason": "2 files changed per diffstat (instructions mapping: 2-3 files = S); 1 modified service file and 1 new regression test file spanning 2 directories"
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "Single service component (WorkflowEvaluationService) touched; the change is purely an import guard shuffle with no functional behaviour change and no layer boundary crossings"
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

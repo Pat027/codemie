@@ -16,10 +16,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 
 from fastapi import BackgroundTasks, Request
 
-from langfuse.experiment import ExperimentItem
+if TYPE_CHECKING:
+    from langfuse.experiment import ExperimentItem
 
 from codemie.configs import logger
 from codemie.core.exceptions import ExtendedHTTPException
