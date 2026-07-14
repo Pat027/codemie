@@ -24,7 +24,7 @@ from codemie.service.provider.provider_tool_factory import (
 )
 from codemie.rest_api.models.provider import Provider, ProviderConfiguration, ProviderToolkit, ProviderToolArgument
 from codemie.rest_api.models.index import ProviderIndexInfo
-from codemie.rest_api.security.user import User
+from codemie.rest_api.security.user import User, UserContext
 from codemie.configs import config
 
 
@@ -139,6 +139,13 @@ def test_built_execute_method(
     assert invocation_request.configuration.configuration_type == "tool_invocation"
     assert invocation_request.configuration.parameters == {}
     assert invocation_request.parameters == {"param1": "test_param1", "param2": 42}
+    # UserContext assertions: fixture user is User(id="tool_user", auth_token="123")
+    fixture_user = tool_params["user"]
+    expected_user_context = UserContext.from_user(fixture_user).model_dump()
+    assert invocation_request.user_context == expected_user_context
+    assert invocation_request.user_context["id"] == "tool_user"
+    assert "auth_token" not in invocation_request.user_context
+    assert "tenant_id" not in invocation_request.user_context
 
 
 @patch("codemie.clients.provider.client.Configuration", return_value=MagicMock())

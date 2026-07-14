@@ -76,6 +76,24 @@
         "callback_url": {
           "type": "string",
           "description": "URL to which the tool invocation response will be sent. Required if async is true."
+        },
+        "user_context": {
+          "type": "object",
+          "description": "Non-sensitive profile of the authenticated user who initiated the invocation. Optional; absent on legacy requests. May differ from user_id, which identifies the data source owner. Never contains credentials or tokens.",
+          "properties": {
+            "id": {"type": "string"},
+            "username": {"type": "string"},
+            "name": {"type": "string"},
+            "email": {"type": "string"},
+            "roles": {"type": "array", "items": {"type": "string"}},
+            "is_admin": {"type": "boolean"},
+            "is_maintainer": {"type": "boolean"},
+            "user_type": {"type": "string"},
+            "project_names": {"type": "array", "items": {"type": "string"}},
+            "admin_project_names": {"type": "array", "items": {"type": "string"}},
+            "knowledge_bases": {"type": "array", "items": {"type": "string"}},
+            "picture": {"type": "string"}
+          }
         }
       },
       "required": [

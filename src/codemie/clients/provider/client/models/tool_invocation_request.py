@@ -40,6 +40,11 @@ class ToolInvocationRequest(BaseModel):
     callback_url: Optional[StrictStr] = Field(
         default=None, description="URL to which the tool invocation response will be sent. Required if async is true."
     )
+    user_context: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Non-sensitive profile of the authenticated user who initiated the invocation. "
+        "Optional; absent on legacy requests. May differ from user_id, which identifies the data source owner.",
+    )
     __properties: ClassVar[List[str]] = [
         "user_id",
         "project_id",
@@ -47,6 +52,7 @@ class ToolInvocationRequest(BaseModel):
         "parameters",
         "async",
         "callback_url",
+        "user_context",
     ]
 
     model_config = ConfigDict(
@@ -110,6 +116,7 @@ class ToolInvocationRequest(BaseModel):
                 "parameters": obj.get("parameters"),
                 "async": obj.get("async") if obj.get("async") is not None else False,
                 "callback_url": obj.get("callback_url"),
+                "user_context": obj.get("user_context"),
             }
         )
         return _obj

@@ -52,6 +52,7 @@ from codemie.service.mcp.client import MCPConnectClient
 from codemie.service.mcp.auth_protocol import AuthResolverProtocol
 from codemie.service.security.token_exchange_service import token_exchange_service
 from codemie.service.security.token_providers.base_provider import BrokerAuthRequiredException
+from codemie.rest_api.security.user import UserContext
 from codemie.service.mcp.models import MCPServerConfig, MCPToolLoadException, MCPExecutionContext
 from codemie.service.mcp.toolkit import MCPToolkit, MCPToolkitFactory, MCPTool, ContextAwareMCPTool
 from codemie.service.settings.base_settings import SearchFields
@@ -228,6 +229,7 @@ class MCPToolkitService:
         if not mcp_servers:
             return []
 
+        current_user = get_current_user()
         execution_context = MCPExecutionContext(
             user_id=user_id,
             assistant_id=assistant_id,
@@ -237,6 +239,7 @@ class MCPToolkitService:
             conversation_id=conversation_id,
             session_binding_hash=cls._get_current_session_binding_hash(),
             request_headers=request_headers,
+            user_context=UserContext.from_user(current_user) if current_user else None,
         )
 
         tools, auth_failures, discovery_candidates = cls._collect_server_results(

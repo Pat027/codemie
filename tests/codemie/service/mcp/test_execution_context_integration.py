@@ -33,6 +33,7 @@ from codemie.service.mcp.toolkit import MCPTool, ContextAwareMCPTool, MCPToolkit
 from codemie.service.mcp.toolkit_service import MCPToolkitService
 from codemie.service.mcp.client import MCPConnectClient
 from codemie.rest_api.models.assistant import MCPServerDetails
+from codemie.rest_api.security.user import User
 
 
 class TestMCPExecutionContextIntegration:
@@ -430,3 +431,68 @@ class TestMCPExecutionContextIntegration:
         # Verify execution completed successfully
         assert result.isError is False
         assert result.content[0].text == "Context verified"
+
+    @patch('codemie.service.mcp.toolkit_service.MCPToolkitService._process_single_mcp_server')
+    @patch('codemie.service.mcp.toolkit_service.MCPToolkitService.get_instance')
+    @patch(
+        'codemie.service.mcp.toolkit_service.get_current_user',
+        return_value=User(id="user-123", username="jdoe", email="jdoe@example.com"),
+    )
+    def test_get_mcp_server_tools_propagates_user_context(
+        self,
+        _mock_get_current_user,
+        mock_get_instance,
+        mock_process_single_server,
+        sample_mcp_server_details,
+        sample_execution_context,
+        sample_mcp_tool,
+    ):
+        """get_mcp_server_tools() populates user_context from the current user contextvar."""
+        mock_toolkit_service = MagicMock()
+        mock_get_instance.return_value = mock_toolkit_service
+
+        context_aware_tool = ContextAwareMCPTool(sample_mcp_tool, sample_execution_context)
+        mock_process_single_server.return_value = [context_aware_tool]
+
+        MCPToolkitService.get_mcp_server_tools(
+            mcp_servers=[sample_mcp_server_details],
+            user_id="user-123",
+            project_name="test-project",
+        )
+
+        mock_process_single_server.assert_called_once()
+        execution_context = mock_process_single_server.call_args[1]['execution_context']
+
+        assert execution_context.user_context is not None
+        assert execution_context.user_context.id == "user-123"
+        assert execution_context.user_context.email == "jdoe@example.com"
+
+    @patch('codemie.service.mcp.toolkit_service.MCPToolkitService._process_single_mcp_server')
+    @patch('codemie.service.mcp.toolkit_service.MCPToolkitService.get_instance')
+    @patch('codemie.service.mcp.toolkit_service.get_current_user', return_value=None)
+    def test_get_mcp_server_tools_user_context_none_when_no_user(
+        self,
+        _mock_get_current_user,
+        mock_get_instance,
+        mock_process_single_server,
+        sample_mcp_server_details,
+        sample_execution_context,
+        sample_mcp_tool,
+    ):
+        """get_mcp_server_tools() sets user_context to None when no user is in context."""
+        mock_toolkit_service = MagicMock()
+        mock_get_instance.return_value = mock_toolkit_service
+
+        context_aware_tool = ContextAwareMCPTool(sample_mcp_tool, sample_execution_context)
+        mock_process_single_server.return_value = [context_aware_tool]
+
+        MCPToolkitService.get_mcp_server_tools(
+            mcp_servers=[sample_mcp_server_details],
+            user_id="user-123",
+            project_name="test-project",
+        )
+
+        mock_process_single_server.assert_called_once()
+        execution_context = mock_process_single_server.call_args[1]['execution_context']
+
+        assert execution_context.user_context is None

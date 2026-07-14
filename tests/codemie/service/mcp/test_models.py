@@ -23,6 +23,7 @@ from pydantic import ValidationError
 
 import codemie.service.mcp.models as _mcp_models
 from codemie.configs.mcp_commands_config import mcp_commands_config
+from codemie.rest_api.security.user import UserContext
 from codemie.service.mcp.models import (
     MCPServerConfig,
     MCPToolDefinition,
@@ -81,6 +82,7 @@ class TestMCPExecutionContext:
             "project_name": None,
             "workflow_execution_id": None,
             "request_headers": None,
+            "user_context": None,
         }
         assert fields == expected
 
@@ -100,6 +102,7 @@ class TestMCPExecutionContext:
             "project_name": "test-project",
             "workflow_execution_id": "workflow-789",
             "request_headers": None,
+            "user_context": None,
         }
         assert fields == expected
 
@@ -132,6 +135,7 @@ class TestMCPExecutionContext:
             "project_name": "test-project",
             "workflow_execution_id": None,
             "request_headers": None,
+            "user_context": None,
         }
         assert fields == expected
 
@@ -169,6 +173,30 @@ class TestMCPExecutionContext:
         assert fields["assistant_id"] == "assistant-456"
         assert fields["project_name"] == ""
         assert fields["workflow_execution_id"] is None
+
+    def test_to_request_fields_user_context_propagated(self):
+        """user_context is included in to_request_fields() and coerced back on MCPToolInvocationRequest."""
+        user_ctx = UserContext(id="u1", email="u1@example.com")
+        context = MCPExecutionContext(user_context=user_ctx)
+
+        fields = context.to_request_fields()
+
+        # user_context is present in the serialized dict as a nested dict
+        assert "user_context" in fields
+        assert fields["user_context"] is not None
+        assert fields["user_context"]["id"] == "u1"
+        assert fields["user_context"]["email"] == "u1@example.com"
+
+        # MCPToolInvocationRequest accepts **fields and coerces the nested dict back to UserContext
+        request = MCPToolInvocationRequest(
+            serverPath="npx",
+            args=[],
+            params={},
+            **fields,
+        )
+        assert isinstance(request.user_context, UserContext)
+        assert request.user_context.id == "u1"
+        assert request.user_context.email == "u1@example.com"
 
 
 class TestMCPServerConfig:

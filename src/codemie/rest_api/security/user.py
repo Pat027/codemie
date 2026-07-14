@@ -116,3 +116,41 @@ class User(BaseModel):
 
     def as_user_model(self) -> UserEntity:
         return UserEntity(user_id=self.id, name=self.name, username=self.username)
+
+
+class UserContext(BaseModel):
+    """Non-sensitive user profile forwarded to downstream tool invocations (DSP and MCP).
+
+    Describes the authenticated initiator of the current request. Never includes
+    credentials or internal identifiers (auth_token, tenant_id).
+    """
+
+    id: str | None = None
+    username: str | None = None
+    name: str | None = None
+    email: str | None = None
+    roles: list[str] | None = None
+    is_admin: bool | None = None
+    is_maintainer: bool | None = None
+    user_type: str | None = None
+    project_names: list[str] | None = None
+    admin_project_names: list[str] | None = None
+    knowledge_bases: list[str] | None = None
+    picture: str | None = None
+
+    @classmethod
+    def from_user(cls, user: "User") -> "UserContext":
+        return cls(
+            id=user.id,
+            username=user.username,
+            name=user.name,
+            email=user.email,
+            roles=user.roles,
+            is_admin=user.is_admin,
+            is_maintainer=user.is_maintainer,
+            user_type=user.user_type,
+            project_names=user.project_names,
+            admin_project_names=user.admin_project_names,
+            knowledge_bases=user.knowledge_bases,
+            picture=user.picture,
+        )

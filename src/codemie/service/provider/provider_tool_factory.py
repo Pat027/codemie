@@ -21,7 +21,7 @@ from codemie.agents.utils import sanitize_datasource_name
 from codemie.clients.provider import client as provider_client
 from codemie.rest_api.models.provider import ProviderBase, ProviderToolkit
 from codemie.rest_api.models.index import ProviderIndexInfo
-from codemie.rest_api.security.user import User
+from codemie.rest_api.security.user import User, UserContext
 from codemie.service.provider.util import decrypt_datasource_provider_fields
 from codemie.service.provider.datasource import ProviderDatasourceSchemaService
 from codemie.service.provider.provider_header_context import ProviderHeaderContext
@@ -172,6 +172,7 @@ class ProviderToolFactory:
                 parameters=configuration_params,
             ),
             parameters=params,
+            user_context=UserContext.from_user(user).model_dump(exclude_none=True),
         )
 
         merged_headers = {**(headers or {}), **get_traceparent_headers()}

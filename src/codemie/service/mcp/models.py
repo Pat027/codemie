@@ -29,6 +29,7 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from codemie.configs.mcp_commands_config import mcp_commands_config
+from codemie.rest_api.security.user import UserContext
 
 
 class MCPExecutionContext(BaseModel):
@@ -99,6 +100,13 @@ class MCPExecutionContext(BaseModel):
         "Excluded from ALL model serialization (model_dump / model_dump_json) via "
         "Field(exclude=True) to prevent credential leakage. "
         "Merged into mcp_headers at request build time by MCPConnectClient (Story 3.4).",
+    )
+    user_context: UserContext | None = Field(
+        None,
+        repr=False,
+        description="Non-sensitive profile of the authenticated initiator, resolved from the request "
+        "context. Forwarded to MCP servers via MCPToolInvocationRequest. May differ from user_id, "
+        "which can identify a resource owner.",
     )
 
     def to_request_fields(self) -> dict[str, Any]:
@@ -433,6 +441,11 @@ class MCPToolInvocationRequest(BaseModel):
     workflow_execution_id: str | None = Field(None, description="Identifier for the workflow execution")
     request_headers: dict[str, str] | None = Field(
         None, description="Custom HTTP headers from the original request to propagate to MCP servers"
+    )
+    user_context: UserContext | None = Field(
+        None,
+        description="Non-sensitive profile of the authenticated user who initiated the invocation. "
+        "Optional; absent on legacy requests.",
     )
 
 

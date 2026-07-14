@@ -220,6 +220,7 @@ class TestMCPExecutionContextAuthHeaders:
             "project_name": "proj",
             "workflow_execution_id": "wf1",
             "request_headers": {"X-Req": "val"},
+            "user_context": None,
         }
 
     def test_to_request_fields_without_auth_headers_matches_previous_contract(self):
@@ -240,6 +241,7 @@ class TestMCPExecutionContextAuthHeaders:
             "project_name": "proj",
             "workflow_execution_id": "wf-789",
             "request_headers": None,
+            "user_context": None,
         }
 
     def test_auth_headers_none_also_excluded_from_request_fields(self):

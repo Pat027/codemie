@@ -134,11 +134,7 @@ def _wrapped_client_value_error_tool_load_error(server_name: str, status_code: i
 
 
 def _build_user() -> User:
-    user = MagicMock(spec=User)
-    user.id = "user-1"
-    user.name = "Test User"
-    user.username = "test.user"
-    return user
+    return User(id="user-1", name="Test User", username="test.user")
 
 
 def test_mcp_server_config_repr_redacts_discovery_sensitive_fields() -> None:
