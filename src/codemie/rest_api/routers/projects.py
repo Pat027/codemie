@@ -677,7 +677,11 @@ def create_project(payload: ProjectCreateRequest, user: User = Depends(authentic
 @router.get("/projects", response_model=PaginatedProjectListResponse)
 async def list_projects(
     search: Optional[str] = Query(
-        None, description="Search by project name or description (substring match, visibility-filtered)"
+        None,
+        description=(
+            "Search by display name (falling back to technical name when unset) or "
+            "description (substring match, visibility-filtered)"
+        ),
     ),
     page: int = Query(0, ge=0, description="Page number (0-indexed)"),
     per_page: int = Query(20, ge=10, le=100, description="Items per page (10-100)"),
