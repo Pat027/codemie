@@ -860,7 +860,7 @@ async def test_evaluate_workflow_access_denied(workflow_config, workflow_evaluat
                 headers=request_header,
             )
 
-    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+    assert response.status_code == status.HTTP_403_FORBIDDEN
 
 
 @pytest.mark.asyncio

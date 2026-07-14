@@ -36,7 +36,7 @@ from codemie.core.workflow_models import (
 )
 from codemie.core.workflow_models.workflow_config import WorkflowMode
 from codemie.rest_api.models.guardrail import GuardrailEntity
-from codemie.rest_api.routers.utils import raise_access_denied, run_in_thread_pool, raise_not_found
+from codemie.rest_api.routers.utils import raise_access_denied, raise_forbidden, run_in_thread_pool, raise_not_found
 from codemie.rest_api.security.authentication import authenticate, project_access_check
 from codemie.rest_api.security.user import User
 from codemie.service.monitoring.workflow_monitoring_service import WorkflowMonitoringService
@@ -461,7 +461,7 @@ def evaluate_workflow(
         raise_not_found(resource_id=workflow_id, resource_type="Workflow")
 
     if not Ability(user).can(Action.READ, workflow_config):
-        raise_access_denied("evaluate")
+        raise_forbidden("evaluate")
 
     evaluation_response = WorkflowEvaluationService.evaluate_workflow(
         workflow_config=workflow_config,
