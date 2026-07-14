@@ -17,6 +17,9 @@ import json
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, status, Depends, Query, BackgroundTasks, Request
+from codemie.rest_api.models.workflow_generator import WorkflowGeneratorRequest, WorkflowGeneratorResponse
+from codemie.service.llm_service.utils import set_llm_context
+from codemie.service.workflow_generator_service import WorkflowGeneratorService
 
 from codemie.configs import logger
 from codemie.core.ability import Ability, Action
@@ -493,3 +496,28 @@ async def get_custom_nodes(user: User = Depends(authenticate)) -> list[str]:
 async def get_custom_node_schema(custom_node_id: str, user: User = Depends(authenticate)) -> CustomNodeSchemaResponse:
     """Get configuration schema for a specific custom node type."""
     return CustomNodeInfoService.get_node_schema(custom_node_id)
+
+
+@router.post(
+    "/workflows/generate",
+    status_code=status.HTTP_200_OK,
+    response_model=WorkflowGeneratorResponse,
+    response_model_exclude_none=True,
+)
+def generate_workflow(
+    raw_request: Request,
+    request: WorkflowGeneratorRequest,
+    user: User = Depends(authenticate),
+):
+    """Generate a workflow configuration from a natural language description."""
+    request_id = raw_request.state.uuid
+    set_llm_context(None, user.current_project, user)
+
+    return WorkflowGeneratorService.generate(
+        nl_query=request.text,
+        user=user,
+        llm_model=request.llm_model,
+        persist=request.persist,
+        guardrail_ids=request.guardrail_ids,
+        request_id=request_id,
+    )

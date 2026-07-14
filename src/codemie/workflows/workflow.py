@@ -726,8 +726,8 @@ class WorkflowExecutor:
             source,
             lambda _self=self,
             _transition=transition,
-            _enable_summarization_node=self.workflow_config.enable_summarization_node: evaluate(
-                _self, _transition, _enable_summarization_node
+            _enable_summarization_node=self.workflow_config.enable_summarization_node: (
+                evaluate(_self, _transition, _enable_summarization_node)
             ),
             transition_nodes,
         )
@@ -745,8 +745,8 @@ class WorkflowExecutor:
             source,
             lambda _self=self,
             _transition=transition,
-            _enable_summarization_node=self.workflow_config.enable_summarization_node: evaluate(
-                _self, _transition, _enable_summarization_node
+            _enable_summarization_node=self.workflow_config.enable_summarization_node: (
+                evaluate(_self, _transition, _enable_summarization_node)
             ),
             transition_nodes,
         )
@@ -974,6 +974,7 @@ class WorkflowExecutor:
 
     def _process_workflow_chunks(self, workflow, inputs, graph_config: RunnableConfig, chunks_collector: list):
         """Stream workflow chunks and collect final summaries."""
+
         for chunk in workflow.stream(inputs, config=graph_config):
             if not chunk:
                 continue

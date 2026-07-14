@@ -32,13 +32,18 @@ from codemie.service.provider import ProviderToolkitsFactory
 
 class ToolsInfoService:
     @staticmethod
-    def get_tools_info(show_for_ui: bool = False, user: Optional[User] = None) -> List[Dict[str, str]]:
+    def get_tools_info(
+        show_for_ui: bool = False,
+        user: Optional[User] = None,
+        exclude_toolkits: Optional[list[str]] = None,
+    ) -> List[Dict[str, str]]:
         """
         Get tools info to be displayed on the UI
 
         Args:
             show_for_ui: UI-specific formatting
             user: Current user (used for admin tools)
+            exclude_toolkits: Toolkit names to exclude from the result
         """
 
         # Derive show_admin_tools from user
@@ -77,6 +82,9 @@ class ToolsInfoService:
 
         toolkits.extend(ToolsInfoService._provider_toolkits_info())
         logger.debug(f"Total toolkits assembled: {len(toolkits)}")
+
+        if exclude_toolkits:
+            toolkits = [t for t in toolkits if t.get("toolkit") not in exclude_toolkits]
 
         return toolkits
 

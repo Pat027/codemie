@@ -49,6 +49,8 @@ SKILL_TOOL_COMPANION_FILE_INVOKED_METRIC = "codemie_skill_tool_companion_file_in
 SKILL_EXPORTED_METRIC = "codemie_skill_exported"
 SKILL_GENERATOR_TOTAL_METRIC = "codemie_skill_generator_total"
 SKILL_GENERATOR_ERRORS_METRIC = "codemie_skill_generator_errors_total"
+WORKFLOW_GENERATOR_TOTAL_METRIC = "codemie_workflow_generator_total"
+WORKFLOW_GENERATOR_ERRORS_METRIC = "codemie_workflow_generator_errors_total"
 
 WORKFLOW_OUTPUT_CHANGE_TOTAL_METRIC = "codemie_workflow_output_change_total"
 WORKFLOW_OUTPUT_CHANGE_ERRORS_METRIC = "codemie_workflow_output_change_errors_total"

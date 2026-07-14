@@ -414,6 +414,7 @@ class CreateWorkflowRequest(BaseModel):
     yaml_config: Optional[str] = None
     shared: bool = True
     assistants: Optional[list[WorkflowAssistant]] = []
+    tools: Optional[list[WorkflowTool]] = []
     states: Optional[list[WorkflowState]] = []
     supervisor_prompt: Optional[str] = ""
     meta_config: Optional[str] = None
