@@ -679,8 +679,7 @@ class ApplicationRepository:
         if name is not None:
             application.id = name
             application.name = name
-        if display_name is not None:
-            application.display_name = display_name
+        application.display_name = display_name
         if description is not None:
             application.description = description
         application.cost_center_id = cost_center_id

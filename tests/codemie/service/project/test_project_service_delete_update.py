@@ -615,6 +615,94 @@ class TestProjectServiceUpdateProject:
             cost_center_id=None,
         )
 
+    @patch("codemie.service.project.project_service.cost_center_service")
+    @patch("codemie.service.project.project_service.application_repository")
+    @patch("codemie.service.project.project_service.get_session")
+    def test_clear_display_name_clears_existing_value(self, mock_get_session, mock_app_repo, mock_cc_service):
+        """update_project passes display_name=None when clear_display_name=True,
+        clearing an existing value (EPMCDME-13486). display_name=None alone (without
+        the flag) must NOT clear an existing value - it means 'leave unchanged'."""
+        mock_session = MagicMock()
+        mock_get_session.return_value.__enter__.return_value = mock_session
+        project = _make_app("my-project")
+        project.display_name = "Existing Display Name"
+        mock_app_repo.get_by_name.return_value = project
+        mock_app_repo.update_project.return_value = project
+
+        ProjectService.update_project(
+            user=self._make_super_admin(),
+            project_name="my-project",
+            clear_display_name=True,
+        )
+
+        mock_app_repo.update_project.assert_called_once_with(
+            mock_session,
+            project,
+            name=None,
+            display_name=None,
+            description=None,
+            cost_center_id=None,
+        )
+
+    @patch("codemie.service.project.project_service.cost_center_service")
+    @patch("codemie.service.project.project_service.application_repository")
+    @patch("codemie.service.project.project_service.get_session")
+    def test_omitted_display_name_preserves_existing_value(self, mock_get_session, mock_app_repo, mock_cc_service):
+        """update_project keeps the existing display_name when display_name=None and
+        clear_display_name=False (i.e. the field was simply not sent) (EPMCDME-13486)."""
+        mock_session = MagicMock()
+        mock_get_session.return_value.__enter__.return_value = mock_session
+        project = _make_app("my-project")
+        project.display_name = "Existing Display Name"
+        mock_app_repo.get_by_name.return_value = project
+        mock_app_repo.update_project.return_value = project
+
+        ProjectService.update_project(
+            user=self._make_super_admin(),
+            project_name="my-project",
+            description="new description",
+        )
+
+        mock_app_repo.update_project.assert_called_once_with(
+            mock_session,
+            project,
+            name=None,
+            display_name="Existing Display Name",
+            description="new description",
+            cost_center_id=None,
+        )
+
+    @patch("codemie.service.project.project_service.cost_center_service")
+    @patch("codemie.service.project.project_service.application_repository")
+    @patch("codemie.service.project.project_service.get_session")
+    def test_whitespace_only_display_name_clears_instead_of_persisting_empty(
+        self, mock_get_session, mock_app_repo, mock_cc_service
+    ):
+        """A whitespace-only display_name (without clear_display_name) must resolve to
+        None, not an empty string - persisting '' would defeat search_by_name's
+        COALESCE(display_name, name), which only falls back to name on NULL (EPMCDME-13486)."""
+        mock_session = MagicMock()
+        mock_get_session.return_value.__enter__.return_value = mock_session
+        project = _make_app("my-project")
+        project.display_name = "Existing Display Name"
+        mock_app_repo.get_by_name.return_value = project
+        mock_app_repo.update_project.return_value = project
+
+        ProjectService.update_project(
+            user=self._make_super_admin(),
+            project_name="my-project",
+            display_name="   ",
+        )
+
+        mock_app_repo.update_project.assert_called_once_with(
+            mock_session,
+            project,
+            name=None,
+            display_name=None,
+            description=None,
+            cost_center_id=None,
+        )
+
     @patch("codemie.service.project.project_service.SettingsService")
     @patch("codemie.service.project.project_service.cost_center_service")
     @patch("codemie.service.project.project_service.application_repository")

@@ -160,55 +160,27 @@ class ProjectService:
         *,
         name: str | None = None,
         display_name: str | None = None,
+        clear_display_name: bool = False,
         description: str | None = None,
         cost_center_id: UUID | None = None,
         clear_cost_center: bool = False,
         enforce_member_spend_limits: bool | None = None,
     ) -> Application:
         with get_session() as session:
-            project = application_repository.get_by_name(session, project_name)
-            if not project or project.deleted_at is not None:
-                raise ExtendedHTTPException(code=404, message=cls.ERRORS.PROJECT_NOT_FOUND)
+            project = cls._get_project_for_update(session, user, project_name)
 
-            if not user.is_admin_or_maintainer and not user_project_repository.is_admin(session, user.id, project_name):
-                raise ExtendedHTTPException(code=403, message=cls.ERRORS.ACCESS_DENIED)
-
-            validated_name: str | None = None
-            if name is not None:
-                validated_name = cls._validate_shared_project_name(name)
-                existing = application_repository.get_by_name_case_insensitive(session, validated_name)
-                if existing and existing.name.lower() != project_name.lower():
-                    raise ExtendedHTTPException(
-                        code=409,
-                        message=cls._duplicate_project_message(existing.name),
-                    )
-                assigned = user_project_repository.get_by_project_name(session, project_name)
-                if assigned:
-                    raise ExtendedHTTPException(
-                        code=409,
-                        message=cls.ERRORS.NAME_ASSIGNED_USERS,
-                    )
-
-            validated_description: str | None = None
-            if description is not None:
-                validated_description = cls._validate_project_description(description)
-
-            validated_display_name: str | None = None
-            if display_name is not None:
-                validated_display_name = cls._validate_display_name(display_name)
-
-            resolved_cost_center_id: UUID | None = project.cost_center_id
-            if cost_center_id is not None:
-                cost_center = cost_center_service.ensure_exists_for_project(session, cost_center_id)
-                resolved_cost_center_id = cost_center.id
-            elif clear_cost_center:
-                resolved_cost_center_id = None
+            validated_name = cls._resolve_updated_name(session, project_name, name)
+            validated_description = cls._validate_project_description(description) if description is not None else None
+            resolved_display_name = cls._resolve_updated_display_name(project, display_name, clear_display_name)
+            resolved_cost_center_id = cls._resolve_updated_cost_center_id(
+                session, project, cost_center_id, clear_cost_center
+            )
 
             project = application_repository.update_project(
                 session,
                 project,
                 name=validated_name,
-                display_name=validated_display_name,
+                display_name=resolved_display_name,
                 description=validated_description,
                 cost_center_id=resolved_cost_center_id,
             )
@@ -221,6 +193,62 @@ class ProjectService:
             session.refresh(project)
             cls._resync_member_allocations_if_needed(project.name, enforce_member_spend_limits)
             return project
+
+    @classmethod
+    def _get_project_for_update(cls, session: Session, user: User, project_name: str) -> Application:
+        project = application_repository.get_by_name(session, project_name)
+        if not project or project.deleted_at is not None:
+            raise ExtendedHTTPException(code=404, message=cls.ERRORS.PROJECT_NOT_FOUND)
+
+        is_project_admin = user_project_repository.is_admin(session, user.id, project_name)
+        if not user.is_admin_or_maintainer and not is_project_admin:
+            raise ExtendedHTTPException(code=403, message=cls.ERRORS.ACCESS_DENIED)
+
+        return project
+
+    @classmethod
+    def _resolve_updated_name(cls, session: Session, project_name: str, name: str | None) -> str | None:
+        if name is None:
+            return None
+
+        validated_name = cls._validate_shared_project_name(name)
+        existing = application_repository.get_by_name_case_insensitive(session, validated_name)
+        if existing and existing.name.lower() != project_name.lower():
+            raise ExtendedHTTPException(
+                code=409,
+                message=cls._duplicate_project_message(existing.name),
+            )
+
+        assigned = user_project_repository.get_by_project_name(session, project_name)
+        if assigned:
+            raise ExtendedHTTPException(code=409, message=cls.ERRORS.NAME_ASSIGNED_USERS)
+
+        return validated_name
+
+    @classmethod
+    def _resolve_updated_display_name(
+        cls, project: Application, display_name: str | None, clear_display_name: bool
+    ) -> str | None:
+        if display_name is not None:
+            return cls._validate_display_name(display_name) or None
+        if clear_display_name:
+            return None
+        return project.display_name
+
+    @classmethod
+    def _resolve_updated_cost_center_id(
+        cls,
+        session: Session,
+        project: Application,
+        cost_center_id: UUID | None,
+        clear_cost_center: bool,
+    ) -> UUID | None:
+        if cost_center_id is not None:
+            cost_center = cost_center_service.ensure_exists_for_project(session, cost_center_id)
+            return cost_center.id
+        if clear_cost_center:
+            return None
+        return project.cost_center_id
 
     @classmethod
     def _resync_member_allocations_if_needed(

@@ -1456,6 +1456,7 @@ class TestUpdateProjectEndpoint:
             project_name="my-project",
             name=None,
             display_name=None,
+            clear_display_name=False,
             description="new description",
             cost_center_id=None,
             clear_cost_center=False,
@@ -1494,6 +1495,7 @@ class TestUpdateProjectEndpoint:
             project_name="my-project",
             name=None,
             display_name=None,
+            clear_display_name=False,
             description=None,
             cost_center_id=cost_center_id,
             clear_cost_center=False,
@@ -1531,6 +1533,7 @@ class TestUpdateProjectEndpoint:
             project_name="my-project",
             name=None,
             display_name=None,
+            clear_display_name=False,
             description=None,
             cost_center_id=None,
             clear_cost_center=True,
@@ -1567,6 +1570,7 @@ class TestUpdateProjectEndpoint:
             project_name="my-project",
             name=None,
             display_name=None,
+            clear_display_name=False,
             description=None,
             cost_center_id=None,
             clear_cost_center=False,
@@ -1602,6 +1606,16 @@ class TestUpdateProjectEndpoint:
         """ProjectUpdateRequest raises ValueError when both cost_center_id and clear_cost_center are set."""
         with pytest.raises(ValueError, match="Provide either cost_center_id or clear_cost_center"):
             ProjectUpdateRequest(cost_center_id=uuid4(), clear_cost_center=True)
+
+    def test_request_model_rejects_display_name_with_clear_flag(self):
+        """ProjectUpdateRequest raises ValueError when both display_name and clear_display_name are set."""
+        with pytest.raises(ValueError, match="Provide either display_name or clear_display_name"):
+            ProjectUpdateRequest(display_name="Name", clear_display_name=True)
+
+    def test_request_model_accepts_clear_display_name_alone(self):
+        """ProjectUpdateRequest treats clear_display_name=True as a valid mutable field on its own."""
+        payload = ProjectUpdateRequest(clear_display_name=True)
+        assert payload.clear_display_name is True
 
     def test_request_model_accepts_budget_tracking_flag_as_mutable_field(self):
         request = ProjectUpdateRequest(enforce_member_spend_limits=True)
@@ -2790,6 +2804,7 @@ class TestProjectDisplayNameEndpoints:
             project_name="my-project",
             name=None,
             display_name="My Project",
+            clear_display_name=False,
             description=None,
             cost_center_id=None,
             clear_cost_center=False,
@@ -2803,7 +2818,8 @@ class TestProjectDisplayNameEndpoints:
         mock_project_service,
         mock_config,
     ):
-        """display_name=None (omitted) passes None to project_service."""
+        """display_name=None (omitted) passes None + clear_display_name=False to
+        project_service, which preserves the existing value (EPMCDME-13486)."""
         mock_config.ENABLE_USER_MANAGEMENT = True
         updated_app = MagicMock()
         updated_app.name = "my-project"
@@ -2827,7 +2843,46 @@ class TestProjectDisplayNameEndpoints:
             project_name="my-project",
             name=None,
             display_name=None,
+            clear_display_name=False,
             description="desc",
+            cost_center_id=None,
+            clear_cost_center=False,
+            enforce_member_spend_limits=None,
+        )
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.project_service")
+    def test_clear_display_name_passes_true_to_service(
+        self,
+        mock_project_service,
+        mock_config,
+    ):
+        """PATCH with clear_display_name=True passes clear_display_name=True (EPMCDME-13486)."""
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        updated_app = MagicMock()
+        updated_app.name = "my-project"
+        updated_app.display_name = None
+        updated_app.description = "desc"
+        updated_app.project_type = "shared"
+        updated_app.created_by = "user-1"
+        updated_app.date = datetime(2026, 1, 1, tzinfo=UTC)
+        updated_app.cost_center_id = None
+        mock_project_service.update_project.return_value = updated_app
+
+        user = MagicMock(id="user-1")
+        update_project(
+            payload=ProjectUpdateRequest(clear_display_name=True),
+            project_name="my-project",
+            user=user,
+        )
+
+        mock_project_service.update_project.assert_called_once_with(
+            user=user,
+            project_name="my-project",
+            name=None,
+            display_name=None,
+            clear_display_name=True,
+            description=None,
             cost_center_id=None,
             clear_cost_center=False,
             enforce_member_spend_limits=None,

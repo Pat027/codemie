@@ -251,6 +251,7 @@ class ProjectCreateResponse(BaseModel):
 class ProjectUpdateRequest(BaseModel):
     name: Optional[str] = None
     display_name: Optional[str] = None
+    clear_display_name: bool = False
     description: Optional[str] = None
     cost_center_id: Optional[UUID] = None
     clear_cost_center: bool = False
@@ -265,10 +266,13 @@ class ProjectUpdateRequest(BaseModel):
             and self.cost_center_id is None
             and self.enforce_member_spend_limits is None
             and not self.clear_cost_center
+            and not self.clear_display_name
         ):
             raise ValueError("At least one mutable field must be provided")
         if self.cost_center_id is not None and self.clear_cost_center:
             raise ValueError("Provide either cost_center_id or clear_cost_center")
+        if self.display_name is not None and self.clear_display_name:
+            raise ValueError("Provide either display_name or clear_display_name")
         return self
 
 
@@ -983,6 +987,7 @@ def update_project(
         project_name=project_name,
         name=payload.name,
         display_name=payload.display_name,
+        clear_display_name=payload.clear_display_name,
         description=payload.description,
         cost_center_id=None if payload.clear_cost_center else payload.cost_center_id,
         clear_cost_center=payload.clear_cost_center,

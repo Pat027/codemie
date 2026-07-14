@@ -51,7 +51,19 @@ from codemie.rest_api.models.base import (
     PydanticListType,
 )
 from codemie.rest_api.models.standard import PostResponse
-from sqlmodel import SQLModel, Field as SQLField, Column, CheckConstraint, Index, select, or_, case, Session, String
+from sqlmodel import (
+    SQLModel,
+    Field as SQLField,
+    Column,
+    CheckConstraint,
+    Index,
+    select,
+    or_,
+    case,
+    Session,
+    String,
+    func,
+)
 
 PORT_PATTERN = r"(?:\d{1,4}|[1-5]\d{4}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5])"
 LINK_PATTERN = rf"^https?:\/\/[A-Za-z0-9][A-Za-z0-9\-\.]*[A-Za-z0-9](?:\.[A-Za-z]{{2,}}|\:{PORT_PATTERN})(?:\/.*)?$"
@@ -398,10 +410,14 @@ class Application(BaseModelWithSQLSupport, Owned, table=True):
         if name_query:
             # Security: Escape LIKE wildcards to prevent information leakage (Story 2, NFR-3.1)
             escaped_query = escape_like_wildcards(name_query)
+            # Match display_name when present, falling back to the technical name
+            # only when display_name isn't set - a project with a display_name is
+            # never matched by its raw technical name (EPMCDME-13486).
+            display_or_name = func.coalesce(cls.display_name, cls.name)
             stmt = (
                 select(cls)
-                .where(or_(cls.name == name_query, cls.name.ilike(f"%{escaped_query}%", escape="\\")))
-                .order_by(case((cls.name == name_query, 1), else_=2))
+                .where(or_(display_or_name == name_query, display_or_name.ilike(f"%{escaped_query}%", escape="\\")))
+                .order_by(case((display_or_name == name_query, 1), else_=2))
             )
         else:
             stmt = select(cls)
