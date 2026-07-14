@@ -543,12 +543,6 @@ class AuthenticationService:
         """
         from codemie.clients.postgres import get_async_session
 
-        # Validate UUID format
-        # try:
-        #     UUID(user_id)
-        # except ValueError:
-        #     raise ExtendedHTTPException(code=422, message="User ID must be a valid UUID")
-
         async with get_async_session() as session:
             db_user = await user_repository.aget_by_id(session, user_id)
 

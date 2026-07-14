@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "source": "heuristic",
+  "score": 24,
+  "routing": "brainstorming",
+  "signals": {
+    "affected_file_estimate": 8,
+    "keyword_signals": {
+      "security": true,
+      "auth": true,
+      "migration": true,
+      "breaking": false,
+      "provider": false,
+      "integration": true,
+      "refactor": false
+    },
+    "goal_word_count": 30
+  },
+  "rationale": "Risk keywords auth/migration/integration are present; affected file estimate >= 7 (model, migration, repository, service, admin router, projects router, tests). Heuristic rule: skip agent, score 24, route to brainstorming."
+}

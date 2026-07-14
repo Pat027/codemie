@@ -1,0 +1,39 @@
+{
+  "run_id": "20260708-1429-EPMCDME-13354-teams-setting",
+  "mode": "hitl",
+  "started_at": "2026-07-08T11:29:22Z",
+  "task_input": "EPMCDME-13354\n\nRequirments:\n\n- a new endpoints as a part of administration for listing enabled assistants for teams per project\n- enpoints for enabling / disabling an assistant for teams per project\n- given a project, a new endpouint to fetch teams-enabled assistants",
+  "branch": "EPMCDME-13354-teams-setting",
+  "branch_guard": {
+    "current_branch": "EPMCDME-13354-teams-setting",
+    "base_branch": "main",
+    "target_branch": "EPMCDME-13354-teams-setting",
+    "working_tree": "dirty",
+    "upstream": "none",
+    "target_branch_exists": true,
+    "base_refreshed": false,
+    "decision": "proceed-dirty",
+    "warning": "Pre-existing unrelated dirty files (.env, config/customer/customer-config.yaml) will be present during the run — take care not to commit them as part of EPMCDME-13354 work."
+  },
+  "work_item": {
+    "canonical_path": "docs/superpowers/work-items/EPMCDME-13354.md",
+    "run_mirror": "docs/superpowers/runs/20260708-1429-EPMCDME-13354-teams-setting/work-item.md",
+    "event_ledger": "docs/superpowers/runs/20260708-1429-EPMCDME-13354-teams-setting/work-item-events.jsonl"
+  },
+  "current_phase": 5,
+  "status": "running",
+  "escalate_on": ["security", "breaking-change"],
+  "memory_brief": "",
+  "phases": {
+    "0":  {"status": "completed", "started_at": "2026-07-08T11:29:22Z", "completed_at": "2026-07-08T11:29:30Z"},
+    "1":  {"status": "completed", "started_at": "2026-07-08T11:29:31Z", "completed_at": "2026-07-08T11:30:31Z"},
+    "2":  {"status": "completed", "started_at": "2026-07-08T11:30:35Z", "completed_at": "2026-07-08T11:31:00Z"},
+    "3":  {"status": "completed", "started_at": "2026-07-08T11:31:10Z", "completed_at": "2026-07-08T11:31:20Z"},
+    "4":  {"status": "completed", "started_at": "2026-07-08T11:31:25Z", "completed_at": "2026-07-08T13:15:00Z"},
+    "5":  {"status": "completed", "started_at": "2026-07-08T13:15:01Z", "completed_at": "2026-07-08T13:45:00Z"},
+    "6":  {"status": "pending"},
+    "7":  {"status": "pending"},
+    "8":  {"status": "pending"},
+    "9":  {"status": "pending"}
+  }
+}

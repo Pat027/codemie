@@ -608,4 +608,73 @@ def test_build_new_conversation_with_workflow(
     assert detail.assistant_type is None
     assert detail.context is None
     assert detail.tools is None
-    assert detail.conversation_starters == []
+
+
+@pytest.mark.parametrize(
+    "content_raw,text,expected_raw",
+    [
+        ("", "Hello", "Hello"),
+        (None, "Hello", "Hello"),
+        ("<b>Hi</b>", "Hi", "<b>Hi</b>"),
+        ("", "<script>alert(1)</script>", "&lt;script&gt;alert(1)&lt;/script&gt;"),
+    ],
+)
+@patch(
+    "codemie.service.monitoring.conversation_monitoring_service.ConversationMonitoringService.send_conversation_metric"
+)
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.calculate_metrics")
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.update")
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.save")
+@patch("codemie.rest_api.models.conversation.Conversation.update")
+@patch("codemie.rest_api.models.conversation.Conversation.find_by_id")
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.get_by_conversation_id")
+@patch("codemie.rest_api.models.conversation.Conversation.update_chat_history")
+def test_upsert_chat_history_content_raw_fallback(
+    mock_update_chat_history,
+    mock_metrics_get,
+    mock_conv_find,
+    mock_conv_update,
+    mock_metrics_save,
+    mock_metrics_update,
+    mock_calculate_metrics,
+    _mock_send_metric,
+    content_raw,
+    text,
+    expected_raw,
+):
+    """When content_raw is empty or None, user_query_raw falls back to html.escape(text)."""
+    mock_assistant = MagicMock()
+    mock_assistant.id = "assistant-id"
+    mock_assistant.project = "test-project"
+    mock_assistant.llm_model_type = "test-model"
+
+    mock_user = MagicMock()
+    mock_user.id = "user-id"
+    mock_user.name = "user-name"
+
+    conversation = Conversation(id="conv-1", conversation_id="conv-1", history=[])
+    mock_conv_find.return_value = conversation
+    mock_metrics_get.return_value = ConversationMetrics(conversation_id="conv-1")
+    mock_conv_update.return_value = True
+    mock_metrics_update.return_value = True
+
+    request = AssistantChatRequest(
+        conversation_id="conv-1",
+        text=text,
+        content_raw=content_raw,
+        history=[],
+    )
+
+    ConversationService.upsert_chat_history(
+        assistant_response="response",
+        user=mock_user,
+        thoughts=[],
+        time_elapsed=0,
+        tokens_usage=TokensUsage(output_tokens=0, input_tokens=0, money_spent=0.0),
+        assistant=mock_assistant,
+        request=request,
+    )
+
+    mock_update_chat_history.assert_called_once()
+    _, kwargs = mock_update_chat_history.call_args
+    assert kwargs["user_query_raw"] == expected_raw

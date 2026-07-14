@@ -176,7 +176,7 @@ class ConversationService:
 
         conversation.update_chat_history(
             user_query=request.text,
-            user_query_raw=request.content_raw,
+            user_query_raw=request.content_raw or html.escape(request.text or ""),
             assistant_id=assistant.id,
             project=assistant.project,
             assistant_response=assistant_response,

@@ -209,6 +209,12 @@ components:
       name: "SharePoint CodeMie OAuth"
       description: "Show Sign in with Microsoft (CodeMie Project) authentication option for SharePoint datasource"
 
+  - id: "features:teamsBotIntegration"
+    settings:
+      enabled: false
+      name: "Teams Bot Integration"
+      description: "Enable project-level assistant configuration for Microsoft Teams Bot integration."
+
 preconfigured_assistants:
   - id: "codemie-onboarding"
     settings:

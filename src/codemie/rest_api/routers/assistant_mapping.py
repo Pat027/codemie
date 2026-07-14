@@ -123,20 +123,16 @@ def get_assistant_mapping(assistant_id: str, user: User = Depends(authenticate))
     Get mappings for a specific assistant and the current user.
     Allows retrieving mappings for both published and unpublished assistants.
     """
-    # Verify that the assistant exists
     _get_assistant_by_id_or_raise(assistant_id)
 
     try:
-        # Get the mappings
         mapping = assistant_user_mapping_service.get_mapping(assistant_id=assistant_id, user_id=user.id)
 
         if not mapping:
             return AssistantMappingResponse(id="", tools_config=[], user_id=user.id, assistant_id=assistant_id)
 
-        # Convert to response model
         return AssistantMappingResponse.from_db_model(mapping)
     except ExtendedHTTPException as e:
-        # Re-raise ExtendedHTTPException as is
         raise e
     except Exception as e:
         logger.error(f"Error getting mappings: {str(e)}", exc_info=True)
