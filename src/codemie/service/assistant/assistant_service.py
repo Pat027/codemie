@@ -101,7 +101,7 @@ class AssistantService:
         try:
             for filename in os.listdir(templates_dir):
                 if filename.endswith(".yaml"):
-                    with open(os.path.join(templates_dir, filename), 'r') as file:
+                    with open(os.path.join(templates_dir, filename), 'r', encoding='utf-8') as file:
                         assistant = Assistant.from_yaml(file.read(), project=CODEMIE_PROJECT_NAME)
                         assistant_templates[assistant.slug] = assistant
         except Exception as e:
