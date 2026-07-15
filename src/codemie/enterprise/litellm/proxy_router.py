@@ -110,13 +110,19 @@ PROXY_HOP_BY_HOP_HEADERS = {
     "upgrade",
     "host",
     "content-length",
-    # CodeMie-specific headers (used for internal tracking, not forwarded)
-    HEADER_CODEMIE_INTEGRATION,
-    HEADER_CODEMIE_CLIENT,
-    HEADER_CODEMIE_SESSION_ID,
-    HEADER_CODEMIE_REQUEST_ID,
+    # CodeMie-specific headers (used for internal tracking, not forwarded).
+    # All entries must be lowercase — the filter uses k.lower() for case-insensitive matching.
+    HEADER_CODEMIE_INTEGRATION.lower(),
+    HEADER_CODEMIE_CLIENT.lower(),
+    HEADER_CODEMIE_SESSION_ID.lower(),
+    HEADER_CODEMIE_REQUEST_ID.lower(),
+    HEADER_CODEMIE_CLI.lower(),
+    HEADER_CODEMIE_CLI_MODEL.lower(),
+    HEADER_CODEMIE_CLI_BRANCH.lower(),
+    HEADER_CODEMIE_CLI_REPOSITORY.lower(),
+    HEADER_CODEMIE_CLI_PROJECT.lower(),
     BEARER_AUTHORIZATION_HEADER.lower(),
-    LITELLM_CUSTOMER_ID_HEADER,
+    LITELLM_CUSTOMER_ID_HEADER.lower(),
 }
 
 # Hop-by-hop headers that must NOT be forwarded from upstream responses to clients.

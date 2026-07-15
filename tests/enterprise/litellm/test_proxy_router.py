@@ -29,7 +29,9 @@ from codemie.core.constants import (
     LLM_MODEL,
     PROJECT,
     HEADER_CODEMIE_CLI,
+    HEADER_CODEMIE_CLI_BRANCH,
     HEADER_CODEMIE_CLI_MODEL,
+    HEADER_CODEMIE_CLI_REPOSITORY,
     HEADER_CODEMIE_CLIENT,
     HEADER_CODEMIE_CLI_PROJECT,
     HEADER_CODEMIE_INTEGRATION,
@@ -39,6 +41,7 @@ from codemie.core.constants import (
 from codemie.enterprise.litellm.budget_categories import BudgetCategory
 from codemie.enterprise.litellm.credentials import ResolvedLiteLLMUserCredentials
 from codemie.enterprise.litellm.proxy_router import (
+    LITELLM_CUSTOMER_ID_HEADER,
     _build_premium_budget_error_body,
     _check_cli_version,
     _extract_model,
@@ -648,7 +651,7 @@ class TestPrepareProxyHeaders:
         assert "connection" not in result
         assert "host" not in result
         assert "transfer-encoding" not in result
-        assert HEADER_CODEMIE_CLIENT not in result
+        assert HEADER_CODEMIE_CLIENT.lower() not in result
 
         # Should fall back to app key when proxy key is not set
         assert result["Authorization"] == "Bearer test-app-key"
@@ -756,6 +759,84 @@ class TestPrepareProxyHeaders:
 
         assert result["Authorization"] == "Bearer test-app-key"
         assert result["x-custom-header"] == "custom-value"
+
+    def test_codemie_branch_header_with_unicode_is_stripped(self):
+        """Regression test for EPMCDME-12571: non-ASCII branch name must not reach httpx."""
+        mock_request = MagicMock()
+        mock_request.headers = Headers(
+            {
+                "content-type": "application/json",
+                HEADER_CODEMIE_CLI_BRANCH: "Función nueva",
+            }
+        )
+        with patch("codemie.enterprise.litellm.proxy_router.config") as mock_config:
+            mock_config.LITE_LLM_APP_KEY = "test-app-key"
+            mock_config.LITE_LLM_PROXY_APP_KEY = ""
+            with patch("codemie.enterprise.litellm.proxy_router.litellm_context") as mock_ctx:
+                mock_ctx.get.side_effect = LookupError()
+                result = _prepare_proxy_headers(mock_request)
+
+        assert HEADER_CODEMIE_CLI_BRANCH.lower() not in result
+        assert "content-type" in result
+
+    def test_all_codemie_internal_headers_are_stripped(self):
+        """All nine HEADER_CODEMIE_* headers must be stripped before forwarding."""
+        mock_request = MagicMock()
+        mock_request.headers = Headers(
+            {
+                "content-type": "application/json",
+                HEADER_CODEMIE_CLI: "codemie-cli/1.0.0",
+                HEADER_CODEMIE_CLI_MODEL: "gpt-4o",
+                HEADER_CODEMIE_CLI_BRANCH: "Función nueva",
+                HEADER_CODEMIE_CLI_REPOSITORY: "https://example.com/repo",
+                HEADER_CODEMIE_CLI_PROJECT: "my-project",
+                HEADER_CODEMIE_INTEGRATION: "integration-id",
+                HEADER_CODEMIE_CLIENT: "cli",
+                HEADER_CODEMIE_SESSION_ID: "session-uuid",
+                HEADER_CODEMIE_REQUEST_ID: "request-uuid",
+                LITELLM_CUSTOMER_ID_HEADER: "attacker-value",
+            }
+        )
+        with patch("codemie.enterprise.litellm.proxy_router.config") as mock_config:
+            mock_config.LITE_LLM_APP_KEY = "test-app-key"
+            mock_config.LITE_LLM_PROXY_APP_KEY = ""
+            with patch("codemie.enterprise.litellm.proxy_router.litellm_context") as mock_ctx:
+                mock_ctx.get.side_effect = LookupError()
+                result = _prepare_proxy_headers(mock_request)
+
+        for header_const in [
+            HEADER_CODEMIE_CLI,
+            HEADER_CODEMIE_CLI_MODEL,
+            HEADER_CODEMIE_CLI_BRANCH,
+            HEADER_CODEMIE_CLI_REPOSITORY,
+            HEADER_CODEMIE_CLI_PROJECT,
+            HEADER_CODEMIE_INTEGRATION,
+            HEADER_CODEMIE_CLIENT,
+            HEADER_CODEMIE_SESSION_ID,
+            HEADER_CODEMIE_REQUEST_ID,
+        ]:
+            assert header_const.lower() not in result, f"{header_const} should be stripped"
+        assert LITELLM_CUSTOMER_ID_HEADER.lower() not in result, "x-litellm-customer-id should be stripped"
+        assert "content-type" in result
+
+    def test_non_codemie_headers_pass_through(self):
+        """Non-internal headers must survive _prepare_proxy_headers unchanged."""
+        mock_request = MagicMock()
+        mock_request.headers = Headers(
+            {
+                "content-type": "application/json",
+                "x-custom-client-header": "some-value",
+            }
+        )
+        with patch("codemie.enterprise.litellm.proxy_router.config") as mock_config:
+            mock_config.LITE_LLM_APP_KEY = "test-app-key"
+            mock_config.LITE_LLM_PROXY_APP_KEY = ""
+            with patch("codemie.enterprise.litellm.proxy_router.litellm_context") as mock_ctx:
+                mock_ctx.get.side_effect = LookupError()
+                result = _prepare_proxy_headers(mock_request)
+
+        assert "content-type" in result
+        assert "x-custom-client-header" in result
 
 
 class TestGetIntegrationApiKey:
