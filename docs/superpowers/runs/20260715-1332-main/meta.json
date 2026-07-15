@@ -1,0 +1,42 @@
+{
+  "run_id": "20260715-1332-main",
+  "mode": "hitl",
+  "started_at": "2026-07-15T13:32:00Z",
+  "task_input": "https://jiraeu.epam.com/browse/EPMCDME-13546",
+  "branch": "EPMCDME-13546",
+  "branch_guard": {
+    "current_branch": "main",
+    "base_branch": "main",
+    "target_branch": "EPMCDME-13546",
+    "working_tree": "dirty",
+    "upstream": "in-sync",
+    "target_branch_exists": false,
+    "base_refreshed": true,
+    "decision": "stash",
+    "stash_ref": "stash@{0}",
+    "warning": "1mr.json and 1note.json (GitLab webhook payloads) were stashed before creating the feature branch. Run git stash pop to restore them after this work."
+  },
+  "work_item": {
+    "canonical_path": "docs/superpowers/work-items/EPMCDME-13546.md",
+    "run_mirror": "docs/superpowers/runs/20260715-1332-main/work-item.md",
+    "event_ledger": "docs/superpowers/runs/20260715-1332-main/work-item-events.jsonl"
+  },
+  "current_phase": 10,
+  "status": "completed",
+  "completed_at": "2026-07-15T15:12:00Z",
+  "escalate_on": ["security", "breaking-change"],
+  "memory_brief": "",
+  "phases": {
+    "0":  {"status": "completed", "started_at": "2026-07-15T13:32:00Z", "completed_at": "2026-07-15T13:32:30Z"},
+    "1":  {"status": "completed", "started_at": "2026-07-15T13:32:31Z", "completed_at": "2026-07-15T13:33:00Z"},
+    "2":  {"status": "completed", "started_at": "2026-07-15T13:33:01Z", "completed_at": "2026-07-15T13:34:00Z"},
+    "3":  {"status": "completed", "started_at": "2026-07-15T13:34:02Z", "completed_at": "2026-07-15T13:35:00Z"},
+    "4":  {"status": "completed", "started_at": "2026-07-15T13:35:02Z", "completed_at": "2026-07-15T13:35:02Z", "note": "skipped — routing is writing-plans"},
+    "5":  {"status": "completed", "started_at": "2026-07-15T13:35:03Z", "completed_at": "2026-07-15T13:40:00Z"},
+    "6":  {"status": "completed", "started_at": "2026-07-15T13:42:01Z", "completed_at": "2026-07-15T14:30:00Z"},
+    "7":  {"status": "completed", "started_at": "2026-07-15T14:30:01Z", "completed_at": "2026-07-15T15:00:00Z"},
+    "8":  {"status": "completed", "started_at": "2026-07-15T15:05:01Z", "completed_at": "2026-07-15T15:10:00Z"},
+    "9":  {"status": "completed", "started_at": "2026-07-15T15:10:01Z", "completed_at": "2026-07-15T15:11:00Z"},
+    "10": {"status": "completed", "started_at": "2026-07-15T15:11:01Z", "completed_at": "2026-07-15T15:12:00Z"}
+  }
+}

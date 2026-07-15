@@ -82,9 +82,9 @@ class TestMCPExecutionContext:
             "project_name": None,
             "workflow_execution_id": None,
             "request_headers": None,
-            "user_context": None,
         }
         assert fields == expected
+        assert "user_context" not in fields
 
     def test_to_request_fields_all_set(self):
         """Test to_request_fields() with all values set."""
@@ -102,9 +102,9 @@ class TestMCPExecutionContext:
             "project_name": "test-project",
             "workflow_execution_id": "workflow-789",
             "request_headers": None,
-            "user_context": None,
         }
         assert fields == expected
+        assert "user_context" not in fields
 
     def test_conversation_id_is_local_only_retry_context(self):
         """conversation_id remains local-only and never enters MCP-Connect request fields."""
@@ -135,9 +135,9 @@ class TestMCPExecutionContext:
             "project_name": "test-project",
             "workflow_execution_id": None,
             "request_headers": None,
-            "user_context": None,
         }
         assert fields == expected
+        assert "user_context" not in fields
 
     def test_serialization_deserialization(self):
         """Test JSON serialization and deserialization."""
@@ -174,29 +174,42 @@ class TestMCPExecutionContext:
         assert fields["project_name"] == ""
         assert fields["workflow_execution_id"] is None
 
-    def test_to_request_fields_user_context_propagated(self):
-        """user_context is included in to_request_fields() and coerced back on MCPToolInvocationRequest."""
+    def test_to_request_fields_excludes_user_context_regardless_of_value(self):
+        """user_context is excluded from to_request_fields() even when set to a non-None value.
+
+        The MCP-Connect server rejects user_context as an extra forbidden field
+        (EPMCDME-13546). The field remains accessible on the execution context object
+        but must never appear in the serialised request payload.
+        """
         user_ctx = UserContext(id="u1", email="u1@example.com")
         context = MCPExecutionContext(user_context=user_ctx)
 
         fields = context.to_request_fields()
 
-        # user_context is present in the serialized dict as a nested dict
-        assert "user_context" in fields
-        assert fields["user_context"] is not None
-        assert fields["user_context"]["id"] == "u1"
-        assert fields["user_context"]["email"] == "u1@example.com"
+        # Must not appear in the payload sent to MCP-Connect
+        assert "user_context" not in fields
 
-        # MCPToolInvocationRequest accepts **fields and coerces the nested dict back to UserContext
-        request = MCPToolInvocationRequest(
-            serverPath="npx",
-            args=[],
-            params={},
-            **fields,
+        # Still accessible locally on the context object
+        assert context.user_context is user_ctx
+        assert context.user_context.id == "u1"
+        assert context.user_context.email == "u1@example.com"
+
+    def test_to_request_fields_never_includes_user_context(self):
+        """user_context must be excluded from to_request_fields() regardless of value."""
+        user_ctx = UserContext(id="u-abc", email="alice@example.com")
+        context = MCPExecutionContext(
+            user_id="user-123",
+            user_context=user_ctx,
         )
-        assert isinstance(request.user_context, UserContext)
-        assert request.user_context.id == "u1"
-        assert request.user_context.email == "u1@example.com"
+
+        fields = context.to_request_fields()
+
+        assert "user_context" not in fields, (
+            "user_context must be excluded from to_request_fields() so it is never sent "
+            "to the MCP-Connect server, which rejects it as an extra forbidden input"
+        )
+        # The field remains accessible on the context object itself
+        assert context.user_context is user_ctx
 
 
 class TestMCPServerConfig:

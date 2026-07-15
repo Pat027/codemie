@@ -1,0 +1,98 @@
+{
+  "schema": 1,
+  "gate_id": "code-review.final",
+  "run_id": "20260715-1332-main",
+  "ts": "2026-07-15T15:00:00Z",
+  "decision": "request-changes",
+  "confidence": "medium",
+  "rationale": "All three review lenses ran successfully. The core fix — adding 'user_context' to MCPExecutionContext.to_request_fields() exclusion set — is correct and complete. Post-review inspection confirmed client.py:127 uses model_dump(exclude_none=True) when building the HTTP body, so even if MCPToolInvocationRequest.user_context defaults to None it is never serialized; CR-001 (edge-case finding on MCPToolInvocationRequest serialization) is dismissed as a false positive. One remaining blocking concern: AC4 requires test_cli_mcp_server[ls] to pass, but no execution evidence is recorded in the artifacts. AC5 (runtime logging) and AC6 (structured 4xx path) are deferred as out-of-scope enhancements. 4 findings dismissed total.",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "AC1: MCP tool invocation no longer fails due to user_context being rejected",
+      "status": "pass",
+      "notes": "user_context added to exclusion set in MCPExecutionContext.to_request_fields(); field no longer passed to MCPToolInvocationRequest constructor"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC2: POST /v1/assistants/{assistant_id}/model does not return HTTP 500 for this scenario",
+      "status": "pass",
+      "notes": "Root cause eliminated at the serialization layer; the MCP-Connect extra_forbidden rejection can no longer be triggered by this code path"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC3: User context excluded per MCP toolkit creation contract",
+      "status": "pass",
+      "notes": "Exclusion documented in Field description and to_request_fields() docstring; field remains accessible locally on MCPExecutionContext"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4: CLI MCP server integration test test_cli_mcp_server[ls] passes",
+      "status": "fail",
+      "notes": "No changes to the integration test file; no CI output or test execution evidence in the diff or evidence artifacts"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC5: MCP toolkit creation logs contain diagnostic context without sensitive data exposure",
+      "status": "fail",
+      "notes": "No runtime logging added; only docstring and Field description comments updated"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC6: Invalid request data returns a clear 4xx error instead of HTTP 500",
+      "status": "partial",
+      "notes": "Fix is preventive (field excluded before serialization); no structured API-layer error-handling path introduced for similar future cases"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC7: Regression coverage added for MCP invocation with request-level user context",
+      "status": "pass",
+      "notes": "test_to_request_fields_never_includes_user_context added; test_to_request_fields_user_context_propagated rewritten as test_to_request_fields_excludes_user_context_regardless_of_value; 5 assertion sites updated across test_models.py and test_models_1_2_auth_config.py"
+    }
+  ],
+  "standards_review": [
+    {
+      "item": "Ruff linting",
+      "status": "pass",
+      "notes": "Clean per T1.json evidence"
+    },
+    {
+      "item": "TDD cycle (test-first)",
+      "status": "pass",
+      "notes": "Failing test committed first (test_to_request_fields_never_includes_user_context), implementation added second — confirmed by T1.json evidence"
+    },
+    {
+      "item": "Strict typing (CLAUDE.local.md requirement)",
+      "status": "pass",
+      "notes": "No new Any annotations introduced; pre-existing dict[str, Any] return type on to_request_fields() unchanged"
+    },
+    {
+      "item": "Security",
+      "status": "pass",
+      "notes": "No credential exposure, injection vectors, or permission changes in the diff"
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-002",
+      "triage": "patch",
+      "severity": "major",
+      "sources": ["acceptance"],
+      "problem": "AC4 requires test_cli_mcp_server[ls] to pass after the fix; this is the primary integration test that originally surfaced the bug. The diff contains no changes to the integration test file and no execution evidence (CI output, test run log) in the evidence artifacts.",
+      "impact": "Cannot confirm the end-to-end flow (MCPToolInvocationRequest serialized and sent to MCP-Connect) is actually fixed without integration test evidence.",
+      "recommendation": "Run 'poetry run pytest tests/assistant/tools/mcp/test_cli_mcp_server.py::test_cli_mcp_server[ls] -v' with the fix applied and attach the output as passing evidence."
+    }
+  ],
+  "dismissed_count": 4,
+  "deferred": [
+    {
+      "id": "DEFER-1",
+      "notes": "AC5 (runtime diagnostic logging): Adding logger calls at MCP toolkit creation is an enhancement beyond the immediate bug fix. Follow-on work."
+    },
+    {
+      "id": "DEFER-2",
+      "notes": "AC6 (structured 4xx error path): The 500 no longer occurs for this specific case. A general error-handling framework converting upstream validation failures to 4xx is broader scope and not required for this targeted fix."
+    }
+  ]
+}

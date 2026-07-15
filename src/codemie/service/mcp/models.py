@@ -105,7 +105,8 @@ class MCPExecutionContext(BaseModel):
         None,
         repr=False,
         description="Non-sensitive profile of the authenticated initiator, resolved from the request "
-        "context. Forwarded to MCP servers via MCPToolInvocationRequest. May differ from user_id, "
+        "context. Excluded from to_request_fields() serialization because the MCP-Connect server "
+        "rejects it as an extra forbidden field (EPMCDME-13546). May differ from user_id, "
         "which can identify a resource owner.",
     )
 
@@ -116,6 +117,11 @@ class MCPExecutionContext(BaseModel):
         Returns:
             Dictionary with context fields ready to be unpacked into
             MCPToolInvocationRequest constructor
+
+        Note: ``user_context`` is excluded because the MCP-Connect server rejects it
+        as an extra forbidden field in both ``tools/list`` and ``tools/call`` requests
+        (EPMCDME-13546). The field remains accessible on the execution context for
+        local use.
         """
         return self.model_dump(
             exclude={
@@ -124,6 +130,7 @@ class MCPExecutionContext(BaseModel):
                 "oauth2_token_data",
                 "oauth2_auth_config_id",
                 "oauth2_auth_config",
+                "user_context",
             }
         )
 

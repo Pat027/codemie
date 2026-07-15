@@ -1,0 +1,28 @@
+{
+  "run_id": "20260715-1332-main",
+  "source": "heuristic",
+  "goal_word_count": 22,
+  "affected_file_estimate": 3,
+  "keyword_signals": {
+    "security": false,
+    "auth": false,
+    "migration": false,
+    "breaking": false,
+    "provider": false,
+    "integration": false,
+    "refactor": false
+  },
+  "routing": "writing-plans",
+  "total": 8,
+  "size": "XS",
+  "rationale": "Single targeted bug fix: exclude user_context from MCPExecutionContext.to_request_fields() so it is not sent in the tools/list request body, which the MCP-Connect server rejects as an extra forbidden field. Affects 1-3 source files and 1 test file.",
+  "actual": {
+    "assessment_mode": "actual",
+    "total": 6,
+    "size": "XS",
+    "files_changed": 3,
+    "lines_added": 42,
+    "lines_removed": 22,
+    "rationale": "Delivered as estimated: +1 line to exclusion set in models.py, +5 lines docstring, field description update. Test-only updates in 2 test files (1 new test, 1 rewritten, 5 assertion sites updated). No cross-service changes, no schema/API changes, no security changes. Actual complexity slightly below initial estimate (6 vs 8) — purely surgical fix."
+  }
+}
