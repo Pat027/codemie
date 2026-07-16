@@ -69,6 +69,29 @@ class TestGenerateLiteLLMHeadersFromContext:
 
                 assert result == {"x-litellm-tags": "default"}
 
+    def test_no_codemie_tagging_headers_in_litellm_path(self):
+        """_generate_litellm_headers must produce x-litellm-tags but not X-CodeMie-* tags."""
+        from codemie.configs.config import config
+        from codemie.rest_api.models.settings import LiteLLMContext, LiteLLMCredentials
+        from codemie.enterprise.litellm.llm_factory import _generate_litellm_headers
+
+        ctx = LiteLLMContext(
+            credentials=LiteLLMCredentials(api_key="k", url="http://test"),
+            current_project="test-project",
+        )
+        mock_model = MagicMock()
+        mock_model.configuration = None
+
+        with (
+            patch.object(config, "LITE_LLM_TAGS_HEADER_VALUE", "default"),
+            patch.object(config, "LITE_LLM_PROJECTS_TO_TAGS_LIST", ""),
+        ):
+            headers = _generate_litellm_headers(mock_model, ctx)
+
+        assert "x-litellm-tags" in headers
+        assert "X-CodeMie-Version" not in headers
+        assert "X-CodeMie-Project" not in headers
+
 
 class TestCreateLiteLLMChatModel:
     """Test create_litellm_chat_model() function."""

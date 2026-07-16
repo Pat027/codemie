@@ -28,7 +28,13 @@ from codemie.clients.elasticsearch import ElasticSearchClient
 from codemie.configs import config, logger
 from codemie.configs.llm_config import LLMProvider, LLMModel
 from codemie.configs.logger import current_user_email, logging_user_id
-from codemie.core.constants import DEFAULT_MAX_OUTPUT_TOKENS_4K, DEFAULT_MAX_OUTPUT_TOKENS_8K, DatasourceTypes
+from codemie.core.constants import (
+    DEFAULT_MAX_OUTPUT_TOKENS_4K,
+    DEFAULT_MAX_OUTPUT_TOKENS_8K,
+    DatasourceTypes,
+    HEADER_CODEMIE_VERSION,
+    HEADER_CODEMIE_TAGGING_PROJECT,
+)
 from codemie.core.models import ElasticSearchKwargs, GitRepo, SVNRepo, CodeFields, Application
 from codemie.rest_api.models.settings import DialCredentials, LiteLLMContext
 from codemie.service.llm_service.llm_service import llm_service, LLMService
@@ -329,6 +335,14 @@ def filter_params(base_args, optional_args, llm_model_details):
     return {**base_args, **optional_args}
 
 
+def _build_codemie_tagging_headers() -> dict[str, str]:
+    headers: dict[str, str] = {HEADER_CODEMIE_VERSION: config.APP_VERSION}
+    project = get_current_project()
+    if project:
+        headers[HEADER_CODEMIE_TAGGING_PROJECT] = project
+    return headers
+
+
 def format_headers_for_openai_api(default_headers: dict) -> None:
     """Modifies the default_headers in-place: If the key is "anthropic_beta", its value is JSON-encoded."""
     for key in default_headers:
@@ -365,7 +379,7 @@ def get_llm_by_credentials_raw(
                 return llm
 
     # Merge static config headers with dynamic headers
-    merged_headers = {}
+    merged_headers = _build_codemie_tagging_headers()
     if llm_model_details.configuration and llm_model_details.configuration.client_headers:
         merged_headers.update(llm_model_details.configuration.client_headers)
 
@@ -400,7 +414,7 @@ def get_vertex_llm(
     streaming: bool = True,
 ):
     # Merge static config headers with dynamic headers
-    merged_headers = {}
+    merged_headers = _build_codemie_tagging_headers()
     if llm_model_details.configuration and llm_model_details.configuration.client_headers:
         merged_headers.update(llm_model_details.configuration.client_headers)
 
@@ -463,11 +477,11 @@ def get_anthropic_llm(
     from langchain_anthropic import ChatAnthropic
 
     # Merge static config headers with dynamic headers
-    merged_headers = {}
+    merged_headers = _build_codemie_tagging_headers()
     if llm_model_details.configuration and llm_model_details.configuration.client_headers:
         merged_headers.update(llm_model_details.configuration.client_headers)
 
-    model_kwargs = {"extra_headers": merged_headers if merged_headers else None}
+    model_kwargs = {"extra_headers": merged_headers}
     return ChatAnthropic(
         model=llm_model_details.deployment_name,
         temperature=temperature,

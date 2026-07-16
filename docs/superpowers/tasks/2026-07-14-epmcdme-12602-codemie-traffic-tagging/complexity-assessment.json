@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "task": "Inject X-Codemie-Version and X-Codemie-Project HTTP headers into outbound LLM requests on the non-LiteLLM internal routing path, covering Azure/DIAL, Vertex AI, and Anthropic providers, with documented header precedence and tests.",
+  "generated": "2026-07-14T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 17,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Modifies src/codemie/core/constants.py (core shared constants) and src/codemie/core/dependecies.py (core LLM factory — get_llm_by_credentials_raw() plus three provider sub-functions: get_vertex_llm(), get_anthropic_llm(), and the Azure/DIAL inline path). Both files are core shared utilities. Red flag bumped this from M to L."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "PO clarification provides clear direction, but two implementation decisions are open and unspecified: (1) canonical header casing — existing constants use X-CodeMie-* (capital M) while the ticket specifies X-Codemie-* (lowercase m); and (2) deterministic header precedence policy — whether Codemie tagging headers or per-model client_headers take priority when both are set."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "The injection pattern is well-established — the LiteLLM path already uses _generate_litellm_headers() as a direct template. However, get_llm_by_credentials_raw() has zero existing test coverage, meaning the implementation must build the entire test foundation from scratch for the injection point. Bedrock must also be explicitly excluded to avoid silently passing HTTP header names as request-body fields."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M (3) to L (4): modifies core shared utilities src/codemie/core/constants.py and src/codemie/core/dependecies.py (primary LLM factory used across the entire non-LiteLLM path)"
+  ],
+  "split_recommendation": null
+}
