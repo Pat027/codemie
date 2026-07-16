@@ -162,7 +162,14 @@ class GithubClient:
                 return False
         return False
 
-    def make_request(self, method: str, url: str, headers: Dict[str, str], data: Optional[str] = None) -> Any:
+    def make_request(
+        self,
+        method: str,
+        url: str,
+        headers: Dict[str, str],
+        data: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Any:
         """
         Make authenticated request to GitHub API.
 
@@ -170,7 +177,8 @@ class GithubClient:
             method: HTTP method (GET, POST, PUT, DELETE, PATCH)
             url: Complete GitHub API URL
             headers: Request headers (Authorization will be added/overridden)
-            data: Optional JSON string for request body
+            data: Optional JSON string for request body (POST/PUT/PATCH)
+            params: Optional dict of URL query parameters (GET/HEAD/DELETE)
 
         Returns:
             JSON response from GitHub API
@@ -187,7 +195,7 @@ class GithubClient:
             headers["Authorization"] = f"Bearer {token}"
 
             # Make request
-            response = requests.request(method=method, url=url, headers=headers, data=data)
+            response = requests.request(method=method, url=url, headers=headers, data=data, params=params)
 
             # Handle auth errors for GitHub App — refresh and retry once.
             # GitHub returns 401 for invalid tokens but 404 for private repos with
@@ -201,7 +209,7 @@ class GithubClient:
                 token = self.get_auth_token()
                 headers["Authorization"] = f"Bearer {token}"
 
-                response = requests.request(method=method, url=url, headers=headers, data=data)
+                response = requests.request(method=method, url=url, headers=headers, data=data, params=params)
 
             # Raise for HTTP errors
             response.raise_for_status()

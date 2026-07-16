@@ -116,10 +116,23 @@ class GithubTool(CodeMieTool):
         if custom_headers:
             headers.update(_merge_custom_headers(custom_headers))
 
-        # Use client for authenticated request
+        method: str = (query.get('method') or '').upper()
+        method_args: dict[str, Any] = query.get('method_arguments') or {}
+
+        # GET/HEAD/DELETE: arguments go in the URL query string.
+        # POST/PUT/PATCH: arguments go in the JSON request body.
+        # Sending a body on GET is silently ignored by GitHub, so /search/issues
+        # would never receive the required `q` parameter, causing 422.
+        if method in ('GET', 'HEAD', 'DELETE'):
+            return self.client.make_request(
+                method=method,
+                url=query.get('url'),
+                headers=headers,
+                params=method_args or None,
+            )
         return self.client.make_request(
-            method=query.get('method'),
+            method=method,
             url=query.get('url'),
             headers=headers,
-            data=json.dumps(query.get('method_arguments')),
+            data=json.dumps(method_args) if method_args else None,
         )

@@ -52,7 +52,8 @@ class TestGithubTool:
             method="GET",
             url="https://api.github.com/user",
             headers={"Accept": "application/vnd.github+json", "Authorization": "Bearer ghp_123456"},
-            data=json.dumps({}),
+            data=None,
+            params=None,
         )
         assert result == {"login": "testuser", "id": 12345}
 
@@ -76,7 +77,8 @@ class TestGithubTool:
             method="GET",
             url="https://api.github.com/user",
             headers={"Accept": "application/vnd.github+json", "Authorization": "Bearer ghp_123456"},
-            data=json.dumps({}),
+            data=None,
+            params=None,
         )
         assert result == {"login": "testuser", "id": 12345}
 
@@ -109,7 +111,8 @@ class TestGithubTool:
                 "X-Custom-Header": "value",
                 "Authorization": "Bearer ghp_123456",
             },
-            data=json.dumps({}),
+            data=None,
+            params=None,
         )
         assert result == {"login": "testuser", "id": 12345}
 
@@ -147,6 +150,64 @@ class TestGithubTool:
         # Assert
         # Just verify the response was returned correctly
         assert result == {"content": "base64content", "encoding": "base64"}
+
+    @patch('codemie_tools.core.vcs.github.github_client.requests.request')
+    def test_get_request_passes_method_arguments_as_url_params(self, mock_request):
+        """GET requests must pass method_arguments as URL params, not request body.
+
+        Regression: /search/issues returned 422 because q= was sent in the body
+        instead of the URL query string.
+        """
+        config = GithubConfig(token="ghp_123456")
+        tool = GithubTool(config=config)
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"total_count": 1, "items": []}
+        mock_request.return_value = mock_response
+
+        query = {
+            "method": "GET",
+            "url": "https://api.github.com/search/issues",
+            "method_arguments": {"q": "test"},
+        }
+
+        result = tool.execute(query)
+
+        mock_request.assert_called_once_with(
+            method="GET",
+            url="https://api.github.com/search/issues",
+            headers={"Accept": "application/vnd.github+json", "Authorization": "Bearer ghp_123456"},
+            data=None,
+            params={"q": "test"},
+        )
+        assert result == {"total_count": 1, "items": []}
+
+    @patch('codemie_tools.core.vcs.github.github_client.requests.request')
+    def test_post_request_passes_method_arguments_as_json_body(self, mock_request):
+        """POST requests must pass method_arguments as JSON body, not URL params."""
+        config = GithubConfig(token="ghp_123456")
+        tool = GithubTool(config=config)
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"number": 1, "title": "Bug"}
+        mock_request.return_value = mock_response
+
+        query = {
+            "method": "POST",
+            "url": "https://api.github.com/repos/owner/repo/issues",
+            "method_arguments": {"title": "Bug", "body": "Description"},
+        }
+
+        result = tool.execute(query)
+
+        mock_request.assert_called_once_with(
+            method="POST",
+            url="https://api.github.com/repos/owner/repo/issues",
+            headers={"Accept": "application/vnd.github+json", "Authorization": "Bearer ghp_123456"},
+            data=json.dumps({"title": "Bug", "body": "Description"}),
+            params=None,
+        )
+        assert result == {"number": 1, "title": "Bug"}
 
     @patch('codemie_tools.core.vcs.github.github_client.requests.request')
     def test_execute_with_request_error(self, mock_request):

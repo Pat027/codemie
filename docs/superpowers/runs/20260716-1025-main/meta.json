@@ -1,0 +1,40 @@
+{
+  "run_id": "20260716-1025-main",
+  "mode": "autonomous",
+  "started_at": "2026-07-16T10:25:00Z",
+  "task_input": "https://jiraeu.epam.com/browse/EPMCDME-13552",
+  "branch": "EPMCDME-13552_github-get-params",
+  "branch_guard": {
+    "current_branch": "main",
+    "base_branch": "main",
+    "target_branch": "EPMCDME-13552_github-get-params",
+    "working_tree": "dirty",
+    "upstream": "in-sync",
+    "target_branch_exists": false,
+    "base_refreshed": true,
+    "decision": "continue",
+    "note": "Dirty files (github_client.py, tools.py, test_tools.py) are the EPMCDME-13552 implementation. Created feature branch; changes follow. Untracked files (dist/, 13546 plan) are excluded from commits."
+  },
+  "work_item": {
+    "canonical_path": "docs/superpowers/work-items/EPMCDME-13552.md",
+    "run_mirror": "docs/superpowers/runs/20260716-1025-main/work-item.md",
+    "event_ledger": "docs/superpowers/runs/20260716-1025-main/work-item-events.jsonl"
+  },
+  "current_phase": 10,
+  "status": "completed",
+  "escalate_on": ["security", "breaking-change"],
+  "memory_brief": "",
+  "phases": {
+    "0":  {"status": "completed", "started_at": "2026-07-16T10:25:00Z", "completed_at": "2026-07-16T10:26:00Z"},
+    "1":  {"status": "completed", "started_at": "2026-07-16T10:26:00Z", "completed_at": "2026-07-16T10:27:00Z"},
+    "2":  {"status": "completed", "started_at": "2026-07-16T10:27:00Z", "completed_at": "2026-07-16T10:28:00Z"},
+    "3":  {"status": "completed", "started_at": "2026-07-16T10:28:00Z", "completed_at": "2026-07-16T10:28:30Z", "routing": "writing-plans", "score": 9},
+    "4":  {"status": "completed", "started_at": "2026-07-16T10:28:30Z", "completed_at": "2026-07-16T10:28:30Z", "note": "skipped — routing is writing-plans"},
+    "5":  {"status": "completed", "started_at": "2026-07-16T10:28:30Z", "completed_at": "2026-07-16T10:32:00Z"},
+    "6":  {"status": "completed", "started_at": "2026-07-16T10:32:00Z", "completed_at": "2026-07-16T11:05:00Z", "commit": "5dedb2c8e"},
+    "7":  {"status": "completed", "started_at": "2026-07-16T11:05:00Z", "completed_at": "2026-07-16T11:30:00Z", "decision": "approve", "confidence": "high"},
+    "8":  {"status": "completed", "started_at": "2026-07-16T11:30:00Z", "completed_at": "2026-07-16T11:35:00Z", "ruff": "pass", "license_check": "pass", "test_drift": "pre-existing"},
+    "9":  {"status": "completed", "started_at": "2026-07-16T11:35:00Z", "completed_at": "2026-07-16T11:36:00Z", "actual_total": 9, "drift": 0},
+    "10": {"status": "completed", "started_at": "2026-07-16T11:36:00Z", "completed_at": "2026-07-16T11:37:00Z"}
+  }
+}

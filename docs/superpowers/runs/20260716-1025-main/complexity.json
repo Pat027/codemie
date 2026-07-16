@@ -1,0 +1,52 @@
+{
+  "source": "heuristic",
+  "ticket": "EPMCDME-13552",
+  "goal_summary": "Fix GithubTool to route method_arguments as URL query params for GET/HEAD/DELETE and as JSON request body for POST/PUT/PATCH",
+  "heuristic_signals": {
+    "affected_file_estimate": 3,
+    "keyword_signals": {
+      "security": false,
+      "auth": false,
+      "migration": false,
+      "breaking": false,
+      "provider": false,
+      "integration": false,
+      "refactor": false
+    },
+    "goal_word_count": 23,
+    "single_file_scope": false,
+    "multi_system_integration": false
+  },
+  "heuristic_rule_applied": "otherwise — 3 files (not single-file), no risk keywords, <7 files, no multi-system; direct 6-dim assessment applied",
+  "dimensions": {
+    "scope": 2,
+    "technical_complexity": 1,
+    "integration_risk": 2,
+    "testing_effort": 2,
+    "domain_risk": 1,
+    "uncertainty": 1
+  },
+  "total": 9,
+  "size": "XS",
+  "routing": "writing-plans",
+  "rationale": "2-source-file bug fix (parameter routing): simple conditional, no architectural change, no security/auth impact, fully specified AC, well-understood root cause",
+  "actual": {
+    "assessment_mode": "actual",
+    "assessed_at": "2026-07-16T11:35:00Z",
+    "actual_files_touched": 3,
+    "actual_diff_lines_added": 92,
+    "actual_diff_lines_removed": 10,
+    "actual_dimensions": {
+      "scope": 2,
+      "technical_complexity": 1,
+      "integration_risk": 2,
+      "testing_effort": 2,
+      "domain_risk": 1,
+      "uncertainty": 1
+    },
+    "actual_total": 9,
+    "actual_size": "XS",
+    "drift_from_estimate": 0,
+    "notes": "Implementation exactly matched plan. 3 files (github_client.py +12/-4, tools.py +16/-3, test_tools.py +64/-3). Simple set-membership conditional for routing. No scope creep, no surprises."
+  }
+}
