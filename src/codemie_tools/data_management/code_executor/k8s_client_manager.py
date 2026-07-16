@@ -20,6 +20,7 @@ with support for both in-cluster and kubeconfig-based authentication.
 """
 
 import logging
+import threading
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ class KubernetesClientManager:
         self._client_instance = None
         self._batch_client_instance = None
         self._config_loaded = False
+        self._config_lock = threading.Lock()
 
     def get_client(self):
         """
@@ -96,12 +98,15 @@ class KubernetesClientManager:
         """Load kubeconfig or in-cluster config once per manager."""
         if self._config_loaded:
             return
-        from kubernetes import config
+        with self._config_lock:
+            if self._config_loaded:
+                return
+            from kubernetes import config
 
-        if self.kubeconfig_path:
-            logger.debug(f"Loading Kubernetes config from: {self.kubeconfig_path}")
-            config.load_kube_config(config_file=self.kubeconfig_path)
-        else:
-            logger.debug("Loading Kubernetes config for in-cluster environment")
-            config.load_incluster_config()
-        self._config_loaded = True
+            if self.kubeconfig_path:
+                logger.debug(f"Loading Kubernetes config from: {self.kubeconfig_path}")
+                config.load_kube_config(config_file=self.kubeconfig_path)
+            else:
+                logger.debug("Loading Kubernetes config for in-cluster environment")
+                config.load_incluster_config()
+            self._config_loaded = True

@@ -418,3 +418,54 @@ class TestSemaphoreReleased(unittest.TestCase):
                 runner.run("print('x')")
             assert runner.semaphore.acquire(blocking=False) is True
             runner.semaphore.release()
+
+
+class TestFindJobPod(unittest.TestCase):
+    """Retry semantics for _find_job_pod: recreate the K8s client on
+    connection-level errors (ApiException status=0) and retry once."""
+
+    def setUp(self):
+        BatchJobRunner._instance = None
+        patcher = patch("codemie_tools.data_management.code_executor.batch_job_runner.KubernetesClientManager")
+        mgr_cls = patcher.start()
+        self.addCleanup(patcher.stop)
+        self.mgr = mgr_cls.return_value
+        self.core = MagicMock(name="core")
+        self.mgr.get_client.return_value = self.core
+        self.mgr.recreate_client.return_value = self.core
+        self.runner = BatchJobRunner(_make_config())
+
+    def test_returns_pod_on_success(self):
+        pod = _pod(name="p1")
+        self.core.list_namespaced_pod.return_value = MagicMock(items=[pod])
+        assert self.runner._find_job_pod("job-1") is pod
+        self.mgr.recreate_client.assert_not_called()
+
+    def test_returns_none_when_no_pods(self):
+        self.core.list_namespaced_pod.return_value = MagicMock(items=[])
+        assert self.runner._find_job_pod("job-1") is None
+        self.mgr.recreate_client.assert_not_called()
+
+    def test_connection_error_recreates_client_and_retries(self):
+        pod = _pod(name="p1")
+        self.core.list_namespaced_pod.side_effect = [
+            ApiException(status=0, reason="Handshake status 200 OK"),
+            MagicMock(items=[pod]),
+        ]
+        assert self.runner._find_job_pod("job-1") is pod
+        self.mgr.recreate_client.assert_called_once()
+        assert self.core.list_namespaced_pod.call_count == 2
+
+    def test_persistent_connection_error_returns_none_after_single_retry(self):
+        self.core.list_namespaced_pod.side_effect = ApiException(status=0, reason="Handshake status 200 OK")
+        assert self.runner._find_job_pod("job-1") is None
+        assert self.core.list_namespaced_pod.call_count == 2
+        # Client is recreated after every corrupted-pool failure (including the
+        # final one) so the next poll tick starts with a clean client.
+        assert self.mgr.recreate_client.call_count == 2
+
+    def test_api_error_does_not_retry(self):
+        self.core.list_namespaced_pod.side_effect = ApiException(status=404, reason="Not Found")
+        assert self.runner._find_job_pod("job-1") is None
+        self.mgr.recreate_client.assert_not_called()
+        assert self.core.list_namespaced_pod.call_count == 1

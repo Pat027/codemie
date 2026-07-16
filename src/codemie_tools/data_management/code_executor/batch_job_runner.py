@@ -34,6 +34,7 @@ from kubernetes.client import V1DeleteOptions
 from kubernetes.client.exceptions import ApiException
 from kubernetes.stream import stream
 from langchain_core.tools import ToolException
+from tenacity import retry, retry_if_exception, stop_after_attempt
 
 from codemie_tools.data_management.code_executor.k8s_client_manager import (
     KubernetesClientManager,
@@ -424,16 +425,33 @@ class BatchJobRunner:
             return ""
 
     def _find_job_pod(self, job_name: str):
-        core = self.client_manager.get_client()
         try:
-            pods = core.list_namespaced_pod(
-                namespace=self.config.namespace,
-                label_selector=f"job-name={job_name}",
-            ).items
+            pods = self._list_job_pods(job_name)
         except ApiException as e:
             logger.warning(f"Failed to list pods for Job {job_name}: {e}")
             return None
         return pods[0] if pods else None
+
+    @retry(
+        stop=stop_after_attempt(2),
+        retry=retry_if_exception(lambda e: isinstance(e, ApiException) and e.status == 0),
+        reraise=True,
+    )
+    def _list_job_pods(self, job_name: str) -> list:
+        core = self.client_manager.get_client()
+        try:
+            return core.list_namespaced_pod(
+                namespace=self.config.namespace,
+                label_selector=f"job-name={job_name}",
+            ).items
+        except ApiException as e:
+            # status=0 means a connection-level error (stale pool after WebSocket
+            # exec). Recreate the client so the retry — or the next poll tick —
+            # starts with a clean connection pool.
+            if e.status == 0:
+                logger.debug(f"Connection error listing pods for {job_name}, recreating K8s client")
+                self.client_manager.recreate_client()
+            raise
 
     def _delete_job(self, job_name: str) -> None:
         try:
