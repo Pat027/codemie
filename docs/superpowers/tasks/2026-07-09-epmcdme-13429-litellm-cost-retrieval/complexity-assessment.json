@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "task": "Retrieve LLM call cost from LiteLLM's bundled model_cost dict instead of calculating internally, adding litellm_model_name to LLMModel, extending get_model_cost() with litellm.model_cost lookup and YAML fallback, handling 4 edge cases, and rewriting broken test patches.",
+  "generated": "2026-07-09T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 21,
+  "size": "L",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Five components touched across four layers: LLMModel config model (llm_config.py), map_litellm_to_llm_model() adapter (enterprise/litellm/models.py), get_model_cost() service (llm_service.py), TokensCalculationCallback (tokens_callback.py), and _parse_usage_with_cost() in proxy_router.py. Red flag applied: LLMModel is a core shared config object used across multiple layers and get_model_cost() is the single cost-retrieval gateway — bumped from L (4) to XL (5)."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "New lookup approach (litellm.model_cost) has no exact precedent in the codebase. get_model_cost() has no direct unit tests — only ever mocked. All existing mock patches in test_tokens_callback.py and test_proxy_router.py will break and require full rewrites. LLMModel schema change affects a core config object. Four edge cases (Bedrock region-prefix normalization, deepseek-r1 no base_model, newer models absent from dict, batch cost fields silently dropping) can fail silently. Gated by LLM_PROXY_ENABLED, so rollback is straightforward."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Production: llm_config.py, enterprise/litellm/models.py, llm_service.py (minimum 3; possibly tokens_callback.py and proxy_router.py). Tests: test_tokens_callback.py (patch rewrites), test_proxy_router.py (patch rewrites), test_llm_service.py (new get_model_cost coverage), test_litellm_service.py (un-skip and update). Total 7-9 files across src/codemie/configs/, src/codemie/service/llm_service/, src/codemie/enterprise/litellm/, and four test directories."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Four distinct layers: Service (llm_service.py), Agent-Tool (tokens_callback.py callback), External/Integration (proxy_router.py and enterprise/litellm/models.py LiteLLM adapter), and Config/DB-Persistence (LLMModel Pydantic schema extended with litellm_model_name). No API layer changes, no SQL schema migration."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L (4) to XL (5): touches core shared utilities — LLMModel is a core config object used across multiple layers and get_model_cost() is the single gateway for cost retrieval"
+  ],
+  "split_recommendation": null
+}

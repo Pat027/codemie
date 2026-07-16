@@ -63,3 +63,4 @@ class DatasourceSearchInvokeRequest(BaseModel):
     llm_model: str = Field(default=llm_service.default_llm_model)
     code_search_params: Optional[CodeDatasourceSearchParams] = None
     params: Optional[InvokeParams] = None
+    request_id: Optional[str] = None

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import uuid
 from typing import Any, Optional
 from uuid import UUID
@@ -21,7 +22,7 @@ from langchain_core.messages import BaseMessage
 from langchain_core.messages.ai import UsageMetadata
 from langchain_core.outputs import LLMResult
 
-from codemie.configs import logger
+from codemie.configs import config, logger
 from codemie.core.utils import calculate_token_cost
 from codemie.service.request_summary_manager import request_summary_manager, LLMRun
 from codemie.service.llm_service.llm_service import llm_service
@@ -35,6 +36,19 @@ class TokensCalculationCallback(AsyncCallbackHandler):
         self.llm_model = llm_model
         self.input_tokens = 0
         self.output_tokens = 0
+
+    @staticmethod
+    def _extract_proxy_cost(generation_info: dict) -> Optional[float]:
+        """Return the pre-calculated cost from LiteLLM proxy generation_info, or None."""
+        streaming_cost = generation_info.get("litellm_cost")
+        if streaming_cost is not None:
+            with contextlib.suppress(ValueError, TypeError):
+                return float(streaming_cost)
+        cost_str = generation_info.get("headers", {}).get("x-litellm-response-cost")
+        if cost_str:
+            with contextlib.suppress(ValueError, TypeError):
+                return float(cost_str)
+        return None
 
     def on_llm_end(
         self,
@@ -50,6 +64,7 @@ class TokensCalculationCallback(AsyncCallbackHandler):
             output_tokens = 0
             cached_tokens = 0
             cache_creation_tokens = 0
+            proxy_cost: Optional[float] = None
             for gen in response.generations:
                 for gen_result in gen:
                     if gen_result.message and gen_result.message.usage_metadata:
@@ -59,18 +74,28 @@ class TokensCalculationCallback(AsyncCallbackHandler):
                         cached_tokens += usage_metadata.get("input_token_details", {}).get("cache_read", 0)
                         cache_creation_tokens += usage_metadata.get("input_token_details", {}).get("cache_creation", 0)
                         logger.debug(f"On LLM End. Usage metadata: {usage_metadata}")
-            model_costs = llm_service.get_model_cost(self.llm_model)
+                    if (
+                        proxy_cost is None
+                        and gen_result.generation_info
+                        and config.LLM_PROXY_ENABLED
+                        and config.LLM_PROXY_TRACK_USAGE
+                    ):
+                        proxy_cost = self._extract_proxy_cost(gen_result.generation_info)
 
-            # Use the utility function to calculate cost
-            # Returns: (total_cost, cached_cost, cache_creation_cost)
-            money_spent, cached_tokens_money_spent, cached_tokens_creation_cost = calculate_token_cost(
-                llm_model=self.llm_model,
-                cost_config=model_costs,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cached_tokens=cached_tokens,
-                cache_creation_tokens=cache_creation_tokens,
-            )
+            if proxy_cost is not None:
+                money_spent = proxy_cost
+                cached_tokens_money_spent = 0.0
+                cached_tokens_creation_cost = 0.0
+            else:
+                model_costs = llm_service.get_model_cost(self.llm_model)
+                money_spent, cached_tokens_money_spent, cached_tokens_creation_cost = calculate_token_cost(
+                    llm_model=self.llm_model,
+                    cost_config=model_costs,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cached_tokens=cached_tokens,
+                    cache_creation_tokens=cache_creation_tokens,
+                )
 
             llm_run = LLMRun(
                 run_id=str(run_id),

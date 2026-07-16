@@ -136,6 +136,7 @@ class ConversationService:
         thoughts: List[Thought],
         status: ConversationStatus = ConversationStatus.SUCCESS,
         user_message_received_at: datetime | None = None,
+        request_id: Optional[str] = None,
     ):
         should_create_conversation = False
         llm_model = request.llm_model if request.llm_model else assistant.llm_model_type
@@ -196,7 +197,14 @@ class ConversationService:
             user=user,
         )
         ConversationMonitoringService.send_conversation_metric(
-            user, assistant, tokens_usage, time_elapsed, conversation.conversation_id, llm_model, status
+            user,
+            assistant,
+            tokens_usage,
+            time_elapsed,
+            conversation.conversation_id,
+            llm_model,
+            status,
+            request_id=request_id,
         )
         conversation.update_conversation_assistants(assistant.id)
 

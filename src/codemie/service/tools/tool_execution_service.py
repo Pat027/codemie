@@ -121,8 +121,24 @@ class ToolExecutionService:
         Invoke a search operation on a specific datasource.
         """
         search_tool = cls.get_search_tool(datasource, request)
-        search_tool.metadata = {'llm_model': request.llm_model}
-        return search_tool.execute(query=request.query)
+        search_tool.metadata = {
+            'llm_model': request.llm_model,
+            REQUEST_ID: request.request_id or "",
+        }
+        try:
+            return search_tool.execute(query=request.query)
+        finally:
+            if request.request_id:
+                emit_llm_token_metric(
+                    name=TOOLS_USAGE_TOKENS_METRIC,
+                    request_id=request.request_id,
+                    base_attributes={
+                        MetricsAttributes.LLM_MODEL: request.llm_model or "default",
+                        MetricsAttributes.TOOL_NAME: search_tool.name,
+                        MetricsAttributes.PROJECT: datasource.project_name,
+                    },
+                )
+                request_summary_manager.clear_summary(request.request_id)
 
     @classmethod
     def invoke_tool_with_direct_creds(cls, request: ToolInvokeRequest, tool_name: str):

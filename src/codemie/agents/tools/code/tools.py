@@ -152,6 +152,7 @@ class SearchCodeRepoTool(CodeMieTool, DatasourceHealthMixin, SearchCodeRepoBaseT
             file_path=file_path,
             code_fields=self.code_fields,
             top_k=self.top_k,
+            request_id=self.metadata.get(REQUEST_ID, ""),
         ).execute()
         if self.with_filtering:
             request_id = self.metadata.get(REQUEST_ID, "")

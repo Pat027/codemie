@@ -192,6 +192,42 @@ def calculate_tokens(text: str, llm_model: str = llm_service.default_llm_model):
     return len(encoding.encode(str(text)))
 
 
+def build_embedding_llm_run(embeddings, text: str, model: str):
+    """
+    Build an LLMRun for an embedding call, preferring LiteLLM proxy cost when available.
+
+    If ``embeddings`` exposes ``consume_last_usage()`` (i.e. it is a
+    ``LiteLLMAzureOpenAIEmbeddings`` instance) and it returns non-None data,
+    the proxy's pre-calculated cost is used.  Otherwise falls back to
+    ``calculate_tokens() × model_cost.input``.
+    """
+    import uuid
+    from codemie.service.request_summary_manager import LLMRun
+
+    proxy_usage = None
+    if hasattr(embeddings, "consume_last_usage"):
+        proxy_usage = embeddings.consume_last_usage()
+
+    if proxy_usage is not None:
+        return LLMRun(
+            run_id=str(uuid.uuid4()),
+            input_tokens=proxy_usage.input_tokens,
+            output_tokens=0,
+            money_spent=proxy_usage.cost,
+            llm_model=model,
+        )
+
+    model_costs = llm_service.get_embeddings_model_cost(model)
+    input_tokens = calculate_tokens(text)
+    return LLMRun(
+        run_id=str(uuid.uuid4()),
+        input_tokens=input_tokens,
+        output_tokens=0,
+        money_spent=input_tokens * model_costs.input,
+        llm_model=model,
+    )
+
+
 @lru_cache(maxsize=128)
 def _create_pathspec_from_filter(files_filter: str) -> tuple[pathspec.PathSpec, pathspec.PathSpec, bool]:
     """

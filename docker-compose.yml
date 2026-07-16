@@ -117,6 +117,7 @@ services:
     volumes:
       - ./litellm_config.yaml:/app/config.yaml
       - ./credentials.json:/app/credentials.json
+      - ./src/codemie/enterprise/litellm/litellm_custom_callbacks.py:/app/litellm_custom_callbacks.py
     command:
       - "--config=/app/config.yaml"
     ports:

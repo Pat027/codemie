@@ -49,6 +49,7 @@ class DatasourceMonitoringCallback(DatasourceProcessorCallback):
         self.index = index
         self.user = user
         self.request_uuid = request_uuid
+        self._estimated_embedding_tokens: int = 0
         if is_resume_indexing:
             self.datasource_metric_name = DatasourceMonitoringService.DATASOURCE_RESUME_BASE_METRIC
         elif is_full_reindex:
@@ -64,23 +65,8 @@ class DatasourceMonitoringCallback(DatasourceProcessorCallback):
         self.start_time = time.time()
 
     def on_split_documents(self, docs: list[Document]):
-        """
-        Stub method to be overridden by subclasses or instances.
-        This method will be called after the data source is split into documents.
-        """
         if self.request_uuid:
-            llm_model = self.index.embeddings_model
-            model_costs = llm_service.get_embeddings_model_cost(llm_model)
-            input_tokens = sum([calculate_tokens(str(doc.page_content)) for doc in docs])
-            money_spent = input_tokens * model_costs.input
-            llm_run = LLMRun(
-                run_id=str(uuid.uuid4()),
-                input_tokens=input_tokens,
-                output_tokens=0,
-                money_spent=money_spent,
-                llm_model=llm_model,
-            )
-            request_summary_manager.update_llm_run(request_id=self.request_uuid, llm_run=llm_run)
+            self._estimated_embedding_tokens += sum(calculate_tokens(str(doc.page_content)) for doc in docs)
 
     def on_complete(self, result):
         """
@@ -118,6 +104,22 @@ class DatasourceMonitoringCallback(DatasourceProcessorCallback):
                 DatasourceMonitoringService.send_datasource_tokens_usage_metric(
                     index_info=self.index,
                     tokens_usage=usage_summary.tokens_usage,
+                    user=self.user,
+                )
+            # Last-resort fallback: no actual LLM proxy data captured — use token estimation
+            elif self._estimated_embedding_tokens > 0:
+                llm_model = self.index.embeddings_model
+                model_costs = llm_service.get_embeddings_model_cost(llm_model)
+                llm_run = LLMRun(
+                    run_id=str(uuid.uuid4()),
+                    input_tokens=self._estimated_embedding_tokens,
+                    output_tokens=0,
+                    money_spent=self._estimated_embedding_tokens * model_costs.input,
+                    llm_model=llm_model,
+                )
+                DatasourceMonitoringService.send_datasource_tokens_usage_metrics_by_model(
+                    index_info=self.index,
+                    llm_runs=[llm_run],
                     user=self.user,
                 )
 
@@ -161,6 +163,23 @@ class DatasourceMonitoringCallback(DatasourceProcessorCallback):
                 DatasourceMonitoringService.send_datasource_tokens_usage_metric(
                     index_info=self.index,
                     tokens_usage=usage_summary.tokens_usage,
+                    user=self.user,
+                    additional_attributes=error_attrs,
+                )
+            # Last-resort fallback: no actual LLM proxy data captured — use token estimation
+            elif self._estimated_embedding_tokens > 0:
+                llm_model = self.index.embeddings_model
+                model_costs = llm_service.get_embeddings_model_cost(llm_model)
+                llm_run = LLMRun(
+                    run_id=str(uuid.uuid4()),
+                    input_tokens=self._estimated_embedding_tokens,
+                    output_tokens=0,
+                    money_spent=self._estimated_embedding_tokens * model_costs.input,
+                    llm_model=llm_model,
+                )
+                DatasourceMonitoringService.send_datasource_tokens_usage_metrics_by_model(
+                    index_info=self.index,
+                    llm_runs=[llm_run],
                     user=self.user,
                     additional_attributes=error_attrs,
                 )

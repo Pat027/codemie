@@ -16,6 +16,7 @@ import contextlib
 import json
 import logging
 import time
+import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from concurrent.futures import as_completed, ThreadPoolExecutor
@@ -46,6 +47,7 @@ from codemie.rest_api.security.user import User
 from codemie.rest_api.utils.default_applications import ensure_application_exists
 from codemie.service.llm_service.llm_service import llm_service
 from codemie.service.guardrail.guardrail_service import GuardrailService
+from codemie.service.request_summary_manager import LLMRun, request_summary_manager
 
 
 class DatasourceBatchProcessingResult(BaseModel):
@@ -665,37 +667,54 @@ class BaseDatasourceProcessor(ABC):
         initial_complete_state = index.complete_state
         total_raw_docs = 0
         total_source_docs = 0
-        for doc in loader.lazy_load():
-            docs_batch.append(doc)
-            if len(docs_batch) >= batch_size:
+        try:
+            for doc in loader.lazy_load():
+                docs_batch.append(doc)
+                if len(docs_batch) >= batch_size:
+                    batch_source_count = self._process_batch(docs=docs_batch, index=index, store=store)
+                    loaded_docs += batch_source_count
+                    total_raw_docs += len(docs_batch)
+                    total_source_docs += batch_source_count
+                    self._update_complete_state_estimate(
+                        index, initial_complete_state, total_raw_docs, total_source_docs
+                    )
+
+                    # Check if datasource was deleted during batch processing
+                    try:
+                        index.update()
+                    except IndexDeletedException:
+                        logger.info(f"Datasource {index.id} was deleted during batch processing, stopping")
+                        raise
+
+                    docs_batch.clear()
+
+            if docs_batch:
                 batch_source_count = self._process_batch(docs=docs_batch, index=index, store=store)
                 loaded_docs += batch_source_count
                 total_raw_docs += len(docs_batch)
                 total_source_docs += batch_source_count
                 self._update_complete_state_estimate(index, initial_complete_state, total_raw_docs, total_source_docs)
 
-                # Check if datasource was deleted during batch processing
+                # Check if datasource was deleted during final batch
                 try:
                     index.update()
                 except IndexDeletedException:
-                    logger.info(f"Datasource {index.id} was deleted during batch processing, stopping")
+                    logger.info(f"Datasource {index.id} was deleted during final batch, stopping")
                     raise
-
-                docs_batch.clear()
-
-        if docs_batch:
-            batch_source_count = self._process_batch(docs=docs_batch, index=index, store=store)
-            loaded_docs += batch_source_count
-            total_raw_docs += len(docs_batch)
-            total_source_docs += batch_source_count
-            self._update_complete_state_estimate(index, initial_complete_state, total_raw_docs, total_source_docs)
-
-            # Check if datasource was deleted during final batch
-            try:
-                index.update()
-            except IndexDeletedException:
-                logger.info(f"Datasource {index.id} was deleted during final batch, stopping")
-                raise
+        finally:
+            if self.request_uuid and hasattr(store.embeddings, 'consume_last_usage'):
+                _usage = store.embeddings.consume_last_usage()
+                if _usage is not None:
+                    request_summary_manager.update_llm_run(
+                        request_id=self.request_uuid,
+                        llm_run=LLMRun(
+                            run_id=str(uuid.uuid4()),
+                            input_tokens=_usage.input_tokens,
+                            output_tokens=0,
+                            money_spent=_usage.cost,
+                            llm_model=self.index.embeddings_model,
+                        ),
+                    )
 
         return loaded_docs
 

@@ -59,26 +59,33 @@ class WorkflowExecutionService:
                     f"Workflow execution not found for execution_id: {self.workflow_execution_id}. "
                     "Cannot mark workflow as failed."
                 )
-                return
+            else:
+                logger.warning(
+                    f"Overall status for Execution ID: {self.workflow_execution.execution_id} "
+                    f"set to {WorkflowExecutionStatusEnum.FAILED}, Reason = {error_message}"
+                )
 
-            logger.warning(
-                f"Overall status for Execution ID: {self.workflow_execution.execution_id} "
-                f"set to {WorkflowExecutionStatusEnum.FAILED}, Reason = {error_message}"
+                self.workflow_execution.overall_status = WorkflowExecutionStatusEnum.FAILED
+                self.workflow_execution.tokens_usage = self._calculate_tokens_usage(self.workflow_execution_id)
+                self.workflow_execution.output = error_message
+
+                # Update assistant response in history
+                self._update_assistant_response_in_history(error_message)
+
+                self.workflow_execution.update(refresh=True)
+
+        if not self.workflow_execution:
+            self._flush_llm_usage_metric(
+                WorkflowExecutionStatusEnum.FAILED,
+                additional_attributes={"error_class": error_class, "error_cause": error_message},
             )
-
-            self.workflow_execution.overall_status = WorkflowExecutionStatusEnum.FAILED
-            self.workflow_execution.tokens_usage = self._calculate_tokens_usage(self.workflow_execution_id)
-            self.workflow_execution.output = error_message
-
-            # Update assistant response in history
-            self._update_assistant_response_in_history(error_message)
-
-            self.workflow_execution.update(refresh=True)
+            return
 
         WorkflowMonitoringService.send_workflow_execution_metric(
             workflow_config=self.workflow_config,
             workflow_execution_config=self.workflow_execution,
             user=self.user,
+            request_id=self.workflow_execution_id,
             additional_attributes={"error_class": error_class, "error_cause": error_message},
         )
         request_summary_manager.clear_summary(self.workflow_execution_id)
@@ -91,27 +98,38 @@ class WorkflowExecutionService:
                     f"Workflow execution not found for execution_id: {self.workflow_execution_id}. "
                     "Cannot abort workflow."
                 )
-                return
+            else:
+                logger.warning(
+                    f"Overall status for Execution ID: {self.workflow_execution.execution_id} "
+                    f"set to {WorkflowExecutionStatusEnum.ABORTED}"
+                )
+                self.workflow_execution.overall_status = WorkflowExecutionStatusEnum.ABORTED
+                calculated_tokens = self._calculate_tokens_usage(self.workflow_execution_id)
+                if calculated_tokens is not None:
+                    self.workflow_execution.tokens_usage = calculated_tokens
 
-            logger.warning(
-                f"Overall status for Execution ID: {self.workflow_execution.execution_id} "
-                f"set to {WorkflowExecutionStatusEnum.ABORTED}"
-            )
-            self.workflow_execution.overall_status = WorkflowExecutionStatusEnum.ABORTED
-            calculated_tokens = self._calculate_tokens_usage(self.workflow_execution_id)
-            if calculated_tokens is not None:
-                self.workflow_execution.tokens_usage = calculated_tokens
+                self.workflow_execution.update(refresh=True)
 
-            self.workflow_execution.update(refresh=True)
+                states = WorkflowExecutionState.get_all_by_fields(
+                    fields={EXECUTION_ID_KEYWORD: self.workflow_execution_id}
+                )
+                for state in states:
+                    if state.status in (
+                        WorkflowExecutionStatusEnum.IN_PROGRESS,
+                        WorkflowExecutionStatusEnum.INTERRUPTED,
+                    ):
+                        state.status = WorkflowExecutionStatusEnum.ABORTED
+                        state.save()
 
-            states = WorkflowExecutionState.get_all_by_fields(fields={EXECUTION_ID_KEYWORD: self.workflow_execution_id})
-            for state in states:
-                if state.status in (WorkflowExecutionStatusEnum.IN_PROGRESS, WorkflowExecutionStatusEnum.INTERRUPTED):
-                    state.status = WorkflowExecutionStatusEnum.ABORTED
-                    state.save()
+        if not self.workflow_execution:
+            self._flush_llm_usage_metric(WorkflowExecutionStatusEnum.ABORTED)
+            return
 
         WorkflowMonitoringService.send_workflow_execution_metric(
-            workflow_config=self.workflow_config, workflow_execution_config=self.workflow_execution, user=self.user
+            workflow_config=self.workflow_config,
+            workflow_execution_config=self.workflow_execution,
+            user=self.user,
+            request_id=self.workflow_execution_id,
         )
         request_summary_manager.clear_summary(self.workflow_execution_id)
 
@@ -178,6 +196,7 @@ class WorkflowExecutionService:
             self.workflow_execution.update(refresh=True)
 
     def finish(self):
+        aborted = False
         with self.workflow_execution_lock:
             self._refresh_workflow_execution()
             if not self.workflow_execution:
@@ -185,31 +204,35 @@ class WorkflowExecutionService:
                     f"Workflow execution not found for execution_id: {self.workflow_execution_id}. "
                     "Cannot mark workflow as finished."
                 )
-                return
-
-            if self.workflow_execution.overall_status == WorkflowExecutionStatusEnum.ABORTED:
-                return
-
-            self.workflow_execution.tokens_usage = self._calculate_tokens_usage(
-                self.workflow_execution_id,
-            )
-
-            if self.workflow_execution.overall_status == WorkflowExecutionStatusEnum.AUTHENTICATION_REQUIRED:
-                logger.info(
-                    f"Overall status for Execution ID: {self.workflow_execution.execution_id} "
-                    f"preserved as {WorkflowExecutionStatusEnum.AUTHENTICATION_REQUIRED}"
-                )
+            elif self.workflow_execution.overall_status == WorkflowExecutionStatusEnum.ABORTED:
+                aborted = True
             else:
-                logger.info(
-                    f"Overall status for Execution ID: {self.workflow_execution.execution_id} "
-                    f"set to {WorkflowExecutionStatusEnum.SUCCEEDED}"
+                self.workflow_execution.tokens_usage = self._calculate_tokens_usage(
+                    self.workflow_execution_id,
                 )
-                self.workflow_execution.overall_status = WorkflowExecutionStatusEnum.SUCCEEDED
 
-            # Update assistant response in history with final output
-            self._update_assistant_response_in_history(self.workflow_execution.output)
+                if self.workflow_execution.overall_status == WorkflowExecutionStatusEnum.AUTHENTICATION_REQUIRED:
+                    logger.info(
+                        f"Overall status for Execution ID: {self.workflow_execution.execution_id} "
+                        f"preserved as {WorkflowExecutionStatusEnum.AUTHENTICATION_REQUIRED}"
+                    )
+                else:
+                    logger.info(
+                        f"Overall status for Execution ID: {self.workflow_execution.execution_id} "
+                        f"set to {WorkflowExecutionStatusEnum.SUCCEEDED}"
+                    )
+                    self.workflow_execution.overall_status = WorkflowExecutionStatusEnum.SUCCEEDED
 
-            self.workflow_execution.update(refresh=True)
+                # Update assistant response in history with final output
+                self._update_assistant_response_in_history(self.workflow_execution.output)
+
+                self.workflow_execution.update(refresh=True)
+
+        if aborted:
+            return
+        if not self.workflow_execution:
+            self._flush_llm_usage_metric(WorkflowExecutionStatusEnum.SUCCEEDED)
+            return
 
         WorkflowMonitoringService.send_workflow_execution_metric(
             workflow_config=self.workflow_config,
@@ -383,6 +406,23 @@ class WorkflowExecutionService:
     def _calculate_tokens_usage(workflow_execution_id: str):
         summary = request_summary_manager.get_summary(workflow_execution_id)
         return summary.tokens_usage if summary else None
+
+    def _flush_llm_usage_metric(
+        self, status: WorkflowExecutionStatusEnum, additional_attributes: Optional[dict] = None
+    ):
+        """Emit per-run LLM metrics from the in-memory summary even when the WorkflowExecution
+        DB record is absent, then clear the summary to prevent a memory leak."""
+        summary = request_summary_manager.get_summary(self.workflow_execution_id)
+        if summary and summary.llm_runs:
+            WorkflowMonitoringService.send_workflow_execution_metric(
+                workflow_config=self.workflow_config,
+                workflow_execution_config=None,
+                user=self.user,
+                request_id=self.workflow_execution_id,
+                status=status,
+                additional_attributes=additional_attributes,
+            )
+        request_summary_manager.clear_summary(self.workflow_execution_id)
 
     def _update_assistant_response_in_history(self, assistant_response: str | None):
         """

@@ -21,6 +21,7 @@ from pydantic import ValidationError
 
 from codemie.core.models import KnowledgeBase
 from codemie.service.llm_service.llm_service import llm_service
+from codemie.service.request_summary_manager import LLMRun
 from codemie.service.search_and_rerank.kb import SearchAndRerankKB, LLMSourcesRouting
 
 
@@ -993,3 +994,125 @@ class TestSearchAndRerankKB:
             error_msg = logger_mock.error.call_args[0][0]
             assert f"Elasticsearch KNN vector search error for request {kb_instance.request_id}" in error_msg
             assert "Elasticsearch error" in error_msg
+
+
+class TestKBEmbeddingTracking:
+    """LLMRun is pushed to request_summary_manager after embed_query when request_id is set."""
+
+    @pytest.fixture
+    def kb_index_mock(self):
+        mock = MagicMock()
+        mock.repo_name = "test_repo"
+        mock.project_name = "test_project"
+        mock.full_name = "test_repo"
+        mock.embeddings_model = "text-embedding-ada-002"
+        mock.get_index_identifier.return_value = "test-index"
+        return mock
+
+    def _make_instance(self, kb_index_mock, request_id=""):
+        instance = SearchAndRerankKB(
+            query="find docs about auth",
+            kb_index=kb_index_mock,
+            llm_model=llm_service.default_llm_model,
+            top_k=5,
+            request_id=request_id,
+        )
+        instance.index_name = "test-index"
+        return instance
+
+    def test_pushes_llm_run_when_request_id_set(self, mocker, kb_index_mock):
+        """A LLMRun with output_tokens=0 is added to request_summary_manager."""
+        import uuid as _uuid
+
+        _mod = "codemie.service.search_and_rerank.kb"
+        instance = self._make_instance(kb_index_mock, request_id="req-embed-001")
+
+        mock_embeddings = MagicMock()
+        mock_embeddings.embed_query.return_value = [0.1, 0.2, 0.3]
+        mocker.patch(f"{_mod}.get_embeddings_model", return_value=mock_embeddings)
+        mocker.patch(
+            f"{_mod}.llm_service.get_embedding_deployment_name",
+            return_value="ada-002-deployment",
+        )
+
+        mock_llm_run = LLMRun(
+            run_id=str(_uuid.uuid4()),
+            input_tokens=5,
+            output_tokens=0,
+            money_spent=5 * 0.0001,
+            llm_model="ada-002-deployment",
+        )
+        mocker.patch(f"{_mod}.build_embedding_llm_run", return_value=mock_llm_run)
+
+        mock_rsm = mocker.patch(f"{_mod}.request_summary_manager")
+
+        es_mock = mocker.patch(
+            "codemie.service.search_and_rerank.SearchAndRerankBase.es", new_callable=mocker.PropertyMock
+        )
+        es_mock.return_value.search.return_value = {"hits": {"hits": []}}
+
+        instance._knn_vector_search()
+
+        mock_rsm.update_llm_run.assert_called_once()
+        _, call_kwargs = mock_rsm.update_llm_run.call_args
+        assert call_kwargs["request_id"] == "req-embed-001"
+        llm_run_arg = call_kwargs["llm_run"]
+        assert isinstance(llm_run_arg, LLMRun)
+        assert llm_run_arg.output_tokens == 0
+        assert llm_run_arg.input_tokens == 5
+        assert llm_run_arg.llm_model == "ada-002-deployment"
+        assert llm_run_arg.money_spent == 5 * 0.0001
+
+    def test_skips_llm_run_when_request_id_absent(self, mocker, kb_index_mock):
+        """No update_llm_run call when request_id is empty string."""
+        instance = self._make_instance(kb_index_mock, request_id="")
+
+        mock_embeddings = MagicMock()
+        mock_embeddings.embed_query.return_value = [0.1, 0.2, 0.3]
+        mocker.patch("codemie.service.search_and_rerank.kb.get_embeddings_model", return_value=mock_embeddings)
+        mocker.patch(
+            "codemie.service.search_and_rerank.kb.llm_service.get_embedding_deployment_name",
+            return_value="ada-002-deployment",
+        )
+
+        mock_rsm = mocker.patch("codemie.service.search_and_rerank.kb.request_summary_manager")
+
+        es_mock = mocker.patch(
+            "codemie.service.search_and_rerank.SearchAndRerankBase.es", new_callable=mocker.PropertyMock
+        )
+        es_mock.return_value.search.return_value = {"hits": {"hits": []}}
+
+        instance._knn_vector_search()
+
+        mock_rsm.update_llm_run.assert_not_called()
+
+    def test_uses_build_embedding_llm_run(self, mocker, kb_index_mock):
+        """_knn_vector_search delegates LLMRun construction to build_embedding_llm_run."""
+        _mod = "codemie.service.search_and_rerank.kb"
+        instance = self._make_instance(kb_index_mock, request_id="req-kb-002")
+
+        mock_embeddings = MagicMock()
+        mock_embeddings.embed_query.return_value = [0.1, 0.2, 0.3]
+        mocker.patch(f"{_mod}.get_embeddings_model", return_value=mock_embeddings)
+        mocker.patch(
+            f"{_mod}.llm_service.get_embedding_deployment_name",
+            return_value="ada-002-deployment",
+        )
+
+        mock_llm_run = MagicMock()
+        mock_build = mocker.patch(f"{_mod}.build_embedding_llm_run", return_value=mock_llm_run)
+
+        mock_rsm = mocker.patch(f"{_mod}.request_summary_manager")
+
+        es_mock = mocker.patch(
+            "codemie.service.search_and_rerank.SearchAndRerankBase.es", new_callable=mocker.PropertyMock
+        )
+        es_mock.return_value.search.return_value = {"hits": {"hits": []}}
+
+        instance._knn_vector_search()
+
+        mock_build.assert_called_once_with(mock_embeddings, "find docs about auth", "ada-002-deployment")
+        mock_rsm.update_llm_run.assert_called_once_with(
+            request_id="req-kb-002",
+            llm_run=mock_llm_run,
+        )

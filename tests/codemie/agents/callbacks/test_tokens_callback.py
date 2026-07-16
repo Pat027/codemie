@@ -333,3 +333,229 @@ def test_on_llm_end_with_no_cache_cost_config(
     assert call_args['llm_run'].cached_tokens == 0
     assert call_args['llm_run'].cached_tokens_money_spent == 0.0
     assert call_args['llm_run'].cached_tokens_creation_cost == 0.0
+
+
+@patch('codemie.agents.callbacks.tokens_callback.llm_service.get_model_cost')
+@patch('codemie.agents.callbacks.tokens_callback.request_summary_manager.update_llm_run')
+@patch('codemie.agents.callbacks.tokens_callback.calculate_token_cost')
+def test_on_llm_error_records_partial_tokens(
+    mock_calculate_token_cost, mock_update_llm_run, mock_get_model_cost, callback, mock_model_costs
+):
+    """on_llm_error records token usage when the provider returns a partial response."""
+    message = BaseMessage(type="", content="", usage_metadata={"input_tokens": 100, "output_tokens": 5})
+    generation = ChatGeneration(text="", message=message)
+    partial_response = LLMResult(generations=[[generation]])
+
+    mock_get_model_cost.return_value = mock_model_costs
+    mock_calculate_token_cost.return_value = (0.0001, 0.0, 0.0)
+
+    callback.on_llm_error(
+        error=RuntimeError("stream interrupted"),
+        run_id=UUID('12345678-1234-5678-1234-567812345678'),
+        response=partial_response,
+    )
+
+    mock_calculate_token_cost.assert_called_once_with(
+        llm_model=LLMService.BASE_NAME_GPT_41_MINI,
+        cost_config=mock_model_costs,
+        input_tokens=100,
+        output_tokens=5,
+        cached_tokens=0,
+        cache_creation_tokens=0,
+    )
+    mock_update_llm_run.assert_called_once()
+    call_args = mock_update_llm_run.call_args[1]
+    assert call_args['llm_run'].input_tokens == 100
+    assert call_args['llm_run'].output_tokens == 5
+    assert call_args['llm_run'].money_spent == 0.0001
+
+
+def test_on_llm_error_skips_update_when_no_response(callback):
+    """on_llm_error does nothing when the provider sends no response (no kwargs response)."""
+    with patch('codemie.agents.callbacks.tokens_callback.request_summary_manager.update_llm_run') as mock_update:
+        callback.on_llm_error(
+            error=RuntimeError("no response"),
+            run_id=UUID('12345678-1234-5678-1234-567812345678'),
+        )
+        mock_update.assert_not_called()
+
+
+def test_on_llm_error_skips_update_when_zero_tokens(callback):
+    """on_llm_error does nothing when the partial response has zero token counts."""
+    message = BaseMessage(type="", content="", usage_metadata={"input_tokens": 0, "output_tokens": 0})
+    generation = ChatGeneration(text="", message=message)
+    zero_response = LLMResult(generations=[[generation]])
+
+    with patch('codemie.agents.callbacks.tokens_callback.request_summary_manager.update_llm_run') as mock_update:
+        callback.on_llm_error(
+            error=RuntimeError("zero tokens"),
+            run_id=UUID('12345678-1234-5678-1234-567812345678'),
+            response=zero_response,
+        )
+        mock_update.assert_not_called()
+
+
+@patch('codemie.agents.callbacks.tokens_callback.config')
+@patch('codemie.agents.callbacks.tokens_callback.request_summary_manager.update_llm_run')
+@patch('codemie.agents.callbacks.tokens_callback.calculate_token_cost')
+def test_on_llm_end_uses_proxy_cost_header(mock_calculate_token_cost, mock_update_llm_run, mock_config, callback):
+    """When x-litellm-response-cost header is present and proxy tracking is on, use it directly."""
+    mock_config.LLM_PROXY_ENABLED = True
+    mock_config.LLM_PROXY_TRACK_USAGE = True
+    message = BaseMessage(
+        type="",
+        content="Test response",
+        usage_metadata={"input_tokens": 10, "output_tokens": 20},
+    )
+    generation = ChatGeneration(
+        text="Test response",
+        message=message,
+        generation_info={"headers": {"x-litellm-response-cost": "0.0042"}},
+    )
+    result = LLMResult(generations=[[generation]])
+
+    callback.on_llm_end(response=result, run_id=UUID('12345678-1234-5678-1234-567812345678'))
+
+    mock_calculate_token_cost.assert_not_called()
+    mock_update_llm_run.assert_called_once()
+    call_args = mock_update_llm_run.call_args[1]
+    assert call_args['llm_run'].money_spent == 0.0042
+    assert call_args['llm_run'].cached_tokens_money_spent == 0.0
+    assert call_args['llm_run'].cached_tokens_creation_cost == 0.0
+    assert call_args['llm_run'].input_tokens == 10
+    assert call_args['llm_run'].output_tokens == 20
+
+
+@patch('codemie.agents.callbacks.tokens_callback.llm_service.get_model_cost')
+@patch('codemie.agents.callbacks.tokens_callback.request_summary_manager.update_llm_run')
+@patch('codemie.agents.callbacks.tokens_callback.calculate_token_cost')
+def test_on_llm_end_falls_back_to_calculate_when_header_absent(
+    mock_calculate_token_cost, mock_update_llm_run, mock_get_model_cost, callback
+):
+    """When x-litellm-response-cost header is absent, fall back to calculate_token_cost."""
+    message = BaseMessage(
+        type="",
+        content="Test response",
+        usage_metadata={"input_tokens": 10, "output_tokens": 20},
+    )
+    generation = ChatGeneration(text="Test response", message=message)
+    result = LLMResult(generations=[[generation]])
+
+    mock_get_model_cost.return_value = CostConfig(input=0.001, output=0.002)
+    mock_calculate_token_cost.return_value = (0.05, 0.0, 0.0)
+
+    callback.on_llm_end(response=result, run_id=UUID('12345678-1234-5678-1234-567812345678'))
+
+    mock_calculate_token_cost.assert_called_once()
+    call_args = mock_update_llm_run.call_args[1]
+    assert call_args['llm_run'].money_spent == 0.05
+
+
+@patch('codemie.agents.callbacks.tokens_callback.config')
+@patch('codemie.agents.callbacks.tokens_callback.request_summary_manager.update_llm_run')
+@patch('codemie.agents.callbacks.tokens_callback.calculate_token_cost')
+def test_on_llm_end_uses_litellm_cost_from_generation_info(
+    mock_calculate_token_cost, mock_update_llm_run, mock_config, callback
+):
+    """When litellm_cost is in generation_info and proxy tracking is on, use it directly."""
+    mock_config.LLM_PROXY_ENABLED = True
+    mock_config.LLM_PROXY_TRACK_USAGE = True
+    message = BaseMessage(
+        type="",
+        content="Test response",
+        usage_metadata={"input_tokens": 10, "output_tokens": 20},
+    )
+    generation = ChatGeneration(
+        text="Test response",
+        message=message,
+        generation_info={"litellm_cost": 0.0099},
+    )
+    result = LLMResult(generations=[[generation]])
+
+    callback.on_llm_end(response=result, run_id=UUID('12345678-1234-5678-1234-567812345678'))
+
+    mock_calculate_token_cost.assert_not_called()
+    call_args = mock_update_llm_run.call_args[1]
+    assert call_args['llm_run'].money_spent == 0.0099
+    assert call_args['llm_run'].cached_tokens_money_spent == 0.0
+    assert call_args['llm_run'].cached_tokens_creation_cost == 0.0
+
+
+@patch('codemie.agents.callbacks.tokens_callback.llm_service.get_model_cost')
+@patch('codemie.agents.callbacks.tokens_callback.config')
+@patch('codemie.agents.callbacks.tokens_callback.request_summary_manager.update_llm_run')
+@patch('codemie.agents.callbacks.tokens_callback.calculate_token_cost')
+def test_on_llm_end_falls_back_when_cost_header_invalid(
+    mock_calculate_token_cost, mock_update_llm_run, mock_config, mock_get_model_cost, callback
+):
+    """When x-litellm-response-cost is a non-numeric string, fall back to calculate_token_cost."""
+    mock_config.LLM_PROXY_ENABLED = True
+    mock_config.LLM_PROXY_TRACK_USAGE = True
+    message = BaseMessage(
+        type="",
+        content="Test response",
+        usage_metadata={"input_tokens": 10, "output_tokens": 20},
+    )
+    for bad_value in ("None", "", "error"):
+        mock_calculate_token_cost.reset_mock()
+        mock_update_llm_run.reset_mock()
+        generation = ChatGeneration(
+            text="Test response",
+            message=message,
+            generation_info={"headers": {"x-litellm-response-cost": bad_value}},
+        )
+        result = LLMResult(generations=[[generation]])
+        mock_get_model_cost.return_value = CostConfig(input=0.001, output=0.002)
+        mock_calculate_token_cost.return_value = (0.05, 0.0, 0.0)
+
+        callback.on_llm_end(response=result, run_id=UUID('12345678-1234-5678-1234-567812345678'))
+
+        mock_calculate_token_cost.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "proxy_enabled,track_usage",
+    [
+        (False, True),
+        (True, False),
+        (False, False),
+    ],
+)
+@patch('codemie.agents.callbacks.tokens_callback.llm_service.get_model_cost')
+@patch('codemie.agents.callbacks.tokens_callback.config')
+@patch('codemie.agents.callbacks.tokens_callback.request_summary_manager.update_llm_run')
+@patch('codemie.agents.callbacks.tokens_callback.calculate_token_cost')
+def test_on_llm_end_ignores_proxy_cost_when_gate_disabled(
+    mock_calculate_token_cost,
+    mock_update_llm_run,
+    mock_config,
+    mock_get_model_cost,
+    proxy_enabled,
+    track_usage,
+    callback,
+):
+    """Proxy cost is ignored when LLM_PROXY_ENABLED or LLM_PROXY_TRACK_USAGE is False."""
+    mock_config.LLM_PROXY_ENABLED = proxy_enabled
+    mock_config.LLM_PROXY_TRACK_USAGE = track_usage
+    message = BaseMessage(
+        type="",
+        content="Test response",
+        usage_metadata={"input_tokens": 5, "output_tokens": 10},
+    )
+    generation = ChatGeneration(
+        text="Test response",
+        message=message,
+        generation_info={
+            "litellm_cost": 0.9999,
+            "headers": {"x-litellm-response-cost": "0.9999"},
+        },
+    )
+    result = LLMResult(generations=[[generation]])
+    mock_get_model_cost.return_value = CostConfig(input=0.001, output=0.002)
+    mock_calculate_token_cost.return_value = (0.01, 0.0, 0.0)
+
+    callback.on_llm_end(response=result, run_id=UUID('12345678-1234-5678-1234-567812345678'))
+
+    mock_calculate_token_cost.assert_called_once()
+    call_args = mock_update_llm_run.call_args[1]
+    assert call_args['llm_run'].money_spent == 0.01

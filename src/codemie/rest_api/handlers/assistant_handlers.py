@@ -373,6 +373,7 @@ class AssistantRequestHandler(ABC):
             thoughts=self._filter_thoughts(data.thoughts),
             status=data.status,
             user_message_received_at=data.user_message_received_at,
+            request_id=self.request_uuid,
         )
         request_summary_manager.clear_summary(self.request_uuid)
 

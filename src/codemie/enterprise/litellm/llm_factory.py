@@ -15,11 +15,12 @@
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
-from langchain_openai import AzureChatOpenAI
+from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
 from langchain_core.language_models import LanguageModelInput
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel
@@ -33,7 +34,88 @@ if TYPE_CHECKING:
     from codemie.configs.llm_config import LLMModel
     from codemie.service.budget.budget_enums import BudgetCategory as CoreBudgetCategory
     from codemie.rest_api.models.settings import LiteLLMContext, LiteLLMCredentials
-    from langchain_openai import AzureOpenAIEmbeddings
+
+
+@dataclass
+class EmbeddingUsage:
+    """Accumulated embedding cost captured from LiteLLM proxy response headers."""
+
+    input_tokens: int
+    cost: float
+
+
+class EmbeddingClientWrapper:
+    """
+    Wraps the OpenAI SDK embeddings resource to intercept the raw HTTP response.
+
+    Calls ``_real.with_raw_response.create(**kwargs)``, reads the
+    ``x-litellm-response-cost`` header injected by the LiteLLM proxy, and
+    accumulates tokens + cost across all calls until :meth:`consume_last_usage`
+    drains the accumulator.  Thread-safe for use inside ThreadPoolExecutor.
+    """
+
+    __slots__ = ('_real', '_lock', '_tokens', '_cost', '_has_data')
+
+    def __init__(self, real_client: Any) -> None:
+        self._real = real_client
+        self._lock = threading.Lock()
+        self._tokens: int = 0
+        self._cost: float = 0.0
+        self._has_data: bool = False
+
+    def create(self, **kwargs: Any) -> Any:
+        raw = self._real.with_raw_response.create(**kwargs)
+        parsed = raw.parse()
+        cost_str = raw.headers.get("x-litellm-response-cost")
+        if cost_str is not None:
+            try:
+                cost = float(cost_str)
+            except (ValueError, TypeError):
+                cost = None
+        else:
+            cost = None
+
+        if cost is not None and parsed.usage is not None:
+            with self._lock:
+                self._tokens += parsed.usage.prompt_tokens
+                self._cost += cost
+                self._has_data = True
+
+        return parsed
+
+    def consume_last_usage(self) -> EmbeddingUsage | None:
+        with self._lock:
+            if not self._has_data:
+                return None
+            usage = EmbeddingUsage(input_tokens=self._tokens, cost=self._cost)
+            self._tokens = 0
+            self._cost = 0.0
+            self._has_data = False
+            return usage
+
+
+class LiteLLMAzureOpenAIEmbeddings(AzureOpenAIEmbeddings):
+    """
+    AzureOpenAIEmbeddings subclass that captures the LiteLLM proxy cost header.
+
+    Replaces ``self.client`` with an :class:`EmbeddingClientWrapper` after the
+    parent ``__init__`` runs, so every ``embed_query`` / ``embed_documents``
+    call routes through the wrapper and accumulates real cost data from the
+    ``x-litellm-response-cost`` response header.
+
+    Call :meth:`consume_last_usage` after an embedding run to drain the
+    accumulated :class:`EmbeddingUsage`; returns ``None`` if no proxy cost was
+    captured.
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        original_client = self.client
+        object.__setattr__(self, 'client', EmbeddingClientWrapper(original_client))
+
+    def consume_last_usage(self) -> EmbeddingUsage | None:
+        return self.client.consume_last_usage()
+
 
 _BM = TypeVar("_BM", bound=BaseModel)
 _DictOrPydanticClass = dict[str, Any] | type[_BM]
@@ -119,6 +201,24 @@ class LiteLLMChatOpenAI(AzureChatOpenAI):
         return super().with_structured_output(
             schema, method="function_calling", include_raw=include_raw, strict=strict, **kwargs
         )
+
+    def _convert_chunk_to_generation_chunk(
+        self,
+        chunk: dict,
+        default_chunk_class: type,
+        base_generation_info: dict | None,
+    ):
+        gen_chunk = super()._convert_chunk_to_generation_chunk(chunk, default_chunk_class, base_generation_info)
+        if gen_chunk is None:
+            return None
+        token_usage = chunk.get("usage") if isinstance(chunk, dict) else None
+        if token_usage and (cost := token_usage.get("cost")) is not None:
+            from langchain_core.outputs import ChatGenerationChunk
+
+            info = dict(gen_chunk.generation_info or {})
+            info["litellm_cost"] = cost
+            return ChatGenerationChunk(message=gen_chunk.message, generation_info=info)
+        return gen_chunk
 
 
 def create_litellm_chat_model(
@@ -223,6 +323,7 @@ def _build_chat_model_base_args(
         'max_retries': config.AZURE_OPENAI_MAX_RETRIES,
         'temperature': temperature,
         'top_p': top_p,
+        'include_response_headers': config.LLM_PROXY_TRACK_USAGE,
     }
 
 
@@ -692,8 +793,6 @@ def create_litellm_embedding_model(
     Returns:
         AzureOpenAIEmbeddings instance configured for LiteLLM proxy
     """
-    from langchain_openai import AzureOpenAIEmbeddings
-
     logger.debug(f"Creating LiteLLM embedding model: {embedding_model}")
 
     # Extract credentials
@@ -717,7 +816,7 @@ def create_litellm_embedding_model(
     if merged_headers:
         embedding_params['default_headers'] = merged_headers
 
-    return AzureOpenAIEmbeddings(**embedding_params)
+    return LiteLLMAzureOpenAIEmbeddings(**embedding_params)
 
 
 def generate_litellm_headers_from_context(

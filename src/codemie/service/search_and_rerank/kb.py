@@ -24,8 +24,10 @@ from pydantic import BaseModel, Field
 from codemie.chains.kb_sources_selector_chain import KBSourcesSelectorChain
 from codemie.configs import logger
 from codemie.core.dependecies import get_embeddings_model, get_llm_by_credentials
+from codemie.core.utils import build_embedding_llm_run
 from codemie.rest_api.models.index import IndexInfo
 from codemie.service.llm_service.llm_service import llm_service
+from codemie.service.request_summary_manager import request_summary_manager
 from codemie.enterprise.observability import get_observability_provider
 from codemie.service.search_and_rerank.base import SearchAndRerankBase, es_response_to_document
 from codemie.service.search_and_rerank.rrf import RRF
@@ -342,6 +344,12 @@ class SearchAndRerankKB(SearchAndRerankBase):
 
             # Create embedding vector from the query
             query_vector = embeddings.embed_query(self.query)
+
+            if self.request_id:
+                request_summary_manager.update_llm_run(
+                    request_id=self.request_id,
+                    llm_run=build_embedding_llm_run(embeddings, self.query, embeddings_model),
+                )
 
             # Calculate appropriate values for top_k and candidates
             knn_top_k = self.top_k * self.KNN_CANDIDATES_MULTIPLIER

@@ -588,3 +588,53 @@ class TestLiteLLMChatOpenAI:
 
         with pytest.raises(ValueError, match="tools"):
             instance.with_structured_output(OutputSchema, tools=["some_tool"])
+
+    def test_convert_chunk_injects_litellm_cost(self):
+        """_convert_chunk_to_generation_chunk injects cost from streaming usage into generation_info."""
+        from langchain_core.messages import AIMessageChunk
+        from codemie.enterprise.litellm.llm_factory import LiteLLMChatOpenAI
+
+        instance = self._make_instance()
+
+        # Simulate a final streaming chunk with cost in usage (no choices)
+        chunk = {
+            "choices": [],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150, "cost": 0.0042},
+        }
+
+        with patch.object(LiteLLMChatOpenAI.__bases__[0], "_convert_chunk_to_generation_chunk") as mock_super:
+            from langchain_core.outputs import ChatGenerationChunk
+
+            mock_super.return_value = ChatGenerationChunk(
+                message=AIMessageChunk(content=""),
+                generation_info=None,
+            )
+            result = instance._convert_chunk_to_generation_chunk(chunk, AIMessageChunk, {})
+
+        assert result is not None
+        assert result.generation_info is not None
+        assert result.generation_info.get("litellm_cost") == 0.0042
+
+    def test_convert_chunk_skips_inject_when_no_cost(self):
+        """_convert_chunk_to_generation_chunk does not add litellm_cost when usage has no cost."""
+        from langchain_core.messages import AIMessageChunk
+        from codemie.enterprise.litellm.llm_factory import LiteLLMChatOpenAI
+
+        instance = self._make_instance()
+
+        chunk = {
+            "choices": [],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+        }
+
+        with patch.object(LiteLLMChatOpenAI.__bases__[0], "_convert_chunk_to_generation_chunk") as mock_super:
+            from langchain_core.outputs import ChatGenerationChunk
+
+            mock_super.return_value = ChatGenerationChunk(
+                message=AIMessageChunk(content=""),
+                generation_info=None,
+            )
+            result = instance._convert_chunk_to_generation_chunk(chunk, AIMessageChunk, {})
+
+        assert result is not None
+        assert (result.generation_info or {}).get("litellm_cost") is None

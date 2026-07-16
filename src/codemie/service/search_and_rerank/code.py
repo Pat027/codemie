@@ -12,15 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, List, Tuple
+from typing import Any, List, Optional, Tuple
 
 from langchain_core.documents import Document
 
 from codemie.configs import logger
 from codemie.core.dependecies import get_indexed_repo, get_embeddings_model, get_repo_from_fields
 from codemie.core.models import CodeFields
+from codemie.core.utils import build_embedding_llm_run
 from codemie.service.llm_service.llm_service import llm_service
 from codemie.enterprise.observability import get_observability_provider
+from codemie.service.request_summary_manager import request_summary_manager
 from codemie.service.search_and_rerank.base import SearchAndRerankBase, es_response_to_document
 from codemie.service.search_and_rerank.rrf import RRF
 
@@ -55,6 +57,7 @@ class SearchAndRerankCode(SearchAndRerankBase):
         code_fields: CodeFields,
         top_k: int,
         use_knn_search: bool = True,
+        request_id: Optional[str] = None,
     ):
         """
         Initialize the search and rerank operation.
@@ -80,6 +83,7 @@ class SearchAndRerankCode(SearchAndRerankBase):
         self.code_fields = code_fields
         self.top_k = top_k
         self.use_knn_search = use_knn_search
+        self.request_id = request_id or ""
         self.index_name = self._get_index_name()
 
     def execute(self):
@@ -136,6 +140,12 @@ class SearchAndRerankCode(SearchAndRerankBase):
         embeddings_model = llm_service.get_embedding_deployment_name(git_repo.embeddings_model)
         embeddings = get_embeddings_model(embeddings_model)
         query_vector = embeddings.embed_query(self.query)
+
+        if self.request_id:
+            request_summary_manager.update_llm_run(
+                request_id=self.request_id,
+                llm_run=build_embedding_llm_run(embeddings, self.query, embeddings_model),
+            )
 
         knn_top_k = self.top_k * self.KNN_MULTIPLIER
         num_candidates = min(self.KNN_MULTIPLIER * knn_top_k, self.MAX_CANDIDATES)

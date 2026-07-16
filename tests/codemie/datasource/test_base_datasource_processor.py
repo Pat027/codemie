@@ -352,3 +352,168 @@ class TestEndToEnd:
 
         # Verify apply_guardrails was called at least once (should stop after first block)
         assert mock_apply_guardrails.call_count >= 1
+
+
+class TestLoadAndProcessDocumentsEmbeddingDrain:
+    """Tests for the try/finally embedding cost drain in _load_and_process_documents."""
+
+    def _make_mock_store(self, consume_last_usage_return):
+        mock_store = MagicMock()
+        mock_store._store._create_index_if_not_exists.return_value = None
+        mock_store.embeddings.consume_last_usage.return_value = consume_last_usage_return
+        return mock_store
+
+    @patch('codemie.datasource.base_datasource_processor.request_summary_manager')
+    @patch('codemie.datasource.base_datasource_processor.ElasticSearchClient')
+    @patch('codemie.datasource.base_datasource_processor.llm_service')
+    @patch.object(ConcreteDatasourceProcessor, '_update_complete_state_estimate')
+    @patch.object(ConcreteDatasourceProcessor, '_process_batch', return_value=1)
+    @patch.object(ConcreteDatasourceProcessor, '_get_store_by_index')
+    def test_finally_drains_proxy_cost_after_success(
+        self,
+        mock_get_store,
+        mock_process_batch,
+        mock_update_state,
+        mock_llm_service,
+        mock_es_client,
+        mock_rsm,
+        mock_user,
+        mock_index,
+    ):
+        """When consume_last_usage returns usage, update_llm_run is called in finally."""
+        from codemie.enterprise.litellm.llm_factory import EmbeddingUsage
+
+        usage = EmbeddingUsage(input_tokens=200, cost=0.005)
+        mock_store = self._make_mock_store(usage)
+        mock_get_store.return_value = mock_store
+        mock_llm_service.get_embedding_deployment_name.return_value = "emb-model"
+        mock_es_client.get_client.return_value.indices.exists.return_value.meta.status = 404
+        mock_index.embeddings_model = "text-embedding-3-small"
+        mock_index.complete_state = 0
+
+        processor = ConcreteDatasourceProcessor("ds", mock_user, mock_index, request_uuid="req-456")
+        processor.index = mock_index
+
+        loader = MagicMock()
+        loader.lazy_load.return_value = iter([Document(page_content="hello")])
+
+        processor._load_and_process_documents(loader=loader, index=mock_index, batch_size=10)
+
+        llm_runs = [c.kwargs['llm_run'] for c in mock_rsm.update_llm_run.call_args_list]
+        drain_runs = [r for r in llm_runs if r.money_spent == pytest.approx(0.005)]
+        assert len(drain_runs) == 1
+        assert drain_runs[0].input_tokens == 200
+        assert drain_runs[0].output_tokens == 0
+
+    @patch('codemie.datasource.base_datasource_processor.request_summary_manager')
+    @patch('codemie.datasource.base_datasource_processor.ElasticSearchClient')
+    @patch('codemie.datasource.base_datasource_processor.llm_service')
+    @patch.object(ConcreteDatasourceProcessor, '_update_complete_state_estimate')
+    @patch.object(ConcreteDatasourceProcessor, '_get_store_by_index')
+    def test_finally_drains_proxy_cost_even_if_batch_raises(
+        self,
+        mock_get_store,
+        mock_update_state,
+        mock_llm_service,
+        mock_es_client,
+        mock_rsm,
+        mock_user,
+        mock_index,
+    ):
+        """The drain fires even when the batch loop raises an exception."""
+        from codemie.enterprise.litellm.llm_factory import EmbeddingUsage
+
+        usage = EmbeddingUsage(input_tokens=100, cost=0.002)
+        mock_store = self._make_mock_store(usage)
+        mock_get_store.return_value = mock_store
+        mock_llm_service.get_embedding_deployment_name.return_value = "emb-model"
+        mock_es_client.get_client.return_value.indices.exists.return_value.meta.status = 404
+        mock_index.embeddings_model = "text-embedding-3-small"
+        mock_index.complete_state = 0
+
+        processor = ConcreteDatasourceProcessor("ds", mock_user, mock_index, request_uuid="req-789")
+        processor.index = mock_index
+
+        with patch.object(ConcreteDatasourceProcessor, '_process_batch', side_effect=RuntimeError("batch failed")):
+            loader = MagicMock()
+            loader.lazy_load.return_value = iter([Document(page_content="doc")] * 15)
+
+            with pytest.raises(RuntimeError):
+                processor._load_and_process_documents(loader=loader, index=mock_index, batch_size=10)
+
+        llm_runs = [c.kwargs['llm_run'] for c in mock_rsm.update_llm_run.call_args_list]
+        drain_runs = [r for r in llm_runs if r.money_spent == pytest.approx(0.002)]
+        assert len(drain_runs) == 1
+
+    @patch('codemie.datasource.base_datasource_processor.request_summary_manager')
+    @patch('codemie.datasource.base_datasource_processor.ElasticSearchClient')
+    @patch('codemie.datasource.base_datasource_processor.llm_service')
+    @patch.object(ConcreteDatasourceProcessor, '_update_complete_state_estimate')
+    @patch.object(ConcreteDatasourceProcessor, '_process_batch', return_value=1)
+    @patch.object(ConcreteDatasourceProcessor, '_get_store_by_index')
+    def test_no_llm_run_from_drain_when_consume_last_usage_returns_none(
+        self,
+        mock_get_store,
+        mock_process_batch,
+        mock_update_state,
+        mock_llm_service,
+        mock_es_client,
+        mock_rsm,
+        mock_user,
+        mock_index,
+    ):
+        """When consume_last_usage returns None, no LLMRun is emitted from the drain."""
+        mock_store = self._make_mock_store(None)
+        mock_get_store.return_value = mock_store
+        mock_llm_service.get_embedding_deployment_name.return_value = "emb-model"
+        mock_es_client.get_client.return_value.indices.exists.return_value.meta.status = 404
+        mock_index.embeddings_model = "text-embedding-3-small"
+        mock_index.complete_state = 0
+
+        processor = ConcreteDatasourceProcessor("ds", mock_user, mock_index, request_uuid="req-000")
+        processor.index = mock_index
+
+        loader = MagicMock()
+        loader.lazy_load.return_value = iter([Document(page_content="hello")])
+
+        processor._load_and_process_documents(loader=loader, index=mock_index, batch_size=10)
+
+        mock_rsm.update_llm_run.assert_not_called()
+
+    @patch('codemie.datasource.base_datasource_processor.request_summary_manager')
+    @patch('codemie.datasource.base_datasource_processor.ElasticSearchClient')
+    @patch('codemie.datasource.base_datasource_processor.llm_service')
+    @patch.object(ConcreteDatasourceProcessor, '_update_complete_state_estimate')
+    @patch.object(ConcreteDatasourceProcessor, '_process_batch', return_value=1)
+    @patch.object(ConcreteDatasourceProcessor, '_get_store_by_index')
+    def test_no_llm_run_from_drain_when_no_request_uuid(
+        self,
+        mock_get_store,
+        mock_process_batch,
+        mock_update_state,
+        mock_llm_service,
+        mock_es_client,
+        mock_rsm,
+        mock_user,
+        mock_index,
+    ):
+        """When request_uuid is None, the drain does not emit a LLMRun."""
+        from codemie.enterprise.litellm.llm_factory import EmbeddingUsage
+
+        usage = EmbeddingUsage(input_tokens=100, cost=0.002)
+        mock_store = self._make_mock_store(usage)
+        mock_get_store.return_value = mock_store
+        mock_llm_service.get_embedding_deployment_name.return_value = "emb-model"
+        mock_es_client.get_client.return_value.indices.exists.return_value.meta.status = 200
+        mock_index.embeddings_model = "text-embedding-3-small"
+        mock_index.complete_state = 0
+
+        processor = ConcreteDatasourceProcessor("ds", mock_user, mock_index, request_uuid=None)
+        processor.index = mock_index
+
+        loader = MagicMock()
+        loader.lazy_load.return_value = iter([Document(page_content="hello")])
+
+        processor._load_and_process_documents(loader=loader, index=mock_index, batch_size=10)
+
+        mock_rsm.update_llm_run.assert_not_called()

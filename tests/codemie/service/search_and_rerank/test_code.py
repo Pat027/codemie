@@ -317,3 +317,122 @@ class TestSearchAndRerankCode:
         call_args = mock_es_client.search.call_args[1]
         query = call_args["query"]["bool"]["should"]
         assert len(query) == 4  # 2 paths + 2 keywords
+
+
+class TestCodeEmbeddingTracking:
+    _MOD = "codemie.service.search_and_rerank.code"
+
+    @pytest.fixture
+    def code_fields(self):
+        return CodeFields(app_name='app', repo_name='repo', index_type=CodeIndexType.CODE)
+
+    def _make_instance(self, mocker, code_fields, request_id="req-code-001"):
+        mocker.patch(f'{self._MOD}.get_indexed_repo').return_value.get_identifier.return_value = 'idx'
+        return SearchAndRerankCode(
+            query="find stuff",
+            keywords_list=[],
+            file_path=[],
+            code_fields=code_fields,
+            top_k=5,
+            request_id=request_id,
+        )
+
+    def test_pushes_llm_run_when_request_id_set(self, mocker, code_fields):
+        instance = self._make_instance(mocker, code_fields, request_id="req-code-001")
+
+        mock_git_repo = mocker.MagicMock()
+        mock_git_repo.embeddings_model = "ada-002"
+        mocker.patch(f'{self._MOD}.get_repo_from_fields', return_value=mock_git_repo)
+        mocker.patch(f'{self._MOD}.llm_service').get_embedding_deployment_name.return_value = "ada-002-deployment"
+
+        mock_embeddings = mocker.MagicMock()
+        mock_embeddings.embed_query.return_value = [0.1, 0.2]
+        mocker.patch(f'{self._MOD}.get_embeddings_model', return_value=mock_embeddings)
+
+        from codemie.service.request_summary_manager import LLMRun
+        import uuid as _uuid
+
+        mock_llm_run = LLMRun(
+            run_id=str(_uuid.uuid4()),
+            input_tokens=5,
+            output_tokens=0,
+            money_spent=5 * 0.0001,
+            llm_model="ada-002-deployment",
+        )
+        mocker.patch(f'{self._MOD}.build_embedding_llm_run', return_value=mock_llm_run)
+
+        mock_rsm = mocker.patch(f'{self._MOD}.request_summary_manager')
+
+        es_mock = mocker.patch(
+            'codemie.service.search_and_rerank.SearchAndRerankBase.es', new_callable=mocker.PropertyMock
+        )
+        es_mock.return_value.search.return_value = {"hits": {"hits": []}}
+
+        instance._knn_vector_search()
+
+        mock_rsm.update_llm_run.assert_called_once()
+        call_kwargs = mock_rsm.update_llm_run.call_args[1]
+        assert call_kwargs["request_id"] == "req-code-001"
+        llm_run = call_kwargs["llm_run"]
+        assert llm_run.input_tokens == 5
+        assert llm_run.output_tokens == 0
+        assert llm_run.money_spent == pytest.approx(5 * 0.0001)
+        assert llm_run.llm_model == "ada-002-deployment"
+
+    def test_skips_llm_run_when_request_id_absent(self, mocker, code_fields):
+        instance = self._make_instance(mocker, code_fields, request_id="")
+
+        mock_git_repo = mocker.MagicMock()
+        mock_git_repo.embeddings_model = "ada-002"
+        mocker.patch(f'{self._MOD}.get_repo_from_fields', return_value=mock_git_repo)
+
+        mock_llm_service = mocker.patch(f'{self._MOD}.llm_service')
+        mock_llm_service.get_embedding_deployment_name.return_value = "ada-002-deployment"
+
+        mock_embeddings = mocker.MagicMock()
+        mock_embeddings.embed_query.return_value = [0.1, 0.2]
+        mocker.patch(f'{self._MOD}.get_embeddings_model', return_value=mock_embeddings)
+
+        mock_rsm = mocker.patch(f'{self._MOD}.request_summary_manager')
+
+        es_mock = mocker.patch(
+            'codemie.service.search_and_rerank.SearchAndRerankBase.es', new_callable=mocker.PropertyMock
+        )
+        mock_es_client = mocker.MagicMock()
+        mock_es_client.search.return_value = {"hits": {"hits": []}}
+        es_mock.return_value = mock_es_client
+
+        instance._knn_vector_search()
+
+        mock_rsm.update_llm_run.assert_not_called()
+
+    def test_uses_build_embedding_llm_run(self, mocker, code_fields):
+        """_knn_vector_search delegates LLMRun construction to build_embedding_llm_run."""
+        instance = self._make_instance(mocker, code_fields, request_id="req-code-002")
+
+        mock_git_repo = mocker.MagicMock()
+        mock_git_repo.embeddings_model = "ada-002"
+        mocker.patch(f'{self._MOD}.get_repo_from_fields', return_value=mock_git_repo)
+        mocker.patch(f'{self._MOD}.llm_service').get_embedding_deployment_name.return_value = "ada-002-deployment"
+
+        mock_embeddings = mocker.MagicMock()
+        mock_embeddings.embed_query.return_value = [0.1, 0.2]
+        mocker.patch(f'{self._MOD}.get_embeddings_model', return_value=mock_embeddings)
+
+        mock_llm_run = mocker.MagicMock()
+        mock_build = mocker.patch(f'{self._MOD}.build_embedding_llm_run', return_value=mock_llm_run)
+
+        mock_rsm = mocker.patch(f'{self._MOD}.request_summary_manager')
+
+        es_mock = mocker.patch(
+            'codemie.service.search_and_rerank.SearchAndRerankBase.es', new_callable=mocker.PropertyMock
+        )
+        es_mock.return_value.search.return_value = {"hits": {"hits": []}}
+
+        instance._knn_vector_search()
+
+        mock_build.assert_called_once_with(mock_embeddings, "find stuff", "ada-002-deployment")
+        mock_rsm.update_llm_run.assert_called_once_with(
+            request_id="req-code-002",
+            llm_run=mock_llm_run,
+        )

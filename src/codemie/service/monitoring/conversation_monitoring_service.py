@@ -54,6 +54,7 @@ class ConversationMonitoringService(BaseMonitoringService):
         conversation_id: str,
         llm_model: str,
         status: ConversationStatus,
+        request_id: Optional[str] = None,
     ):
         attributes = {
             MetricsAttributes.USER_ID: user.id,
@@ -71,6 +72,7 @@ class ConversationMonitoringService(BaseMonitoringService):
             MetricsAttributes.LLM_MODEL: llm_model,
             MetricsAttributes.CONVERSATION_ID: conversation_id,
             MetricsAttributes.STATUS: status.value,
+            **(({MetricsAttributes.REQUEST_ID: request_id}) if request_id else {}),
         }
 
         cls.send_count_metric(name=cls.CONVERSATION_BASE_METRIC + "_assistant_usage", attributes=attributes)
