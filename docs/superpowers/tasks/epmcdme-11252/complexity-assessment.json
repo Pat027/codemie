@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "task": "Add CLAUDE.md Prerequisites section documenting the poetry global install requirement and diagnostic command so contributors understand why the Stop hook's make ruff target fails in non-login subshells.",
+  "generated": "2026-07-08T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 1, "label": "XS" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 1, "label": "XS" },
+    "file_change_estimate": { "score": 1, "label": "XS" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 6,
+  "size": "XS",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Single documentation file (CLAUDE.md) — no architectural layer boundaries crossed, no code components involved."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "Root cause fully diagnosed: poetry not in PATH of non-login subshells. Fix is precisely specified: add Prerequisites section to CLAUDE.md with diagnostic command and remediation guidance. Zero ambiguity."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

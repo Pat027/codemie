@@ -29,7 +29,7 @@ Detailed project guidance lives under `.ai-run/guides/`, which is the source of 
 | Security | `.ai-run/guides/development/security-patterns.md` | Auth, validation, and secrets |
 | Performance | `.ai-run/guides/development/performance-patterns.md` | Async and batching patterns |
 | Configuration | `.ai-run/guides/development/configuration-patterns.md` | Config and environment patterns |
-| Setup | `.ai-run/guides/development/setup-guide.md` | Local setup |
+| Setup | `.ai-run/guides/development/setup-guide.md` | Local setup and Claude Code Stop hook prerequisites — see [Claude Code Stop Hook](.ai-run/guides/development/setup-guide.md#claude-code-stop-hook) |
 | Local Testing | `.ai-run/guides/development/local-testing.md` | Local validation flow |
 | External Services | `.ai-run/guides/integration/external-services.md` | Integration boundaries |
 | Cloud | `.ai-run/guides/integration/cloud-integrations.md` | Cloud provider integrations |
@@ -74,6 +74,7 @@ Detailed project guidance lives under `.ai-run/guides/`, which is the source of 
 | Testing | User asks to write, run, or fix tests | Only then work on tests; load `.ai-run/guides/testing/testing-patterns.md` first. |
 | Git Operations | User asks to commit, push, create MR, or similar | Only then perform git side effects; load `.ai-run/guides/standards/git-workflow.md` first. |
 | Python Environment | Python, Poetry, or tool commands | Load `.ai-run/guides/development/setup-guide.md` or `.ai-run/guides/quality-gates.md` before running. |
+| Stop Hook | `make ruff` fails with `poetry: No such file or directory` | Load `.ai-run/guides/development/setup-guide.md` — see **Claude Code Stop Hook** section. |
 | Shell | ANY shell command | Use bash/Linux syntax and report commands actually run. |
 | Project Conventions | Any project-specific convention | Load the relevant guide; do not infer exact values from this entrypoint. |
 <!-- ai-run-init:critical-rules end -->
