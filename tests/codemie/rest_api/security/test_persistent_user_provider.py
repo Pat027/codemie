@@ -334,3 +334,121 @@ class TestPersistentUserProvider:
         mock_auth_service.authenticate_persistent_user.assert_called_once_with(
             user_id="idp-user-no-token", idp_user=idp_user, auth_token=""
         )
+
+    @pytest.mark.asyncio
+    @patch("codemie.rest_api.security.user_providers.persistent.authentication_service")
+    @patch("codemie.rest_api.security.jwt_local.validate_local_jwt")
+    @patch("codemie.rest_api.security.user_providers.persistent.config")
+    async def test_bearer_jwt_in_local_env_uses_local_jwt_validation(
+        self, mock_config, mock_validate_jwt, mock_auth_service, provider, mock_request
+    ):
+        """EPMCDME-13491: Bearer JWT in ENV=local must reach validate_local_jwt,
+        not be consumed by the dev-header shortcut as a dev user-id."""
+        # Arrange
+        mock_config.ENV = "local"
+        mock_config.IDP_PROVIDER = "local"
+        mock_config.AUTH_COOKIE_NAME = "auth_token"
+
+        jwt_token = "local.jwt.token"
+        user_id = "uuid-user-13491"
+
+        mock_request.headers.get.side_effect = lambda key: (f"Bearer {jwt_token}" if key == "Authorization" else None)
+        mock_request.cookies.get.return_value = None
+
+        mock_validate_jwt.return_value = {"sub": user_id, "iss": "codemie-local"}
+
+        expected_user = User(
+            id=user_id,
+            email="local@example.com",
+            name="Local JWT User",
+            auth_token=jwt_token,
+            is_admin=False,
+            project_names=[],
+            knowledge_bases=[],
+        )
+        mock_auth_service.authenticate_dev_header = AsyncMock()
+        mock_auth_service.authenticate_persistent_user = AsyncMock(return_value=expected_user)
+
+        mock_idp = MagicMock()
+
+        # Act
+        result = await provider.authenticate_and_load_user(mock_request, mock_idp)
+
+        # Assert
+        assert result == expected_user
+        mock_auth_service.authenticate_dev_header.assert_not_called()
+        mock_validate_jwt.assert_called_once_with(jwt_token)
+        mock_auth_service.authenticate_persistent_user.assert_called_once_with(
+            user_id=user_id, idp_user=None, auth_token=jwt_token
+        )
+
+    @pytest.mark.asyncio
+    @patch("codemie.rest_api.security.user_providers.persistent.authentication_service")
+    @patch("codemie.rest_api.security.jwt_local.validate_local_jwt")
+    @patch("codemie.rest_api.security.user_providers.persistent.config")
+    async def test_bare_authorization_value_no_longer_triggers_dev_auth(
+        self, mock_config, mock_validate_jwt, mock_auth_service, provider, mock_request
+    ):
+        """EPMCDME-13491: a bare user-id in the Authorization header (legacy dev
+        convention) must not trigger dev auth; without a Bearer token or cookie
+        the request fails with 401 from _extract_local_auth_token."""
+        # Arrange
+        mock_config.ENV = "local"
+        mock_config.IDP_PROVIDER = "local"
+        mock_config.AUTH_COOKIE_NAME = "auth_token"
+
+        mock_request.headers.get.side_effect = lambda key: ("bob" if key == "Authorization" else None)
+        mock_request.cookies.get.return_value = None
+
+        mock_auth_service.authenticate_dev_header = AsyncMock()
+
+        mock_idp = MagicMock()
+
+        # Act & Assert
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            await provider.authenticate_and_load_user(mock_request, mock_idp)
+
+        assert exc_info.value.code == 401
+        mock_auth_service.authenticate_dev_header.assert_not_called()
+        mock_validate_jwt.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("codemie.rest_api.security.user_providers.persistent.authentication_service")
+    @patch("codemie.rest_api.security.jwt_local.validate_local_jwt")
+    @patch("codemie.rest_api.security.user_providers.persistent.config")
+    async def test_dev_header_wins_over_bearer_jwt_in_local_env(
+        self, mock_config, mock_validate_jwt, mock_auth_service, provider, mock_request
+    ):
+        """When both user-id and a Bearer JWT are present in ENV=local, the
+        dedicated dev header takes precedence (unchanged behavior)."""
+        # Arrange
+        mock_config.ENV = "local"
+        mock_config.IDP_PROVIDER = "local"
+        mock_config.AUTH_COOKIE_NAME = "auth_token"
+
+        dev_user_id = "alice"
+        mock_request.headers.get.side_effect = lambda key: (
+            dev_user_id if key == "user-id" else "Bearer some.jwt.token" if key == "Authorization" else None
+        )
+        mock_request.cookies.get.return_value = None
+
+        expected_user = User(
+            id=dev_user_id,
+            email="alice@example.com",
+            name="Dev User",
+            auth_token="dev-token",
+            is_admin=False,
+            project_names=[],
+            knowledge_bases=[],
+        )
+        mock_auth_service.authenticate_dev_header = AsyncMock(return_value=expected_user)
+
+        mock_idp = MagicMock()
+
+        # Act
+        result = await provider.authenticate_and_load_user(mock_request, mock_idp)
+
+        # Assert
+        assert result == expected_user
+        mock_auth_service.authenticate_dev_header.assert_called_once_with(dev_user_id)
+        mock_validate_jwt.assert_not_called()

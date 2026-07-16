@@ -1,0 +1,62 @@
+{
+  "task": "Remove the erroneous ENV=local dev-header fallback that swallowed Bearer JWTs in PersistentUserProvider.authenticate_and_load_user, restoring correct fall-through to validate_local_jwt.",
+  "generated": "2026-07-14T22:33:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 1,
+      "label": "XS",
+      "affected": "PersistentUserProvider.authenticate_and_load_user",
+      "layers": "Service"
+    },
+    "requirements_clarity": {
+      "score": 1,
+      "label": "XS",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 3,
+      "label": "M",
+      "risk_factors": "Change touches authentication logic (Bearer JWT vs. dev-header precedence) in a security-sensitive code path; red flag applied per guide (authentication/authorization changes bump Technical Risk)",
+      "mitigation": "Change is a removal of an erroneous fallback that restores previously-correct behavior (not a novel pattern); covered by 3 new unit tests (regression for Bearer JWT fall-through, legacy bare-value convention removal, dev-header precedence); easily revertible single-method diff"
+    },
+    "file_change_estimate": {
+      "score": 1,
+      "label": "XS",
+      "modified_files": 2,
+      "modified_file_list": [
+        "src/codemie/rest_api/security/user_providers/persistent.py",
+        "tests/codemie/rest_api/security/test_persistent_user_provider.py"
+      ],
+      "new_files": 0,
+      "new_file_list": [],
+      "affected_dirs": ["src", "tests"]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 1,
+      "label": "XS",
+      "layers_changed": ["Service"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 8,
+  "size": "XS",
+  "band_range": "6-9",
+  "files_changed": 2,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "Touches authentication code path (Bearer JWT vs dev-header precedence in PersistentUserProvider); red-flagged per guide even though the fix itself is a small, well-tested removal of erroneous fallback logic" },
+    { "dimension": "component_scope", "reason": "Change is confined to a single method (authenticate_and_load_user) in one class, no new abstractions or cross-layer coordination" }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from S to M: change affects authentication (Bearer JWT / dev-header handling) in PersistentUserProvider.authenticate_and_load_user"
+  ],
+  "split_recommendation": null
+}

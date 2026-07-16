@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "source": "heuristic",
+  "score": 24,
+  "size": "M",
+  "routing": "brainstorming",
+  "signals": {
+    "affected_file_estimate": 2,
+    "keyword_signals": {
+      "security": true,
+      "auth": true,
+      "migration": false,
+      "breaking": false,
+      "provider": true,
+      "integration": false,
+      "refactor": false
+    },
+    "goal_word_count": 46
+  },
+  "rationale": "Risk keywords (auth/security — the change alters the authentication path in PersistentUserProvider) trigger the heuristic brainstorming route despite the small file scope. Score 24 per pipeline heuristic rule 2."
+}

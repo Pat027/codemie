@@ -1,0 +1,39 @@
+{
+  "run_id": "20260714-2233-EPMCDME-13491",
+  "mode": "autonomous",
+  "started_at": "2026-07-14T19:33:30Z",
+  "task_input": "EPMCDME-13491 — Local auth returns 401 for Bearer JWT in local user-management mode (https://jiraeu.epam.com/browse/EPMCDME-13491)",
+  "branch": "EPMCDME-13491_local-auth-bearer-jwt-fix",
+  "branch_guard": {
+    "current_branch": "main",
+    "base_branch": "main",
+    "target_branch": "EPMCDME-13491_local-auth-bearer-jwt-fix",
+    "working_tree": "dirty",
+    "upstream": "in-sync",
+    "target_branch_exists": false,
+    "base_refreshed": true,
+    "decision": "proceed-dirty",
+    "warning": "Pre-existing uncommitted changes on main (google_oauth.py/sharepoint_oauth.py lazy-singleton refactor, .env, .codemie CLI config, untracked dist/ and .codemie-storage/) are unrelated to this run and left in place. User asked via AskUserQuestion (timed out); run commits only its own files."
+  },
+  "work_item": {
+    "canonical_path": "docs/superpowers/work-items/EPMCDME-13491.md",
+    "run_mirror": "docs/superpowers/runs/20260714-2233-EPMCDME-13491/work-item.md",
+    "event_ledger": "docs/superpowers/runs/20260714-2233-EPMCDME-13491/work-item-events.jsonl"
+  },
+  "current_phase": 10,
+  "status": "completed",
+  "escalate_on": ["security", "breaking-change"],
+  "phases": {
+    "0":  {"status": "completed", "started_at": "2026-07-14T19:33:30Z", "completed_at": "2026-07-14T19:34:00Z"},
+    "1":  {"status": "completed", "started_at": "2026-07-14T19:36:00Z", "completed_at": "2026-07-14T19:36:30Z"},
+    "2":  {"status": "completed", "started_at": "2026-07-14T19:37:00Z", "completed_at": "2026-07-14T19:40:00Z"},
+    "3":  {"status": "completed", "started_at": "2026-07-14T19:41:00Z", "completed_at": "2026-07-14T19:41:30Z"},
+    "4":  {"status": "completed", "started_at": "2026-07-14T19:50:00Z", "completed_at": "2026-07-14T19:55:00Z"},
+    "5":  {"status": "completed", "started_at": "2026-07-14T19:57:00Z", "completed_at": "2026-07-14T20:05:00Z"},
+    "6":  {"status": "completed", "started_at": "2026-07-14T20:05:30Z", "completed_at": "2026-07-14T20:35:00Z"},
+    "7":  {"status": "completed", "started_at": "2026-07-14T20:36:00Z", "completed_at": "2026-07-14T21:00:00Z"},
+    "8":  {"status": "completed", "started_at": "2026-07-14T21:01:00Z", "completed_at": "2026-07-14T21:21:00Z"},
+    "9":  {"status": "completed", "started_at": "2026-07-14T21:22:00Z", "completed_at": "2026-07-14T21:26:00Z"},
+    "10": {"status": "completed", "started_at": "2026-07-14T21:27:00Z", "completed_at": "2026-07-14T21:30:00Z"}
+  }
+}

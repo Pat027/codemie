@@ -22,7 +22,7 @@ from fastapi import Request
 from codemie.configs import config
 from codemie.configs.logger import logger
 from codemie.core.exceptions import ExtendedHTTPException
-from codemie.rest_api.security.user import User, USER_ID_HEADER, AUTHORIZATION_HEADER
+from codemie.rest_api.security.user import User, USER_ID_HEADER
 from codemie.rest_api.security.user_providers import UserProvider
 from codemie.service.user.authentication_service import authentication_service
 
@@ -98,11 +98,12 @@ class PersistentUserProvider(UserProvider):
         Raises:
             ExtendedHTTPException: On authentication failure
         """
-        # 1. Check for dev header (ENV='local' only)
+        # 1. Check for dev header (ENV='local' only).
+        # Only the dedicated user-id header triggers dev auth; the Authorization
+        # header carries real credentials (local JWT or IDP token) and must fall
+        # through to the auth branches below (EPMCDME-13491).
         if config.ENV == "local":
             dev_user_id = request.headers.get(USER_ID_HEADER)
-            if not dev_user_id:
-                dev_user_id = request.headers.get(AUTHORIZATION_HEADER)
             if dev_user_id:
                 return await authentication_service.authenticate_dev_header(dev_user_id)
 
