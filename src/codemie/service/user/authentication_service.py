@@ -515,7 +515,6 @@ class AuthenticationService:
         pre_sync_email = None
         async with get_async_session() as session:
             db_user = await user_repository.aget_by_id(session, user_id)
-            is_existing_user = db_user is not None
 
             if db_user:
                 pre_sync_email = await AuthenticationService._sync_existing_user(session, db_user, idp_user)
@@ -528,18 +527,13 @@ class AuthenticationService:
                 raise ExtendedHTTPException(code=401, message=_ACCOUNT_DEACTIVATED)
 
             security_user_ins = AuthenticationService._build_security_user(db_user, auth_token)
-            if is_existing_user and idp_user is not None:
-                await activity_event_repository.async_insert(
-                    ActivityEventCreate(
-                        domain=ActivityDomain.USER_MANAGEMENT,
-                        event_type=UserManagementEvent.USER_LOGIN,
-                        entity_type=ActivityEntityType.USER,
-                        entity_id=db_user.id,
-                        actor_id=db_user.id,
-                        attributes={"auth_source": config.IDP_PROVIDER},
-                    ),
-                    session,
-                )
+            # user.login is intentionally NOT emitted here for IDP authentication.
+            # When using oauth2-proxy + Keycloak (or any IDP), the backend only sees
+            # already-authenticated requests — there is no reliable "login moment".
+            # The IDP's JS adapter rotates short-lived access tokens silently, so each
+            # token rotation would appear as a new login from the backend's perspective.
+            # user.login is recorded only for local auth (authenticate_and_login), where
+            # we own the login endpoint and know exactly when credentials were submitted.
             await session.commit()
 
         if pre_sync_email and security_user_ins.email != pre_sync_email:
