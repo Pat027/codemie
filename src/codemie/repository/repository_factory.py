@@ -15,6 +15,7 @@
 from enum import Enum
 from pydantic import BaseModel
 from codemie.configs import config, logger
+from codemie.core.constants import MCP_IMAGES_BASE
 from codemie.repository.aws_file_repository import AWSFileRepository
 from codemie.repository.azure_file_repository import AzureFileRepository
 from codemie.repository.gcp_file_repository import GCPFileRepository
@@ -66,3 +67,17 @@ class FileRepositoryFactory(BaseModel):
         Defaults to `FileSystem` if no storage type is specified in the configuration.
         """
         return FileStorageType(config.FILES_STORAGE_TYPE) if config.FILES_STORAGE_TYPE else FileStorageType.FILE_SYSTEM
+
+    @classmethod
+    def build_subdir(cls, name: str) -> str:
+        """Build a storage-compatible subdir/container name for the current repo type.
+
+        Azure container names forbid underscores; replace with hyphens for Azure.
+        All other backends keep the original name unchanged.
+        """
+        if cls.get_current_storage_type() == FileStorageType.AZURE:
+            return name.replace("_", "-")
+        return name
+
+
+MCP_IMAGES_SUBDIR = FileRepositoryFactory.build_subdir(MCP_IMAGES_BASE)

@@ -65,8 +65,8 @@ METADATA_FILE_NAME = "metadata.file_name"
 METADATA_FILE_PATH = "metadata.file_path"
 METADATA_SOURCE = "metadata.source"
 
-# MCP image storage
-MCP_IMAGES_SUBDIR = "mcp_images"
+# MCP image storage base name (storage-specific subdir computed via FileRepositoryFactory.build_subdir)
+MCP_IMAGES_BASE = "mcp_images"
 
 # Supervisor handoff tool prefix for LangGraph agents
 SUPERVISOR_HANDOFF_TOOL_PREFIX = "transfer_to"
