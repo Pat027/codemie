@@ -843,7 +843,12 @@ def _get_integration_api_key(integration_id: str) -> str:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve API key for '{integration_id}': {str(e)}")
 
 
-async def _parse_usage_with_cost(response_content: bytes, llm_model: str, is_streaming: bool) -> dict:
+async def _parse_usage_with_cost(
+    response_content: bytes,
+    llm_model: str,
+    is_streaming: bool,
+    response_headers: dict | None = None,
+) -> dict:
     """
     Thin wrapper: Get cost config from codemie service and call pure enterprise logic.
 
@@ -851,6 +856,9 @@ async def _parse_usage_with_cost(response_content: bytes, llm_model: str, is_str
         response_content: Response bytes
         llm_model: Model name
         is_streaming: Is streaming response
+        response_headers: HTTP response headers from the downstream response.  Pass only
+            for non-streaming responses so the enterprise layer can read
+            ``x-litellm-response-cost``; pass ``None`` for SSE streaming.
 
     Returns:
         dict: Usage data with costs
@@ -881,6 +889,7 @@ async def _parse_usage_with_cost(response_content: bytes, llm_model: str, is_str
         cost_config=cost_config,
         cost_calculator=calculate_token_cost,
         llm_model=llm_model,
+        response_headers=response_headers,
     )
 
 
@@ -1011,6 +1020,10 @@ async def _streaming_response_with_usage_tracking(
         content_type = downstream_response.headers.get("content-type", "")
         is_streaming = "text/event-stream" in content_type or "stream" in content_type
 
+        # Pass response headers only for non-streaming responses — the enterprise layer reads
+        # x-litellm-response-cost from them.  SSE streaming responses don't carry that header.
+        response_headers = None if is_streaming else dict(downstream_response.headers)
+
         logger.debug(
             f"[USAGE-PARSE-START] session={session_id}, request={request_id}, "
             f"content_type={content_type}, is_streaming={is_streaming}, buffer_size={len(buffer)}"
@@ -1021,6 +1034,7 @@ async def _streaming_response_with_usage_tracking(
             response_content=bytes(buffer),
             llm_model=llm_model,
             is_streaming=is_streaming,
+            response_headers=response_headers,
         )
 
         logger.debug(
