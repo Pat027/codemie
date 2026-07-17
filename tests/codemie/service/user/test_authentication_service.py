@@ -32,6 +32,7 @@ from codemie.configs import config  # noqa: F401 (used in test_build_security_us
 from codemie.core.exceptions import ExtendedHTTPException
 from codemie.rest_api.models.user_management import UserDB, UserProject
 from codemie.rest_api.security import user as security_user
+from codemie.service.activity.activity_models import UserManagementEvent
 from codemie.service.user.authentication_service import AuthenticationService, clear_auth_token_cache
 
 
@@ -1244,3 +1245,93 @@ class TestAuthenticateAndLogin:
             mock_proj_repo.aget_by_user_id.assert_called_once_with(mock_session, user_id)
             mock_personal.ensure_personal_project_async.assert_called_once_with(user_id, email)
             mock_gen_token.assert_called_once_with(user_id, email, "local")
+
+
+class TestLoginActivityEvent:
+    """Tests that authenticate_and_login emits a user.login activity event."""
+
+    @pytest.mark.asyncio
+    @patch("codemie.service.user.authentication_service.activity_event_repository")
+    async def test_authenticate_and_login_emits_login_event(self, mock_activity):
+        """Emits USER_LOGIN activity event inside the session after successful authentication."""
+        # Arrange
+        email = "test@example.com"
+        password = "ValidPassword123"
+        user_id = str(uuid4())
+
+        mock_activity.async_insert = AsyncMock()
+
+        mock_user = UserDB(
+            id=user_id,
+            username="testuser",
+            email=email,
+            name="Test User",
+            picture=None,
+            user_type="human",
+            is_active=True,
+            is_admin=False,
+            auth_source="local",
+            email_verified=True,
+            password_hash="$argon2id$v=19$m=65536,t=3,p=4$hash",
+            last_login_at=None,
+            project_limit=10,
+        )
+
+        mock_session = AsyncMock()
+
+        with (
+            patch("codemie.clients.postgres.get_async_session") as mock_get_session,
+            patch(
+                "codemie.service.user.authentication_service.AuthenticationService.authenticate_local",
+                new_callable=AsyncMock,
+            ) as mock_auth,
+            patch("codemie.service.user.authentication_service.user_project_repository") as mock_proj_repo,
+            patch("codemie.service.project.personal_project_service.personal_project_service") as mock_personal,
+            patch("codemie.rest_api.security.jwt_local.generate_access_token") as mock_gen_token,
+        ):
+            mock_get_session.return_value = _make_async_session_cm(mock_session)
+            mock_auth.return_value = mock_user
+            mock_proj_repo.aget_by_user_id = AsyncMock(return_value=[])
+            mock_personal.ensure_personal_project_async = AsyncMock()
+            mock_gen_token.return_value = "jwt-token-123"
+
+            # Act
+            await AuthenticationService.authenticate_and_login(email, password)
+
+        # Assert: async_insert called exactly once
+        mock_activity.async_insert.assert_called_once()
+
+        # Verify the event DTO fields
+        call_args = mock_activity.async_insert.call_args
+        event_dto = call_args[0][0]
+        assert event_dto.event_type == UserManagementEvent.USER_LOGIN
+        assert event_dto.entity_id == user_id
+        assert event_dto.actor_id == user_id
+
+    @pytest.mark.asyncio
+    @patch("codemie.service.user.authentication_service.activity_event_repository")
+    async def test_authenticate_and_login_no_event_on_auth_failure(self, mock_activity):
+        """Does NOT emit a login event when authentication fails."""
+        # Arrange
+        mock_activity.async_insert = AsyncMock()
+
+        email = "bad@example.com"
+        password = "WrongPassword"
+        mock_session = AsyncMock()
+
+        with (
+            patch("codemie.clients.postgres.get_async_session") as mock_get_session,
+            patch(
+                "codemie.service.user.authentication_service.AuthenticationService.authenticate_local",
+                new_callable=AsyncMock,
+            ) as mock_auth,
+        ):
+            mock_get_session.return_value = _make_async_session_cm(mock_session)
+            mock_auth.side_effect = ExtendedHTTPException(code=401, message="Invalid email or password")
+
+            # Act & Assert
+            with pytest.raises(ExtendedHTTPException):
+                await AuthenticationService.authenticate_and_login(email, password)
+
+        # No event should be emitted on failure
+        mock_activity.async_insert.assert_not_called()

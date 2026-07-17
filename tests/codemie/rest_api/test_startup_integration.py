@@ -56,17 +56,20 @@ def mock_non_litellm_startup():
                         with patch("codemie.rest_api.main.create_preconfigured_workflows"):
                             with patch("codemie.rest_api.main.import_preconfigured_katas"):
                                 with patch("codemie.rest_api.main._setup_memory_profiling_scheduler"):
-                                    with patch("codemie.rest_api.main.initialize_mcp_auth"):
-                                        with patch("codemie.rest_api.main.shutdown_mcp_auth", new_callable=AsyncMock):
+                                    with patch("codemie.rest_api.main._setup_activity_events_retention_scheduler"):
+                                        with patch("codemie.rest_api.main.initialize_mcp_auth"):
                                             with patch(
-                                                "codemie.rest_api.main.ensure_predefined_budgets",
-                                                new_callable=AsyncMock,
+                                                "codemie.rest_api.main.shutdown_mcp_auth", new_callable=AsyncMock
                                             ):
                                                 with patch(
-                                                    "codemie.rest_api.main.get_observability_provider",
-                                                    return_value=mock_provider,
+                                                    "codemie.rest_api.main.ensure_predefined_budgets",
+                                                    new_callable=AsyncMock,
                                                 ):
-                                                    yield
+                                                    with patch(
+                                                        "codemie.rest_api.main.get_observability_provider",
+                                                        return_value=mock_provider,
+                                                    ):
+                                                        yield
 
 
 def test_initialize_database_and_defaults_runs_only_migrations_and_default_apps():
@@ -137,6 +140,7 @@ async def test_preconfigured_content_runs_after_litellm_init_in_lifespan():
         patch("codemie.rest_api.main.ensure_predefined_budgets", new_callable=AsyncMock),
         patch("codemie.rest_api.main.get_observability_provider", return_value=mock_provider),
         patch("codemie.rest_api.main._setup_memory_profiling_scheduler"),
+        patch("codemie.rest_api.main._setup_activity_events_retention_scheduler"),
     ]
 
     with ExitStack() as stack:

@@ -15,6 +15,7 @@
 from fastapi import APIRouter, Request, Response, Depends
 from pydantic import BaseModel
 
+from codemie.clients.postgres import get_async_session
 from codemie.configs import config
 from codemie.core.exceptions import ExtendedHTTPException
 from codemie.rest_api.rate_limit import limiter
@@ -30,6 +31,13 @@ from codemie.rest_api.models.user_management import (
 from codemie.rest_api.security.authentication import authenticate
 from codemie.rest_api.security.jwt_local import get_public_jwks
 from codemie.rest_api.security.user import User
+from codemie.service.activity.activity_models import (
+    ActivityDomain,
+    ActivityEntityType,
+    ActivityEventCreate,
+    UserManagementEvent,
+)
+from codemie.service.activity.activity_repository import activity_event_repository
 from codemie.service.user.authentication_service import authentication_service
 from codemie.service.user.registration_service import registration_service
 from codemie.service.user.password_management_service import password_management_service
@@ -230,6 +238,18 @@ async def logout(response: Response, _user: User = Depends(authenticate)):
         key=config.AUTH_COOKIE_NAME,
         path=config.AUTH_COOKIE_PATH,
     )
+    async with get_async_session() as session:
+        await activity_event_repository.async_insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.USER_MANAGEMENT,
+                event_type=UserManagementEvent.USER_LOGOUT,
+                entity_type=ActivityEntityType.USER,
+                entity_id=_user.id,
+                actor_id=_user.id,
+            ),
+            session,
+        )
+        await session.commit()
     return MessageResponse(message="Logged out successfully")
 
 

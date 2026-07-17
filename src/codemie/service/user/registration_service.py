@@ -33,6 +33,13 @@ from codemie.core.exceptions import ExtendedHTTPException
 from codemie.repository.user_repository import user_repository
 from codemie.repository.email_token_repository import email_token_repository
 from codemie.rest_api.models.user_management import UserDB, CodeMieUserDetail, ProjectInfo
+from codemie.service.activity.activity_models import (
+    ActivityDomain,
+    ActivityEntityType,
+    ActivityEventCreate,
+    UserManagementEvent,
+)
+from codemie.service.activity.activity_repository import activity_event_repository
 from codemie.service.project.personal_project_service import personal_project_service
 
 
@@ -92,6 +99,17 @@ class RegistrationService:
 
         user = user_repository.create(session, user)
         logger.info(f"user_registered: target_user_id={user.id}, auth_source=local, domain=user_management")
+        activity_event_repository.insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.USER_MANAGEMENT,
+                event_type=UserManagementEvent.USER_CREATED,
+                entity_type=ActivityEntityType.USER,
+                entity_id=user.id,
+                actor_id=None,
+                attributes={"auth_source": "local"},
+            ),
+            session,
+        )
 
         return user
 

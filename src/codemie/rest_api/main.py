@@ -101,6 +101,7 @@ from codemie.rest_api.routers import local_auth_router
 from codemie.rest_api.routers import user_management_router
 from codemie.rest_api.routers import user_profile_router
 from codemie.rest_api.routers import user_preferences_router
+from codemie.rest_api.routers import activity_events_router
 from codemie.rest_api.utils.state_import import StateImportService
 from codemie.rest_api.utils.default_applications import create_default_applications
 from codemie.triggers.node_controller import NodeController
@@ -447,6 +448,62 @@ def _setup_stale_datasource_scheduler(app: FastAPI):
     logger.info("Stale datasource scheduler started successfully")
 
 
+def _setup_activity_events_retention_scheduler(app: FastAPI):
+    """Schedule a daily purge of activity events older than ACTIVITY_EVENTS_RETENTION_DAYS."""
+    if not config.ACTIVITY_EVENTS_ENABLED:
+        return
+    if config.ACTIVITY_EVENTS_RETENTION_DAYS <= 0:
+        return
+
+    from datetime import datetime, timedelta, timezone
+
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from apscheduler.triggers.cron import CronTrigger
+    from sqlmodel import Session
+
+    from codemie.clients.postgres import PostgresClient
+    from codemie.service.activity.activity_repository import activity_event_repository
+    from codemie.utils.leader_lock import async_leader_lock
+
+    _lock_id = 987654326
+
+    async def _purge():
+        async with async_leader_lock(_lock_id) as acquired:
+            if not acquired:
+                logger.info("[activity_events] retention purge: not the leader, skipping")
+                return
+
+            def _do_purge():
+                cutoff = datetime.now(timezone.utc) - timedelta(days=config.ACTIVITY_EVENTS_RETENTION_DAYS)
+                with Session(PostgresClient.get_engine()) as session:
+                    deleted = activity_event_repository.delete_older_than(cutoff, session)
+                    session.commit()
+                return deleted, cutoff.date()
+
+            try:
+                deleted, cutoff_date = await asyncio.to_thread(_do_purge)
+                logger.info(
+                    f"[activity_events] retention purge: deleted {deleted} event(s) older than {cutoff_date} "
+                    f"(retention={config.ACTIVITY_EVENTS_RETENTION_DAYS} days)"
+                )
+            except Exception as exc:
+                logger.error(f"[activity_events] retention purge failed: {exc}", exc_info=True)
+
+    retention_scheduler = AsyncIOScheduler()
+    retention_scheduler.add_job(
+        _purge,
+        CronTrigger.from_crontab("0 2 * * *", timezone="UTC"),
+        id="activity_events_retention_purge",
+        replace_existing=True,
+    )
+    retention_scheduler.start()
+    app.state.activity_events_retention_scheduler = retention_scheduler
+    logger.info(
+        f"Activity events retention scheduler started "
+        f"(retention={config.ACTIVITY_EVENTS_RETENTION_DAYS} days, runs daily at 02:00 UTC)"
+    )
+
+
 def _initialize_jwt_keys():
     """Auto-generate RSA keys for local auth if not present (EPMCDME-10160)"""
     if config.IDP_PROVIDER == "local" and config.ENABLE_USER_MANAGEMENT:
@@ -538,6 +595,11 @@ async def _shutdown_services(app: FastAPI, tasks: list):
     if stale_datasource_scheduler is not None:
         stale_datasource_scheduler.stop()
         logger.info("Stale datasource scheduler shutdown complete")
+
+    activity_events_retention_scheduler = getattr(app.state, 'activity_events_retention_scheduler', None)
+    if activity_events_retention_scheduler is not None:
+        activity_events_retention_scheduler.shutdown()
+        logger.info("Activity events retention scheduler shutdown complete")
 
     await close_llm_proxy_client()
     logger.info("LLM Proxy HTTP client closed")
@@ -668,6 +730,7 @@ async def lifespan(app: FastAPI):
     _setup_spend_tracking_scheduler(app)
     _setup_leaderboard_scheduler(app)
     _setup_stale_datasource_scheduler(app)
+    _setup_activity_events_retention_scheduler(app)
     _schedule_budget_reconciliation(app, tasks)
 
     yield
@@ -801,6 +864,7 @@ if config.ENABLE_USER_MANAGEMENT:
     app.include_router(user_profile_router.router)
     if config.IDP_PROVIDER == "local":
         app.include_router(local_auth_router.router)
+    app.include_router(activity_events_router.router)
 
 app.include_router(get_mcp_auth_router())
 app.include_router(get_cimd_router())

@@ -30,6 +30,13 @@ from codemie.configs.budget_config import budget_config
 from codemie.configs.config import PredefinedBudgetConfig
 from codemie.core.exceptions import ExtendedHTTPException, ValidationException
 from codemie.repository.budget_repository import budget_repository
+from codemie.service.activity.activity_models import (
+    ActivityDomain,
+    ActivityEntityType,
+    ActivityEventCreate,
+    BudgetManagementEvent,
+)
+from codemie.service.activity.activity_repository import activity_event_repository
 from codemie.service.budget.budget_enums import AllocationMode, BudgetCategory, BudgetType
 from codemie.service.budget.budget_models import Budget
 from codemie.service.budget.provider_registry import get_active_provider
@@ -243,6 +250,16 @@ class BudgetService:
             f"name={data.name!r} budget_category={data.budget_category.value!r} "
             f"actor_id={actor_id!r} actor_name={actor_name or actor_id!r}"
         )
+        await activity_event_repository.async_insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.BUDGET_MANAGEMENT,
+                event_type=BudgetManagementEvent.BUDGET_CREATED,
+                entity_type=ActivityEntityType.BUDGET,
+                entity_id=budget.budget_id,
+                actor_id=actor_id,
+            ),
+            session,
+        )
         return budget
 
     async def list_budgets(
@@ -321,6 +338,16 @@ class BudgetService:
             f"budget_event=budget_update_completed component=budget_service budget_id={budget_id!r} "
             f"updated_fields={sorted(update_fields.keys())!r} actor_id={actor_id!r} "
             f"actor_name={actor_name or actor_id!r}"
+        )
+        await activity_event_repository.async_insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.BUDGET_MANAGEMENT,
+                event_type=BudgetManagementEvent.BUDGET_UPDATED,
+                entity_type=ActivityEntityType.BUDGET,
+                entity_id=budget_id,
+                actor_id=actor_id,
+            ),
+            session,
         )
         return budget
 
@@ -660,6 +687,17 @@ class BudgetService:
                 f"reason=absent_from_provider actor_id={actor_id!r}"
             )
             await budget_repository.delete(session, budget_id)
+            await activity_event_repository.async_insert(
+                ActivityEventCreate(
+                    domain=ActivityDomain.BUDGET_MANAGEMENT,
+                    event_type=BudgetManagementEvent.BUDGET_DELETED,
+                    entity_type=ActivityEntityType.BUDGET,
+                    entity_id=budget_id,
+                    actor_id=actor_id,
+                    attributes={"reason": "absent_from_provider"},
+                ),
+                session,
+            )
             deleted += 1
 
         await session.commit()
@@ -1054,6 +1092,17 @@ class BudgetService:
                     session, user_id, category, budget_id, assigned_by=actor_id
                 )
                 _budget_assignment_cache.pop((user_id, category.value), None)
+                await activity_event_repository.async_insert(
+                    ActivityEventCreate(
+                        domain=ActivityDomain.BUDGET_MANAGEMENT,
+                        event_type=BudgetManagementEvent.USER_BUDGET_ASSIGNED,
+                        entity_type=ActivityEntityType.USER_BUDGET_ASSIGNMENT,
+                        entity_id=user_id,
+                        actor_id=actor_id,
+                        attributes={"budget_id": budget_id},
+                    ),
+                    session,
+                )
                 try:
                     await provider.assign_user_budget(
                         username=db_user.username, budget_category=category, budget_id=budget_id
@@ -1065,6 +1114,17 @@ class BudgetService:
             else:
                 await budget_repository.delete_user_category_assignment(session, user_id, category)
                 _budget_assignment_cache.pop((user_id, category.value), None)
+                await activity_event_repository.async_insert(
+                    ActivityEventCreate(
+                        domain=ActivityDomain.BUDGET_MANAGEMENT,
+                        event_type=BudgetManagementEvent.USER_BUDGET_REMOVED,
+                        entity_type=ActivityEntityType.USER_BUDGET_ASSIGNMENT,
+                        entity_id=user_id,
+                        actor_id=actor_id,
+                        attributes={"category": category.value},
+                    ),
+                    session,
+                )
                 default_budget_id = self._default_budget_id_for_category(category)
                 try:
                     if default_budget_id:
@@ -1126,8 +1186,30 @@ class BudgetService:
                     await budget_repository.upsert_user_category_assignment(
                         session, user_id, category, budget_id, assigned_by=actor_id
                     )
+                    await activity_event_repository.async_insert(
+                        ActivityEventCreate(
+                            domain=ActivityDomain.BUDGET_MANAGEMENT,
+                            event_type=BudgetManagementEvent.USER_BUDGET_ASSIGNED,
+                            entity_type=ActivityEntityType.USER_BUDGET_ASSIGNMENT,
+                            entity_id=user_id,
+                            actor_id=actor_id,
+                            attributes={"budget_id": budget_id, "category": category.value},
+                        ),
+                        session,
+                    )
                 else:
                     await budget_repository.delete_user_category_assignment(session, user_id, category)
+                    await activity_event_repository.async_insert(
+                        ActivityEventCreate(
+                            domain=ActivityDomain.BUDGET_MANAGEMENT,
+                            event_type=BudgetManagementEvent.USER_BUDGET_REMOVED,
+                            entity_type=ActivityEntityType.USER_BUDGET_ASSIGNMENT,
+                            entity_id=user_id,
+                            actor_id=actor_id,
+                            attributes={"category": category.value},
+                        ),
+                        session,
+                    )
                 _budget_assignment_cache.pop((user_id, category.value), None)
 
     async def _propagate_bulk_budget_assignments(

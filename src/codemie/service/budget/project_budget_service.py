@@ -43,6 +43,13 @@ from codemie.service.budget.budget_models import (
     build_override_project_budget_id,
     build_shared_project_budget_id,
 )
+from codemie.service.activity.activity_models import (
+    ActivityDomain,
+    ActivityEntityType,
+    ActivityEventCreate,
+    BudgetManagementEvent,
+)
+from codemie.service.activity.activity_repository import activity_event_repository
 from codemie.service.budget.provider import BudgetEnforcementProvider, BudgetProviderState
 from codemie.service.budget.provider_registry import get_active_provider
 
@@ -890,6 +897,17 @@ class ProjectBudgetService:
             f"budget_category={data.budget_category.value!r} member_count={member_count} "
             f"actor_id={actor_id!r} actor_name={actor_name or actor_id!r}"
         )
+        await activity_event_repository.async_insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.BUDGET_MANAGEMENT,
+                event_type=BudgetManagementEvent.PROJECT_BUDGET_CREATED,
+                entity_type=ActivityEntityType.PROJECT_BUDGET_GROUP,
+                entity_id=budget.budget_id,
+                actor_id=actor_id,
+                attributes={"project_name": data.project_name},
+            ),
+            session,
+        )
         return budget
 
     # ==================== Read ====================
@@ -1136,6 +1154,17 @@ class ProjectBudgetService:
             f"budget_category={budget.budget_category!r} updated_fields={sorted(changed_fields.keys())!r} "
             f"actor_id={actor_id!r}"
         )
+        await activity_event_repository.async_insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.BUDGET_MANAGEMENT,
+                event_type=BudgetManagementEvent.PROJECT_BUDGET_UPDATED,
+                entity_type=ActivityEntityType.PROJECT_BUDGET_GROUP,
+                entity_id=budget_id,
+                actor_id=actor_id,
+                attributes={"updated_fields": sorted(changed_fields.keys())},
+            ),
+            session,
+        )
         return budget
 
     async def rebalance_project_budget(
@@ -1170,6 +1199,20 @@ class ProjectBudgetService:
             f"budget_event=project_budget_rebalance_completed component=project_budget_service "
             f"project_name={assignment.project_name if assignment else None!r} budget_id={budget_id!r} "
             f"budget_category={budget.budget_category!r} actor_id={actor_id!r}"
+        )
+        await activity_event_repository.async_insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.BUDGET_MANAGEMENT,
+                event_type=BudgetManagementEvent.PROJECT_BUDGET_REBALANCED,
+                entity_type=ActivityEntityType.BUDGET,
+                entity_id=budget_id,
+                actor_id=actor_id,
+                attributes={
+                    "budget_category": budget.budget_category,
+                    "project_name": assignment.project_name if assignment else None,
+                },
+            ),
+            session,
         )
         return budget
 
@@ -1240,6 +1283,20 @@ class ProjectBudgetService:
             f"budget_category={budget.budget_category!r} allocation_count={len(allocations)} "
             f"actor_id={actor_id!r}"
         )
+        await activity_event_repository.async_insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.BUDGET_MANAGEMENT,
+                event_type=BudgetManagementEvent.PROJECT_BUDGET_RESET,
+                entity_type=ActivityEntityType.BUDGET,
+                entity_id=budget_id,
+                actor_id=actor_id,
+                attributes={
+                    "budget_category": budget.budget_category,
+                    "project_name": assignment.project_name,
+                },
+            ),
+            session,
+        )
         return budget
 
     async def override_member_allocation(
@@ -1290,6 +1347,21 @@ class ProjectBudgetService:
         await self.rebalance_project_budget(session, budget_id, actor_id)
         if allocation is None:
             raise ExtendedHTTPException(code=404, message=f"Member allocation not found for user '{user_id}'")
+        await activity_event_repository.async_insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.BUDGET_MANAGEMENT,
+                event_type=BudgetManagementEvent.MEMBER_ALLOCATION_OVERRIDDEN,
+                entity_type=ActivityEntityType.PROJECT_BUDGET_GROUP,
+                entity_id=budget_id,
+                actor_id=actor_id,
+                attributes={
+                    "user_id": user_id,
+                    "allocated_max_budget": allocated_max_budget,
+                    "allocated_soft_budget": allocated_soft_budget,
+                },
+            ),
+            session,
+        )
         return allocation
 
     async def clear_member_override(
@@ -1359,6 +1431,17 @@ class ProjectBudgetService:
             budget_reset_at=member_state.budget_reset_at,
         )
         await self.rebalance_project_budget(session, budget_id, actor_id)
+        await activity_event_repository.async_insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.BUDGET_MANAGEMENT,
+                event_type=BudgetManagementEvent.MEMBER_ALLOCATION_OVERRIDE_CLEARED,
+                entity_type=ActivityEntityType.PROJECT_BUDGET_GROUP,
+                entity_id=budget_id,
+                actor_id=actor_id,
+                attributes={"user_id": user_id},
+            ),
+            session,
+        )
         return allocation
 
     # ==================== Delete ====================
@@ -1499,6 +1582,16 @@ class ProjectBudgetService:
             f"project_name={assignment.project_name if assignment else None!r} budget_id={budget_id!r} "
             f"budget_category={budget.budget_category!r} allocation_count={len(allocations)} "
             f"child_budget_count={len(child_budgets)} actor_id={actor_id!r}"
+        )
+        await activity_event_repository.async_insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.BUDGET_MANAGEMENT,
+                event_type=BudgetManagementEvent.PROJECT_BUDGET_DELETED,
+                entity_type=ActivityEntityType.PROJECT_BUDGET_GROUP,
+                entity_id=budget_id,
+                actor_id=actor_id,
+            ),
+            session,
         )
 
     # ==================== Group-level helpers ====================
@@ -1669,6 +1762,17 @@ class ProjectBudgetService:
             f"project_name={data.project_name!r} group_id={group.id!r} "
             f"category_count={len(results)} actor_id={actor_id!r}"
         )
+        await activity_event_repository.async_insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.BUDGET_MANAGEMENT,
+                event_type=BudgetManagementEvent.PROJECT_BUDGET_GROUP_CREATED,
+                entity_type=ActivityEntityType.PROJECT_BUDGET_GROUP,
+                entity_id=group.id,
+                actor_id=actor_id,
+                attributes={"project_name": data.project_name},
+            ),
+            session,
+        )
         return ProjectBudgetGroupFullResult(group=group, categories=results)
 
     async def get_project_budget_group(
@@ -1727,6 +1831,17 @@ class ProjectBudgetService:
         logger.info(
             f"budget_event=project_budget_group_update_completed component=project_budget_service "
             f"project_name={group.project_name!r} group_id={group_id!r} actor_id={actor_id!r}"
+        )
+        await activity_event_repository.async_insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.BUDGET_MANAGEMENT,
+                event_type=BudgetManagementEvent.PROJECT_BUDGET_GROUP_UPDATED,
+                entity_type=ActivityEntityType.PROJECT_BUDGET_GROUP,
+                entity_id=group_id,
+                actor_id=actor_id,
+                attributes={"project_name": group.project_name},
+            ),
+            session,
         )
         return await self._load_group_full_result(session, group)
 
@@ -1931,6 +2046,20 @@ class ProjectBudgetService:
             f"project_name={group.project_name!r} group_id={group_id!r} "
             f"category_count={len(assignments)} actor_id={actor_id!r}"
         )
+        await activity_event_repository.async_insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.BUDGET_MANAGEMENT,
+                event_type=BudgetManagementEvent.PROJECT_BUDGET_GROUP_RESET,
+                entity_type=ActivityEntityType.PROJECT_BUDGET_GROUP,
+                entity_id=group_id,
+                actor_id=actor_id,
+                attributes={
+                    "project_name": group.project_name,
+                    "category_count": len(assignments),
+                },
+            ),
+            session,
+        )
         return await self._load_group_full_result(session, group)
 
     async def rebalance_project_budget_group(
@@ -1952,6 +2081,20 @@ class ProjectBudgetService:
             f"budget_event=project_budget_group_rebalance_completed component=project_budget_service "
             f"project_name={group.project_name!r} group_id={group_id!r} "
             f"category_count={len(assignments)} actor_id={actor_id!r}"
+        )
+        await activity_event_repository.async_insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.BUDGET_MANAGEMENT,
+                event_type=BudgetManagementEvent.PROJECT_BUDGET_GROUP_REBALANCED,
+                entity_type=ActivityEntityType.PROJECT_BUDGET_GROUP,
+                entity_id=group_id,
+                actor_id=actor_id,
+                attributes={
+                    "project_name": group.project_name,
+                    "category_count": len(assignments),
+                },
+            ),
+            session,
         )
         return await self._load_group_full_result(session, group)
 

@@ -40,6 +40,13 @@ from codemie.repository.user_kb_repository import user_kb_repository
 from codemie.repository.application_repository import application_repository
 from codemie.rest_api.models.user_management import UserDB, CodeMieUserDetail, ProjectInfo
 from codemie.rest_api.security import user as security_user
+from codemie.service.activity.activity_models import (
+    ActivityDomain,
+    ActivityEntityType,
+    ActivityEventCreate,
+    UserManagementEvent,
+)
+from codemie.service.activity.activity_repository import activity_event_repository
 
 _INVALID_EMAIL_OR_PASSWORD = "Invalid email or password"
 _ACCOUNT_DEACTIVATED = "Account is deactivated"
@@ -202,6 +209,17 @@ class AuthenticationService:
             project_limit=None if legacy_is_admin else config.USER_PROJECT_LIMIT,
         )
         db_user = await user_repository.acreate(session, db_user)
+        await activity_event_repository.async_insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.USER_MANAGEMENT,
+                event_type=UserManagementEvent.USER_CREATED,
+                entity_type=ActivityEntityType.USER,
+                entity_id=db_user.id,
+                actor_id=None,
+                attributes={"auth_source": config.IDP_PROVIDER},
+            ),
+            session,
+        )
 
         # Bootstrap authorization from idp_user fields (ONE-TIME ONLY)
         for project_name in idp_user.project_names:
@@ -497,6 +515,7 @@ class AuthenticationService:
         pre_sync_email = None
         async with get_async_session() as session:
             db_user = await user_repository.aget_by_id(session, user_id)
+            is_existing_user = db_user is not None
 
             if db_user:
                 pre_sync_email = await AuthenticationService._sync_existing_user(session, db_user, idp_user)
@@ -509,6 +528,18 @@ class AuthenticationService:
                 raise ExtendedHTTPException(code=401, message=_ACCOUNT_DEACTIVATED)
 
             security_user_ins = AuthenticationService._build_security_user(db_user, auth_token)
+            if is_existing_user and idp_user is not None:
+                await activity_event_repository.async_insert(
+                    ActivityEventCreate(
+                        domain=ActivityDomain.USER_MANAGEMENT,
+                        event_type=UserManagementEvent.USER_LOGIN,
+                        entity_type=ActivityEntityType.USER,
+                        entity_id=db_user.id,
+                        actor_id=db_user.id,
+                        attributes={"auth_source": config.IDP_PROVIDER},
+                    ),
+                    session,
+                )
             await session.commit()
 
         if pre_sync_email and security_user_ins.email != pre_sync_email:
@@ -563,10 +594,32 @@ class AuthenticationService:
                 logger.info(
                     f"user_created: target_user_id={db_user.id}, auth_source=dev_header, domain=user_management"
                 )
+                await activity_event_repository.async_insert(
+                    ActivityEventCreate(
+                        domain=ActivityDomain.USER_MANAGEMENT,
+                        event_type=UserManagementEvent.USER_CREATED,
+                        entity_type=ActivityEntityType.USER,
+                        entity_id=db_user.id,
+                        actor_id=None,
+                        attributes={"auth_source": "dev_header"},
+                    ),
+                    session,
+                )
 
             security_user_ins = AuthenticationService._build_security_user(db_user)
 
             await user_repository.aupdate_last_login(session, db_user.id)
+            await activity_event_repository.async_insert(
+                ActivityEventCreate(
+                    domain=ActivityDomain.USER_MANAGEMENT,
+                    event_type=UserManagementEvent.USER_LOGIN,
+                    entity_type=ActivityEntityType.USER,
+                    entity_id=db_user.id,
+                    actor_id=db_user.id,
+                    attributes={"auth_source": "dev_header"},
+                ),
+                session,
+            )
             await session.commit()
 
         return await AuthenticationService._finalize_authentication(security_user_ins, "dev_header")
@@ -627,6 +680,17 @@ class AuthenticationService:
             )
             user_id = user.id
             user_email = user.email
+
+            await activity_event_repository.async_insert(
+                ActivityEventCreate(
+                    domain=ActivityDomain.USER_MANAGEMENT,
+                    event_type=UserManagementEvent.USER_LOGIN,
+                    entity_type=ActivityEntityType.USER,
+                    entity_id=user.id,
+                    actor_id=user.id,
+                ),
+                session,
+            )
 
             await session.commit()
 

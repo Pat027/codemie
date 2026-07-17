@@ -316,6 +316,9 @@ class Config(BaseSettings):
     SCHEDULER_PROMPT_SIZE_LIMIT: int = 4000
     CRON_SCHEDULER_MAX_WORKERS: int = 20
 
+    ACTIVITY_EVENTS_ENABLED: bool = False
+    ACTIVITY_EVENTS_RETENTION_DAYS: int = 90
+
     NATS_PLUGIN_KEY_CHECK_ENABLED: bool = False
     NATS_SERVERS_URI: str = "nats://nats:4222"
     NATS_CLIENT_CONNECT_URI: str = ""

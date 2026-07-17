@@ -28,6 +28,13 @@ from codemie.configs.logger import logger
 from codemie.core.models import Application
 from codemie.repository.user_project_repository import user_project_repository
 from codemie.repository.application_repository import application_repository
+from codemie.service.activity.activity_models import (
+    ActivityDomain,
+    ActivityEntityType,
+    ActivityEventCreate,
+    ProjectManagementEvent,
+)
+from codemie.service.activity.activity_repository import activity_event_repository
 
 
 class PersonalProjectService:
@@ -71,6 +78,18 @@ class PersonalProjectService:
 
                 # Create personal project (transaction-safe)
                 await PersonalProjectService._create_personal_project(isolated_session, user_id, user_email)
+
+                await activity_event_repository.async_insert(
+                    ActivityEventCreate(
+                        domain=ActivityDomain.PROJECT_MANAGEMENT,
+                        event_type=ProjectManagementEvent.PROJECT_CREATED,
+                        entity_type=ActivityEntityType.PROJECT,
+                        entity_id=user_email,
+                        actor_id=user_id,
+                        attributes={"project_type": "personal"},
+                    ),
+                    isolated_session,
+                )
 
                 # Commit isolated transaction
                 await isolated_session.commit()

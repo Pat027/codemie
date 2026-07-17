@@ -295,10 +295,13 @@ class TestProjectAssignmentServiceRoleUpdate:
 class TestProjectAssignmentServiceBulkAssign:
     """Test suite for ProjectAssignmentService - bulk assignment"""
 
+    @patch("codemie.service.project.project_assignment_service.activity_event_repository")
     @patch("codemie.service.project.project_assignment_service.user_repository")
     @patch("codemie.service.project.project_assignment_service.user_project_repository")
     @patch("codemie.service.project.project_assignment_service.logger")
-    def test_bulk_assign_success_new_users(self, mock_logger, mock_user_project_repo, mock_user_repo):
+    def test_bulk_assign_success_new_users(
+        self, mock_logger, mock_user_project_repo, mock_user_repo, mock_activity_repo
+    ):
         """Test successful bulk assignment of new users (FR-5.2: all-or-nothing)"""
         # Arrange
         mock_session = MagicMock()
@@ -331,10 +334,11 @@ class TestProjectAssignmentServiceBulkAssign:
         mock_session.flush.assert_called_once()
         mock_logger.info.assert_called_once()
 
+    @patch("codemie.service.project.project_assignment_service.activity_event_repository")
     @patch("codemie.service.project.project_assignment_service.user_repository")
     @patch("codemie.service.project.project_assignment_service.user_project_repository")
     @patch("codemie.service.project.project_assignment_service.logger")
-    def test_bulk_assign_upsert_existing(self, mock_logger, mock_user_project_repo, mock_user_repo):
+    def test_bulk_assign_upsert_existing(self, mock_logger, mock_user_project_repo, mock_user_repo, mock_activity_repo):
         """Test bulk assign with mix of new and existing users (upsert behavior)"""
         # Arrange
         mock_session = MagicMock()
@@ -429,10 +433,11 @@ class TestProjectAssignmentServiceBulkAssign:
 class TestProjectAssignmentServiceBulkRemove:
     """Test suite for ProjectAssignmentService - bulk removal"""
 
+    @patch("codemie.service.project.project_assignment_service.activity_event_repository")
     @patch("codemie.service.project.project_assignment_service.user_repository")
     @patch("codemie.service.project.project_assignment_service.user_project_repository")
     @patch("codemie.service.project.project_assignment_service.logger")
-    def test_bulk_remove_success(self, mock_logger, mock_user_project_repo, mock_user_repo):
+    def test_bulk_remove_success(self, mock_logger, mock_user_project_repo, mock_user_repo, mock_activity_repo):
         """Test successful bulk removal of users from project (FR-5.3: all-or-nothing)"""
         # Arrange
         mock_session = MagicMock()

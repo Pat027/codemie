@@ -28,6 +28,13 @@ from codemie.core.exceptions import ExtendedHTTPException
 from codemie.core.models import Application
 from codemie.repository.application_repository import application_repository
 from codemie.repository.user_project_repository import user_project_repository
+from codemie.service.activity.activity_models import (
+    ActivityDomain,
+    ActivityEntityType,
+    ActivityEventCreate,
+    ProjectManagementEvent,
+)
+from codemie.service.activity.activity_repository import activity_event_repository
 from codemie.repository.user_repository import user_repository
 from codemie.rest_api.security.user import User
 from codemie.service.cost_center_service import cost_center_service
@@ -139,6 +146,16 @@ class ProjectService:
                     project_name=validated_name,
                     is_project_admin=True,
                 )
+                activity_event_repository.insert(
+                    ActivityEventCreate(
+                        domain=ActivityDomain.PROJECT_MANAGEMENT,
+                        event_type=ProjectManagementEvent.PROJECT_CREATED,
+                        entity_type=ActivityEntityType.PROJECT,
+                        entity_id=validated_name,
+                        actor_id=user.id,
+                    ),
+                    session,
+                )
                 session.expunge(project)  # Expunge before commit to preserve loaded attributes for the caller
                 session.commit()
                 invalidate_user_from_cache(user.id)
@@ -189,6 +206,16 @@ class ProjectService:
                     project.name,
                     enforce_member_spend_limits,
                 )
+            activity_event_repository.insert(
+                ActivityEventCreate(
+                    domain=ActivityDomain.PROJECT_MANAGEMENT,
+                    event_type=ProjectManagementEvent.PROJECT_UPDATED,
+                    entity_type=ActivityEntityType.PROJECT,
+                    entity_id=project.name,
+                    actor_id=user.id,
+                ),
+                session,
+            )
             session.commit()
             session.refresh(project)
             cls._resync_member_allocations_if_needed(project.name, enforce_member_spend_limits)
@@ -415,6 +442,16 @@ class ProjectService:
 
         cls._check_has_no_resources(session, project_name, "deleted")
         application_repository.delete_by_name(session, project_name)
+        activity_event_repository.insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.PROJECT_MANAGEMENT,
+                event_type=ProjectManagementEvent.PROJECT_DELETED,
+                entity_type=ActivityEntityType.PROJECT,
+                entity_id=project_name,
+                actor_id=actor_id,
+            ),
+            session,
+        )
         logger.info(f"project_deleted: project={project_name}, by={actor_id}")
 
 

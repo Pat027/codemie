@@ -40,6 +40,13 @@ from codemie.service.budget.budget_models import (
     ProjectMemberBudgetAssignment,
     build_shared_project_budget_id,
 )
+from codemie.service.activity.activity_models import (
+    ActivityDomain,
+    ActivityEntityType,
+    ActivityEventCreate,
+    UserManagementEvent,
+)
+from codemie.service.activity.activity_repository import activity_event_repository
 from codemie.service.budget.provider_registry import get_active_provider
 
 
@@ -307,7 +314,17 @@ class ProjectAssignmentService:
             is_project_admin=is_project_admin,
         )
         ProjectAssignmentService._sync_project_budget_member_added(session, project_name, user_id, actor.id)
-
+        activity_event_repository.insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.USER_MANAGEMENT,
+                event_type=UserManagementEvent.USER_PROJECT_ASSIGNED,
+                entity_type=ActivityEntityType.USER,
+                entity_id=user_id,
+                actor_id=actor.id,
+                attributes={"project_name": project_name, "is_project_admin": is_project_admin},
+            ),
+            session,
+        )
         logger.info(
             f"User assigned to project: user_id={user_id}, project={project_name}, "
             f"is_admin={is_project_admin}, by={actor.id}"
@@ -375,7 +392,17 @@ class ProjectAssignmentService:
 
         # Update role
         user_project_repository.update_admin_status(session, user_id, project_name, is_project_admin)
-
+        activity_event_repository.insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.USER_MANAGEMENT,
+                event_type=UserManagementEvent.USER_PROJECT_ROLE_UPDATED,
+                entity_type=ActivityEntityType.USER,
+                entity_id=user_id,
+                actor_id=actor.id,
+                attributes={"project_name": project_name, "is_project_admin": is_project_admin},
+            ),
+            session,
+        )
         logger.info(
             f"User role updated: user_id={user_id}, project={project_name}, "
             f"is_admin={is_project_admin}, by={actor.id}"
@@ -473,6 +500,7 @@ class ProjectAssignmentService:
                 session.add(user_project)
                 action_taken = "updated"
                 updated_count += 1
+                event_type = UserManagementEvent.USER_PROJECT_ROLE_UPDATED
             else:
                 now = datetime.now(UTC)
                 user_project = UserProject(
@@ -486,7 +514,19 @@ class ProjectAssignmentService:
                 action_taken = "assigned"
                 assigned_count += 1
                 ProjectAssignmentService._sync_project_budget_member_added(session, project_name, user_id, actor.id)
+                event_type = UserManagementEvent.USER_PROJECT_ASSIGNED
 
+            activity_event_repository.insert(
+                ActivityEventCreate(
+                    domain=ActivityDomain.USER_MANAGEMENT,
+                    event_type=event_type,
+                    entity_type=ActivityEntityType.USER,
+                    entity_id=user_id,
+                    actor_id=actor.id,
+                    attributes={"project_name": project_name, "is_project_admin": is_project_admin},
+                ),
+                session,
+            )
             results.append(
                 {
                     "user_id": user_id,
@@ -586,6 +626,17 @@ class ProjectAssignmentService:
         for record in existing_assignments.values():
             session.delete(record)
             ProjectAssignmentService._sync_project_budget_member_removed(session, project_name, record.user_id)
+            activity_event_repository.insert(
+                ActivityEventCreate(
+                    domain=ActivityDomain.USER_MANAGEMENT,
+                    event_type=UserManagementEvent.USER_PROJECT_REMOVED,
+                    entity_type=ActivityEntityType.USER,
+                    entity_id=record.user_id,
+                    actor_id=actor.id,
+                    attributes={"project_name": project_name},
+                ),
+                session,
+            )
         session.flush()
 
         results = [{"user_id": uid, "action": "removed"} for uid in user_ids]
@@ -644,7 +695,17 @@ class ProjectAssignmentService:
             )
 
         ProjectAssignmentService._sync_project_budget_member_removed(session, project_name, user_id)
-
+        activity_event_repository.insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.USER_MANAGEMENT,
+                event_type=UserManagementEvent.USER_PROJECT_REMOVED,
+                entity_type=ActivityEntityType.USER,
+                entity_id=user_id,
+                actor_id=actor.id,
+                attributes={"project_name": project_name},
+            ),
+            session,
+        )
         logger.info(f"User removed from project: user_id={user_id}, project={project_name}, by={actor.id}")
 
         return {

@@ -47,6 +47,13 @@ from codemie.rest_api.models.user_management import (
     UserDB,
     UserListFilters,
 )
+from codemie.service.activity.activity_models import (
+    ActivityDomain,
+    ActivityEntityType,
+    ActivityEventCreate,
+    UserManagementEvent,
+)
+from codemie.service.activity.activity_repository import activity_event_repository
 
 
 _USER_NOT_FOUND = "User not found"
@@ -116,6 +123,16 @@ class UserManagementService:
         )
 
         user = user_repository.create(session, user)
+
+        activity_event_repository.insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.USER_MANAGEMENT,
+                event_type=UserManagementEvent.USER_CREATED,
+                entity_type=ActivityEntityType.USER,
+                entity_id=user.id,
+            ),
+            session,
+        )
 
         return user
 
@@ -217,6 +234,17 @@ class UserManagementService:
             logger.info(
                 f"user_updated: actor_user_id={actor_user_id}, target_user_id={user_id}{suffix}, domain=user_management"
             )
+            activity_event_repository.insert(
+                ActivityEventCreate(
+                    domain=ActivityDomain.USER_MANAGEMENT,
+                    event_type=UserManagementEvent.USER_UPDATED,
+                    entity_type=ActivityEntityType.USER,
+                    entity_id=user_id,
+                    actor_id=actor_user_id,
+                    attributes=dict(fields) or None,
+                ),
+                session,
+            )
 
         return user
 
@@ -255,6 +283,17 @@ class UserManagementService:
 
         # Soft delete
         user_repository.soft_delete(session, user_id)
+
+        activity_event_repository.insert(
+            ActivityEventCreate(
+                domain=ActivityDomain.USER_MANAGEMENT,
+                event_type=UserManagementEvent.USER_DEACTIVATED,
+                entity_type=ActivityEntityType.USER,
+                entity_id=user_id,
+                actor_id=actor_user_id,
+            ),
+            session,
+        )
 
         logger.info(
             f"user_deactivated: actor_user_id={actor_user_id}, target_user_id={user_id}, domain=user_management"
