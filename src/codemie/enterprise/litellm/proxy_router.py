@@ -1225,7 +1225,7 @@ async def _proxy_to_llm_proxy(
         user: Authenticated user
         endpoint: Target endpoint path
         background_tasks: FastAPI background tasks
-        path_params: URL path parameters extracted by FastAPI (e.g. {"model_name": "gemini-1.5-pro"})
+        path_params: URL path parameters extracted by FastAPI (e.g. {"model_name": "gemini-3-flash"})
 
     Returns:
         StreamingResponse: Proxied response

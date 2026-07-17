@@ -116,9 +116,9 @@ class TestExtractModel:
         """Gemini-style: model is in URL path, not body."""
         body_json = {}
         request_info = {LLM_MODEL: "unknown"}
-        path_params = {"model_name": "gemini-1.5-pro"}
+        path_params = {"model_name": "gemini-3-flash"}
 
-        assert _extract_model(body_json, request_info, path_params) == "gemini-1.5-pro"
+        assert _extract_model(body_json, request_info, path_params) == "gemini-3-flash"
 
     def test_model_from_header_when_body_and_path_empty(self):
         body_json = {}
@@ -139,16 +139,16 @@ class TestExtractModel:
     def test_body_takes_priority_over_path_params(self):
         body_json = {"model": "gpt-4o"}
         request_info = {LLM_MODEL: "unknown"}
-        path_params = {"model_name": "gemini-1.5-pro"}
+        path_params = {"model_name": "gemini-3-flash"}
 
         assert _extract_model(body_json, request_info, path_params) == "gpt-4o"
 
     def test_path_params_take_priority_over_header(self):
         body_json = {}
         request_info = {LLM_MODEL: "claude-sonnet-4-6"}
-        path_params = {"model_name": "gemini-1.5-pro"}
+        path_params = {"model_name": "gemini-3-flash"}
 
-        assert _extract_model(body_json, request_info, path_params) == "gemini-1.5-pro"
+        assert _extract_model(body_json, request_info, path_params) == "gemini-3-flash"
 
     def test_unknown_header_treated_as_unresolvable(self):
         """Header value 'unknown' is the sentinel — must not be returned as a model name."""
